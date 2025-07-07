@@ -28,10 +28,12 @@ class HelpView(View):
             logger.error(f"❌ [ticket] 카테고리 ID `{config.TICKET_CATEGORY_ID}`를 찾을 수 없습니다.")
             return
 
+        staff_role = guild.get_role(1389711188962574437)
+
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             member: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True),
-            guild.get_role(config.STAFF_ROLE_ID): discord.PermissionOverwrite(view_channel=True, send_messages=True)
+            staff_role: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_messages=True)
         }
 
         existing = discord.utils.get(cat.text_channels, name=f"ticket-{member.id}")
@@ -81,7 +83,7 @@ class CloseTicketView(View):
 
             ticket_owner = channel.guild.get_member(owner_id)
             is_owner = interaction.user.id == owner_id
-            has_sup = config.STAFF_ROLE_ID in [r.id for r in interaction.user.roles]
+            has_sup = any(r.id == 1389711188962574437 for r in interaction.user.roles)
             is_admin = interaction.user.guild_permissions.administrator
 
             if not (is_owner or has_sup or is_admin):

@@ -35,6 +35,8 @@ class DecisionButtonView(discord.ui.View):
 
     @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="interview_pass")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)  # Defer immediately
+
         user_id = None
         if interaction.message.embeds:
             embed = interaction.message.embeds[0]
@@ -48,13 +50,13 @@ class DecisionButtonView(discord.ui.View):
                 user_id = int(mention_match.group(1))
 
         if not user_id:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
         member = interaction.guild.get_member(user_id)
         if not member:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
@@ -62,7 +64,7 @@ class DecisionButtonView(discord.ui.View):
         try:
             role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
             if not role:
-                return await interaction.response.send_message(
+                return await interaction.followup.send(
                     "❌ 합격 역할을 찾을 수 없습니다. 관리자에게 문의해주세요.",
                     ephemeral=True
                 )
@@ -79,28 +81,29 @@ class DecisionButtonView(discord.ui.View):
             if guest_role and guest_role in member.roles:
                 await member.remove_roles(guest_role, reason="합격 처리로 인한 게스트 역할 제거")
 
-
-            await interaction.response.send_message(
-                f"✅ {member.mention}님을 합격 처리했습니다!",
+            await interaction.followup.send(
+                f"✅ {member.mention}님을 합격 처리했습니다!"
             )
             if self.cog:
                 await self.cog.send_welcome_message(member)
 
         except discord.Forbidden:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ 역할을 부여할 권한이 없습니다.",
                 ephemeral=True
             )
         except Exception as e:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f"❌ 오류 발생: {str(e)}",
                 ephemeral=True
             )
 
     @discord.ui.button(label="불합격", style=discord.ButtonStyle.danger, custom_id="interview_fail")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)  # Defer immediately
+
         if not interaction.message.embeds:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
@@ -113,7 +116,7 @@ class DecisionButtonView(discord.ui.View):
                 if mention_match:
                     break
         if not mention_match:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
@@ -121,7 +124,7 @@ class DecisionButtonView(discord.ui.View):
         user_id = int(mention_match.group(1))
         member = interaction.guild.get_member(user_id)
         if not member:
-            return await interaction.response.send_message(
+            return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
@@ -143,9 +146,9 @@ class DecisionButtonView(discord.ui.View):
             if applicant_role and applicant_role in member.roles:
                 await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
 
-            await interaction.response.send_message(f"{member.mention}님을 불합격 처리했습니다.")
+            await interaction.followup.send(f"{member.mention}님을 불합격 처리했습니다.")
         except discord.Forbidden:
-            await interaction.response.send_message("DM을 보낼 수 없습니다.", ephemeral=True)
+            await interaction.followup.send("DM을 보낼 수 없습니다.", ephemeral=True)
 
 class InterviewModal(Modal, title="인터뷰 사전 질문"):
     def __init__(self):

@@ -57,6 +57,12 @@ class LeaderboardView(discord.ui.View):
 
             user_mention = f"<@{entry['discord_id']}>" if entry.get("discord_id") else "❔"
             riot_name = entry.get("name", "알 수 없음")
+
+            # URL encode Riot ID for safe URL use
+            encoded_name = urllib.parse.quote(riot_name)
+            tracker_url = f"https://tracker.gg/valorant/profile/riot/{encoded_name}/overview"
+            riot_id_link = f"[{riot_name}]({tracker_url})"
+
             score = entry.get("total_points") or 0
             kills = entry.get("kills") or 0
             deaths = entry.get("deaths") or 0
@@ -68,7 +74,7 @@ class LeaderboardView(discord.ui.View):
                 value=(
                     f"{medal}\n"
                     f"{user_mention}\n"
-                    f"Riot ID: `{riot_name}`\n"
+                    f"Riot ID: {riot_id_link}\n"
                     f"📊 점수: `{score:.1f}`  ⚔️ K/D: `{kd_ratio:.2f}`\n"
                     f"🟥 Kills: `{kills}`  🟦 Deaths: `{deaths}`\n"
                     f"🧮 매치 수: `{matches_played}`"

@@ -1,51 +1,38 @@
 import discord
 from discord.ext import commands
-import asyncio
 import logging
 
 logger = logging.getLogger("bot")
 
 class AutoRoleCog(commands.Cog):
-    def __init__(self, bot, role_id: int):
+    def __init__(self, bot, role_ids: list[int]):  # accept a list of role IDs
         self.bot = bot
-        self.role_id = role_id
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        # Wait until bot is ready and guilds are loaded
-        await self.bot.wait_until_ready()
-        for guild in self.bot.guilds:
-            role = guild.get_role(self.role_id)
-            if not role:
-                logger.error(f"Role ID {self.role_id} not found in guild {guild.name} ({guild.id})")
-                continue
-
-            # Apply role to all members who don't have it yet
-            for member in guild.members:
-                if role not in member.roles and not member.bot:  # skip bots if you want
-                    try:
-                        await member.add_roles(role, reason="Auto-role on bot startup")
-                        logger.info(f"Added role {role.name} to {member.display_name} on startup")
-                        # Avoid hitting rate limits
-                        await asyncio.sleep(1)
-                    except discord.Forbidden:
-                        logger.error(f"Missing permissions to add role to {member.display_name}")
-                    except Exception as e:
-                        logger.error(f"Error adding role to {member.display_name}: {e}")
+        self.role_ids = role_ids
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        role = member.guild.get_role(self.role_id)
-        if role:
+        roles_to_add = []
+        for role_id in self.role_ids:
+            role = member.guild.get_role(role_id)
+            if role:
+                roles_to_add.append(role)
+        if roles_to_add:
             try:
-                await member.add_roles(role, reason="Auto-role on member join")
-                logger.info(f"Added role {role.name} to {member.display_name} on join")
+                await member.add_roles(*roles_to_add, reason="회원 가입 시 자동 역할 부여")
+                logger.info(f"{member.display_name}님에게 역할 {', '.join([r.name for r in roles_to_add])}을(를) 부여했습니다.")
             except discord.Forbidden:
-                logger.error(f"Missing permissions to add role to {member.display_name}")
+                logger.error(f"{member.display_name}님에게 역할 부여 권한이 없습니다.")
             except Exception as e:
-                logger.error(f"Error adding role to {member.display_name}: {e}")
+                logger.error(f"{member.display_name}님에게 역할 부여 중 오류 발생: {e}")
 
 async def setup(bot):
-    # Replace ROLE_ID with your target role ID
-    ROLE_ID = 1389711048461910057
-    await bot.add_cog(AutoRoleCog(bot, ROLE_ID))
+    # 여기에 자동 부여할 역할 ID들을 리스트로 추가하세요
+    ROLE_IDS = [
+        1389711048461910057,
+        1391814186912452741,
+        1391812423966527498,
+        1391812274087264329,
+        1391812498549903421,
+        1391812623816982668,
+    ]
+    await bot.add_cog(AutoRoleCog(bot, ROLE_IDS))
