@@ -61,6 +61,7 @@ class LeaderboardView(discord.ui.View):
             kills = entry.get("kills") or 0
             deaths = entry.get("deaths") or 0
             kd_ratio = entry.get("kd_ratio") or 0
+            matches_played = entry.get("matches_played") or 0
 
             embed.add_field(
                 name="\u200b",
@@ -69,7 +70,8 @@ class LeaderboardView(discord.ui.View):
                     f"{user_mention}\n"
                     f"Riot ID: `{riot_name}`\n"
                     f"📊 점수: `{score:.1f}`  ⚔️ K/D: `{kd_ratio:.2f}`\n"
-                    f"🟥 Kills: `{kills}`  🟦 Deaths: `{deaths}`"
+                    f"🟥 Kills: `{kills}`  🟦 Deaths: `{deaths}`\n"
+                    f"🧮 매치 수: `{matches_played}`"
                 ),
                 inline=False,
             )
@@ -160,14 +162,14 @@ class ClanLeaderboard(commands.Cog):
                 """
                 SELECT discord_id,
                        name,
+                       COUNT(*)         AS matches_played,
                        SUM(total_points) AS total_points,
                        SUM(kills)        AS kills,
                        SUM(deaths)       AS deaths,
                        CASE
                            WHEN SUM(deaths) = 0 THEN SUM(kills)::float
-                        ELSE SUM(kills)::float / SUM(deaths)
-                END
-                AS kd_ratio
+                           ELSE SUM(kills)::float / SUM(deaths)
+                       END AS kd_ratio
                 FROM clan
                 WHERE discord_id IS NOT NULL
                 GROUP BY discord_id, name
