@@ -137,7 +137,7 @@ class TrackerScraper(commands.Cog):
                 medal = medal_emojis.get(i, f"{i}.")
 
                 mention_text = f"<@{discord_id}>\n" if discord_id else ""
-                riot_id_display = f"🕹️ {riot_id}"
+                riot_id_display = f"🕹️ [{riot_id}]({profile_url})"
                 agent = p.get("agent", "알 수 없음")
                 team = p.get("team", "알 수 없음")
                 acs = p.get("acs", 0)
