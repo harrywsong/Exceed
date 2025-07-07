@@ -37,7 +37,7 @@ class TrackerScraper(commands.Cog):
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
-                timeout=60
+                timeout=120
             )
 
             stderr = result.stderr or ""
@@ -134,20 +134,25 @@ class TrackerScraper(commands.Cog):
                     self.logger.error(f"DB에서 discord_id 조회 실패 ({riot_id}): {e}")
 
                 medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
-                medal = medal_emojis.get(i, f"`#{i}`")
+                medal = medal_emojis.get(i, f"{i}.")
 
-                mention_text = f"<@{discord_id}>" if discord_id else "❔"
-                kills = p.get("kills", 0)
-                deaths = p.get("deaths", 0)
-                kd_ratio = kills / max(deaths, 1)
+                mention_text = f"<@{discord_id}>\n" if discord_id else ""
+                riot_id_display = f"🕹️ {riot_id}"
+                agent = p.get("agent", "알 수 없음")
+                team = p.get("team", "알 수 없음")
+                acs = p.get("acs", 0)
+                acs_bonus = p.get("acs_bonus", 0)
+                round_win_pts = p.get("round_win_points", 0)
                 total_points = p.get("total_points", 0)
 
                 field_value = (
                     f"{medal}\n"
-                    f"{mention_text}\n"
-                    f"Riot ID: [{riot_id}]({profile_url})\n"
-                    f"📊 점수: `{total_points}`  ⚔️ K/D: `{kd_ratio:.2f}`\n"
-                    f"🟥 Kills: `{kills}`  🟦 Deaths: `{deaths}`"
+                    f"{mention_text}"
+                    f"{riot_id_display}\n"
+                    f"🎭 요원: {agent} | 🧬 팀: {team}\n"
+                    f"📈 ACS: {acs} (+{acs_bonus} pts)\n"
+                    f"🔄 라운드 승리: {round_win_pts} pts\n"
+                    f"🎯 총 포인트: {total_points}"
                 )
 
                 embed.add_field(
