@@ -133,22 +133,25 @@ class TrackerScraper(commands.Cog):
                 except Exception as e:
                     self.logger.error(f"DB에서 discord_id 조회 실패 ({riot_id}): {e}")
 
-                medal = medals[i - 1] if i <= 3 else f"{i}."
+                medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
+                medal = medal_emojis.get(i, f"`#{i}`")
 
-                mention_text = f"<@{discord_id}>" if discord_id else ""
+                mention_text = f"<@{discord_id}>" if discord_id else "❔"
+                kills = p.get("kills", 0)
+                deaths = p.get("deaths", 0)
+                kd_ratio = kills / max(deaths, 1)
+                total_points = p.get("total_points", 0)
 
-                # *** Updated field_value formatting starts here ***
                 field_value = (
-                    (f"{mention_text}\n" if mention_text else "") +  # Discord mention line
-                    f"Riot ID: [{riot_id}]({profile_url})\n\n" +     # Riot ID clickable link on its own line
-                    f"🎭 요원: **{agent}** | 🧬 팀: **{team}**\n"
-                    f"📊 점수: **{total_points}**  ⚔️ K/D: **{acs / max(p.get('deaths', 1), 1):.2f}**\n"
-                    f"🟥 Kills: **{p.get('kills', 0)}**  🟦 Deaths: **{p.get('deaths', 0)}**"
+                    f"{medal}\n"
+                    f"{mention_text}\n"
+                    f"Riot ID: [{riot_id}]({profile_url})\n"
+                    f"📊 점수: `{total_points}`  ⚔️ K/D: `{kd_ratio:.2f}`\n"
+                    f"🟥 Kills: `{kills}`  🟦 Deaths: `{deaths}`"
                 )
-                # *** Updated field_value formatting ends here ***
 
                 embed.add_field(
-                    name=f"\n{medal}",  # medal on its own line with leading newline for spacing
+                    name="\u200b",
                     value=field_value,
                     inline=False
                 )
