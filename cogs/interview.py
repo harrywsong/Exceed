@@ -98,6 +98,46 @@ class DecisionButtonView(discord.ui.View):
                 ephemeral=True
             )
 
+    @discord.ui.button(label="테스트", style=discord.ButtonStyle.secondary, custom_id="interview_test")
+    async def test(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
+        user_id = self._extract_user_id(interaction)
+        if not user_id:
+            return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
+
+        member = interaction.guild.get_member(user_id)
+        if not member:
+            return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
+
+        test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
+        if not test_role:
+            return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
+
+        try:
+            await member.add_roles(test_role, reason="테스트 역할 부여")
+            await member.send(
+                "안녕하세요.\n\n"
+                "Exceed 클랜에 지원해 주셔서 진심으로 감사드립니다.\n"
+                "지원자님의 가능성과 열정을 더욱 알아보기 위해 **테스트 역할**을 부여드렸습니다.\n\n"
+                "해당 역할을 통해 테스트 기간 동안 서버에서 자유롭게 활동해 주시고,\n"
+                "운영진은 지원자님의 활동 및 소통을 바탕으로 최종 결정을 내리게 됩니다.\n\n"
+                "Exceed는 팀워크와 커뮤니티 분위기를 중시하는 만큼,\n"
+                "테스트 기간 중 적극적인 참여와 긍정적인 소통을 기대하겠습니다.\n\n"
+                "궁금하신 사항이나 불편한 점이 있으시면 언제든지 운영진에게 문의해 주세요.\n"
+                "문의는 아래 채널을 통해 주셔도 됩니다:\n"
+                "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
+                "다시 한번 지원해 주셔서 감사드리며, 앞으로의 활동을 기대하겠습니다!\n\n"
+                "감사합니다.\n\n"
+                "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
+            )
+            await interaction.followup.send(f"🟡 {member.mention}님에게 테스트 역할을 부여했습니다.")
+            await get_logger(interaction.client, f"{member} ({member.id})님에게 테스트 역할을 부여했습니다.")
+
+        except discord.Forbidden:
+            await interaction.followup.send("❌ 역할 부여 또는 DM 전송 권한이 없습니다.", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ 오류 발생: {str(e)}", ephemeral=True)
+
     @discord.ui.button(label="불합격", style=discord.ButtonStyle.danger, custom_id="interview_fail")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)  # Defer immediately
@@ -138,7 +178,8 @@ class DecisionButtonView(discord.ui.View):
                 "Exceed는 언제나 열려 있으며, 다음 기회에 꼭 함께할 수 있기를 기대하겠습니다.\n\n"
                 "궁금한 점이 있으시면 언제든지 운영진에게 문의하시거나, 아래 채널을 통해 연락 주시기 바랍니다:  \n\n"
                 "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
-                "감사합니다."
+                "감사합니다.\n\n"
+                "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
             )
 
             # Remove applicant role
