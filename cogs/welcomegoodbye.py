@@ -115,7 +115,7 @@ class WelcomeCog(commands.Cog):
 
         embed = discord.Embed(
             title="회원 퇴장",
-            description=f"**{member}**님이 클랜을 떠났습니다. 다음에 또 만나요! 👋",
+            description=f"👋 **{member}**님이 클랜을 떠났습니다.",
             color=discord.Color.dark_grey(),
             timestamp=datetime.utcnow()
         )

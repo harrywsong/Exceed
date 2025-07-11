@@ -33,6 +33,20 @@ class DecisionButtonView(discord.ui.View):
         self.applicant_id = applicant_id
         self.cog = cog
 
+    def _extract_user_id(self, interaction: discord.Interaction) -> int | None:
+        user_id = None
+        if interaction.message.embeds:
+            embed = interaction.message.embeds[0]
+            mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
+            if not mention_match:
+                for field in embed.fields:
+                    mention_match = re.search(r'<@!?(\d+)>', field.value)
+                    if mention_match:
+                        break
+            if mention_match:
+                user_id = int(mention_match.group(1))
+        return user_id
+
     @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="interview_pass")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)  # Defer immediately
@@ -101,6 +115,11 @@ class DecisionButtonView(discord.ui.View):
     @discord.ui.button(label="테스트", style=discord.ButtonStyle.secondary, custom_id="interview_test")
     async def test(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
+
+        # Permission check
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.followup.send("❌ 이 작업을 수행할 권한이 없습니다. 관리자만 사용할 수 있습니다.", ephemeral=True)
+
         user_id = self._extract_user_id(interaction)
         if not user_id:
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
@@ -114,7 +133,8 @@ class DecisionButtonView(discord.ui.View):
             return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
 
         try:
-            await member.add_roles(test_role, reason="테스트 역할 부여")
+            await member.add_roles(test_role, reason="테스트 역할 부여 (관리자 승인)")
+
             await member.send(
                 "안녕하세요.\n\n"
                 "Exceed 클랜에 지원해 주셔서 진심으로 감사드립니다.\n"
@@ -124,14 +144,18 @@ class DecisionButtonView(discord.ui.View):
                 "Exceed는 팀워크와 커뮤니티 분위기를 중시하는 만큼,\n"
                 "테스트 기간 중 적극적인 참여와 긍정적인 소통을 기대하겠습니다.\n\n"
                 "궁금하신 사항이나 불편한 점이 있으시면 언제든지 운영진에게 문의해 주세요.\n"
-                "문의는 아래 채널을 통해 주셔도 됩니다:\n"
+                "문의는 아래 채널을 통해 주셔도 됩니다:\n\n"
                 "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
                 "다시 한번 지원해 주셔서 감사드리며, 앞으로의 활동을 기대하겠습니다!\n\n"
                 "감사합니다.\n\n"
                 "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
             )
-            await interaction.followup.send(f"🟡 {member.mention}님에게 테스트 역할을 부여했습니다.")
-            await get_logger(interaction.client, f"{member} ({member.id})님에게 테스트 역할을 부여했습니다.")
+
+            await interaction.followup.send(f"{member.mention}님에게 테스트 역할을 부여했습니다.")
+
+            # Use logger properly (assuming self.cog.logger or some logger instance)
+            if self.cog and hasattr(self.cog, "logger"):
+                self.cog.logger.info(f"{member} ({member.id})님에게 테스트 역할을 부여했습니다.")
 
         except discord.Forbidden:
             await interaction.followup.send("❌ 역할 부여 또는 DM 전송 권한이 없습니다.", ephemeral=True)
@@ -257,16 +281,6 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 ephemeral=True
             )
 
-        # Add applicant role on submit
-        applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
-        if applicant_role:
-            try:
-                await interaction.user.add_roles(applicant_role, reason="지원서 제출로 인한 역할 부여")
-            except discord.Forbidden:
-                await get_logger(interaction.client, f"권한 부족: {interaction.user}에게 역할 부여 실패")
-            except Exception as e:
-                await get_logger(interaction.client, f"지원자 역할 부여 오류: {e}")
-
         embed = discord.Embed(
             title="📝 인터뷰 요청 접수",
             description=f"{interaction.user.mention} 님이 인터뷰를 요청했습니다.",
@@ -379,32 +393,90 @@ class InterviewRequestCog(commands.Cog):
         if not channel:
             return logger.error(f"공개 채널 ID {self.public_channel_id}를 찾을 수 없습니다.")
 
-        embed = discord.Embed(
-            title="✨ 인터뷰 요청 안내 ✨",
-            description=(
-                "Exceed 클랜에 지원하고 싶으신가요?\n"
-                "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"
-                "신속하게 확인 후 연락드리겠습니다."
-            ),
-            color=discord.Color.blue(),
-            timestamp=datetime.now(timezone.utc)
-        )
-        embed.set_thumbnail(
-            url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png"
-        )
-        embed.set_footer(text="Exceed • 인터뷰 시스템")
-        embed.set_author(
-            name="Exceed 인터뷰 안내",
-            icon_url="https://cdn-icons-png.flaticon.com/512/295/295128.png"
-        )
-
         try:
             await channel.purge(limit=None)
-            await channel.send(
-                embed=embed,
-                view=InterviewView(self.private_channel_id, self)
+
+            # 1. 가입 조건 안내 임베드 (원본 이모지 사용)
+            rules_embed = discord.Embed(
+                title="🎯 XCD 발로란트 클랜 가입 조건 안내",
+                description="📜 최종 업데이트: 2025.07.06",
+                color=discord.Color.orange()
             )
-            logger.info("📨・지원서-제출 채널에 인터뷰 요청 버튼과 메시지를 보냈습니다.")
+            rules_embed.add_field(
+                name="가입 전 아래 조건을 반드시 확인해 주세요.",
+                value=(
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "🔞 1. 나이 조건\n"
+                    "・만 20세 이상 (2005년생 이전)\n"
+                    "・성숙한 커뮤니케이션과 책임감 있는 행동을 기대합니다.\n\n"
+                    "🎮 2. 실력 조건\n"
+                    "・현재 티어 골드 이상 (에피소드 기준)\n"
+                    "・트라이아웃(스크림 테스트)으로 실력 확인 가능\n"
+                    "・게임 이해도 & 팀워크도 함께 평가\n\n"
+                    "💬 3. 매너 & 소통\n"
+                    "・욕설/무시/조롱/반말 등 비매너 언행 금지\n"
+                    "・피드백을 받아들이고 긍정적인 태도로 게임 가능\n"
+                    "・디스코드 마이크 필수\n\n"
+                    "⏱️ 4. 활동성\n"
+                    "・주 3회 이상 접속 & 게임 참여 가능자\n"
+                    "・대회/스크림/내전 등 일정에 적극 참여할 의향 있는 분\n"
+                    "・30일 이상 미접속 시 자동 탈퇴 처리 가능\n\n"
+                    "🚫 5. 제한 대상\n"
+                    "・다른 클랜과 겹치는 활동 중인 유저\n"
+                    "・트롤, 욕설, 밴 이력 등 제재 기록 있는 유저\n"
+                    "・대리/부계정/계정 공유 등 비정상 활동\n"
+                    "━━━━━━━━━━━━━━━━━━━━━"
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="📋 가입 절차",
+                value=(
+                    "1️⃣ 디스코드 서버 입장\n"
+                    "2️⃣ 가입 지원서 작성 or 인터뷰\n"
+                    "3️⃣ 트라이아웃 or 최근 경기 클립 확인\n"
+                    "4️⃣ 운영진 승인 → 역할 부여 후 가입 완료"
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="🧠 FAQ",
+                value=(
+                    "Q. 마이크 없으면 가입 안 되나요?\n"
+                    "→ 네. 음성 소통은 필수입니다. 텍스트만으로는 활동이 어렵습니다.\n\n"
+                    "Q. 골드 미만인데 들어갈 수 있나요?\n"
+                    "→ 트라이아웃으로 팀워크/이해도 확인 후 예외 승인될 수 있습니다."
+                ),
+                inline=False
+            )
+            rules_embed.set_footer(
+                text="✅ 가입 후 일정 기간 적응 평가 기간이 있으며\n"
+                     "매너, 참여도 부족 시 경고 없이 탈퇴될 수 있습니다.\n\n"
+                     "📌 본 안내는 클랜 운영 상황에 따라 변경될 수 있습니다."
+            )
+
+            await channel.send(embed=rules_embed)
+
+            # 2. 인터뷰 안내 임베드 + 버튼 (기존 그대로)
+            interview_embed = discord.Embed(
+                title="✨ 인터뷰 요청 안내 ✨",
+                description=(
+                    "Exceed 클랜에 지원하고 싶으신가요?\n"
+                    "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"
+                    "신속하게 확인 후 연락드리겠습니다."
+                ),
+                color=discord.Color.blue(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
+            interview_embed.set_footer(text="Exceed • 인터뷰 시스템")
+            interview_embed.set_author(
+                name="Exceed 인터뷰 안내",
+                icon_url="https://cdn-icons-png.flaticon.com/512/295/295128.png"
+            )
+
+            await channel.send(embed=interview_embed, view=InterviewView(self.private_channel_id, self))
+            logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")
 
         except Exception as e:
             logger.error(f"인터뷰 요청 메시지 전송 실패: {e}")
