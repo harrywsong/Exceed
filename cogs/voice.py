@@ -43,12 +43,30 @@ class TempVoice(commands.Cog):
                 return
 
             try:
-                new_channel = await category.create_voice_channel(name=f"🎙️・{member.display_name}님의 채널")
+                guild = member.guild
+
+                overwrites = {
+                    guild.default_role: discord.PermissionOverwrite(connect=True, view_channel=True),
+                    member: discord.PermissionOverwrite(
+                        manage_channels=True,
+                        move_members=True,
+                        mute_members=True,
+                        deafen_members=True,
+                        connect=True,
+                        speak=True
+                    )
+                }
+
+                new_channel = await category.create_voice_channel(
+                    name=f"🎙️・{member.display_name}님의 채널",
+                    overwrites=overwrites
+                )
                 self.temp_channels[new_channel.id] = member.id
                 await member.move_to(new_channel)
-                logger.info(f"사용자 {member.display_name}님을 위해 임시 음성 채널 '{new_channel.name}'을(를) 생성했습니다.")
+
+                logger.info(f"사용자 {member.display_name}님을 위해 임시 음성 채널 '{new_channel.name}'을(를) 생성하고 이동시켰습니다.")
             except Exception as e:
-                logger.error(f"{member.display_name}님을 위한 임시 음성 채널 생성 또는 이동에 실패했습니다: {e}")
+                logger.error(f"{member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 실패: {e}")
 
         # User leaves a voice channel - delete temp channel if empty
         if before.channel and before.channel.id in self.temp_channels:
@@ -59,6 +77,7 @@ class TempVoice(commands.Cog):
                     logger.info(f"빈 임시 음성 채널 삭제됨: {before.channel.name}")
                 except Exception as e:
                     logger.error(f"임시 채널 {before.channel.name} 삭제 실패: {e}")
+
 
 async def setup(bot):
     await bot.add_cog(TempVoice(bot))
