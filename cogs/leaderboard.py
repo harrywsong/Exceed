@@ -226,7 +226,7 @@ class ClanLeaderboard(commands.Cog):
     async def daily_leaderboard_update(self):
         # Calculate next 4 AM Eastern time from now
         now = datetime.now(tz=EASTERN_TZ)
-        target_time = time(4, 0, 0)
+        target_time = time(23, 0, 0)  # 11:00 PM Eastern
         next_4am = datetime.combine(now.date(), target_time).replace(tzinfo=EASTERN_TZ)
         if now >= next_4am:
             next_4am += timedelta(days=1)
