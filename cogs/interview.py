@@ -151,7 +151,7 @@ class DecisionButtonView(discord.ui.View):
                 "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
             )
 
-            await interaction.followup.send(f"{member.mention}님에게 테스트 역할을 부여했습니다.")
+            await interaction.followup.send(f"🟡 {member.mention}님에게 테스트 역할을 부여했습니다.")
 
             # Use logger properly (assuming self.cog.logger or some logger instance)
             if self.cog and hasattr(self.cog, "logger"):
@@ -211,7 +211,7 @@ class DecisionButtonView(discord.ui.View):
             if applicant_role and applicant_role in member.roles:
                 await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
 
-            await interaction.followup.send(f"{member.mention}님을 불합격 처리했습니다.")
+            await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다.")
         except discord.Forbidden:
             await interaction.followup.send("DM을 보낼 수 없습니다.", ephemeral=True)
 
