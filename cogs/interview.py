@@ -14,6 +14,8 @@ import traceback
 from discord import File
 from datetime import datetime, timezone
 
+from typing import Optional
+
 from cogs.welcomegoodbye import BG_PATH, FONT
 from utils import config
 from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_ID, WELCOME_CHANNEL_ID, \
@@ -33,7 +35,7 @@ class DecisionButtonView(discord.ui.View):
         self.applicant_id = applicant_id
         self.cog = cog
 
-    def _extract_user_id(self, interaction: discord.Interaction) -> int | None:
+    def _extract_user_id(self, interaction: discord.Interaction) -> Optional[int]:
         user_id = None
         if interaction.message.embeds:
             embed = interaction.message.embeds[0]
