@@ -6,13 +6,18 @@ import json
 import os
 import urllib.parse
 import uuid
+import asyncio  # Import asyncio for async subprocess execution
+import traceback  # Import traceback for detailed error logging
+
 from utils.logger import get_logger
 from utils import config
+
 
 class TrackerScraper(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = get_logger("내전 스크레이퍼", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger.info("TrackerScraper cog initialized.")
 
     @app_commands.command(
         name="내전등록",
@@ -27,120 +32,150 @@ class TrackerScraper(commands.Cog):
             script_path = os.path.join(os.path.dirname(__file__), "..", "scraper", "scraper.js")
             output_path = os.path.join(os.path.dirname(__file__), "..", "scraper", "screenshot.png")
 
+            # Clean up previous screenshot if it exists
             if os.path.exists(output_path):
                 os.remove(output_path)
-                self.logger.debug("기존 스크린샷 파일 삭제됨")
+                self.logger.debug("기존 스크린샷 파일 삭제 완료.")
 
-            result = subprocess.run(
-                ["node", script_path, url],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=120
-            )
-
-            stderr = result.stderr or ""
-            stdout = result.stdout or ""
-
-            if result.returncode != 0 or not stdout.strip():
-                combined = (stderr + stdout).strip() or "(stdout 또는 stderr에 출력 없음)"
-                self.logger.error(f"스크래핑 실패: {combined}")
-                if os.path.exists(output_path):
-                    file = discord.File(output_path, filename="screenshot.png")
-                    await interaction.followup.send(f"❌ 스크래핑 실패:\n```\n{combined}\n```", file=file)
-                else:
-                    await interaction.followup.send(f"❌ 스크래핑 실패:\n```\n{combined}\n```")
-                return
-
+            # Attempt to extract match_uuid from the URL
+            match_uuid = None
             try:
-                data = json.loads(stdout)
-                self.logger.info("스크래퍼 JSON 출력 성공적으로 파싱됨")
-            except json.JSONDecodeError:
-                self.logger.error("JSON 디코딩 실패")
-                if os.path.exists(output_path):
-                    file = discord.File(output_path, filename="screenshot.png")
-                    await interaction.followup.send("❌ 스크래퍼에서 JSON 출력 파싱 실패", file=file)
+                # Expecting URL format like: https://tracker.gg/valorant/match/MATCH_UUID
+                path_parts = url.split('/')
+                # Get the last part, which should be the UUID
+                if path_parts and len(path_parts[-1]) == 36 and '-' in path_parts[
+                    -1]:  # Basic check for UUID length and format
+                    match_uuid = path_parts[-1]
                 else:
-                    await interaction.followup.send("❌ 스크래퍼에서 JSON 출력 파싱 실패")
-                return
-
-            match_uuid = data.get("match_id") or data.get("match_uuid") or str(uuid.uuid4())
-            self.logger.debug(f"매치 UUID: {match_uuid}")
-
-            try:
-                async with self.bot.pool.acquire() as conn:
-                    exists = await conn.fetchval(
-                        "SELECT EXISTS(SELECT 1 FROM matches WHERE match_uuid=$1)", match_uuid
-                    )
-                if exists:
-                    self.logger.warning(f"이미 등록된 매치 UUID: {match_uuid}")
-                    await interaction.followup.send("⚠️ 이미 등록된 매치입니다.", ephemeral=True)
-                    return
+                    self.logger.warning(f"URL did not contain a valid UUID at the end: {url}")
             except Exception as e:
-                self.logger.error(f"DB 매치 존재 여부 확인 오류: {e}")
-                await interaction.followup.send("❌ 매치 확인 중 데이터베이스 오류가 발생했습니다.", ephemeral=True)
-                return
+                self.logger.warning(f"Error extracting UUID from URL {url}: {e}")
+                match_uuid = None  # Ensure it's None if parsing fails
 
-            valorant_stats_cog = self.bot.get_cog("ValorantStats")
-            if valorant_stats_cog:
-                await valorant_stats_cog.save_match_and_clan(data, match_uuid)
-                self.logger.info(f"매치 및 플레이어 데이터 저장 완료: {match_uuid}")
-            else:
-                self.logger.warning("ValorantStats 코그를 찾을 수 없음")
-
-            players = data.get("players", [])
-            team1_score = data.get("team1_score", 0)
-            team2_score = data.get("team2_score", 0)
-            map_name = data.get("map", "알 수 없음")
-
-            players.sort(key=lambda p: p.get("acs", 0), reverse=True)
-
-            embed = discord.Embed(
-                title=f"📊 매치 요약 - {map_name}",
-                description=(
-                    f"🔗 [Tracker.gg에서 보기]({url})\n\n"
-                    f"🔴 팀 1: `{team1_score}` 라운드\n"
-                    f"🔵 팀 2: `{team2_score}` 라운드\n\n"
-                ),
-                color=discord.Color.blurple()
+            # Execute the Node.js scraper script asynchronously
+            process = await asyncio.create_subprocess_exec(
+                "node", script_path, url,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
             )
 
-            for i, p in enumerate(players, start=1):
-                riot_id = p.get("name", "Unknown#0000")
-                encoded_riot_id = urllib.parse.quote(riot_id, safe='')
+            # Wait for the process to complete and capture its output
+            stdout, stderr = await process.communicate()
+
+            if stderr:
+                self.logger.error(f"Puppeteer script stderr: {stderr.decode()}")
+
+            if process.returncode != 0:
+                self.logger.error(f"Puppeteer script exited with code {process.returncode}")
+                await interaction.followup.send(
+                    "❌ 매치 데이터를 가져오는 데 실패했습니다. 트래커 링크를 확인하거나 다시 시도해주세요.",
+                    ephemeral=True
+                )
+                return
+
+            json_output_str = stdout.decode().strip()
+            self.logger.debug(f"Raw JSON output from scraper: {json_output_str}")
+
+            # The scraper's console logs might appear before the JSON object.
+            # Find the actual start of the JSON data.
+            json_start_index = json_output_str.find('{')
+            if json_start_index == -1:
+                self.logger.error(f"No JSON object found in scraper output: {json_output_str}")
+                await interaction.followup.send(
+                    "❌ 스크레이퍼에서 유효한 JSON 데이터를 찾을 수 없습니다. 개발자에게 문의해주세요.",
+                    ephemeral=True
+                )
+                return
+
+            # Extract and parse the JSON part of the output
+            json_data_str = json_output_str[json_start_index:]
+
+            try:
+                parsed_data = json.loads(json_data_str)
+                self.logger.info("스크레이퍼 출력 JSON 파싱 성공.")
+            except json.JSONDecodeError as e:
+                self.logger.error(f"JSON 파싱 오류: {e}. Raw output: {json_output_str}\n{traceback.format_exc()}")
+                await interaction.followup.send(
+                    "❌ 스크레이퍼가 손상된 데이터를 반환했습니다. 개발자에게 문의해주세요.",
+                    ephemeral=True
+                )
+                return
+
+            # Pass the parsed data and match_uuid to the ValorantStats cog for saving
+            valorant_stats_cog = self.bot.get_cog('ValorantStats')
+            if valorant_stats_cog:
+                await valorant_stats_cog.save_match_and_clan(parsed_data, match_uuid)
+                self.logger.info(f"매치 데이터 ({match_uuid}) ValorantStats cog에 전달 완료.")
+            else:
+                self.logger.error("ValorantStats cog not found. Cannot save match data.")
+                await interaction.followup.send(
+                    "❌ 내부 오류: 통계 모듈을 찾을 수 없습니다. 관리자에게 문의해주세요.",
+                    ephemeral=True
+                )
+                return
+
+            # --- Construct and send the Discord embed ---
+            embed = discord.Embed(
+                title=f"📊 발로란트 매치 스코어 요약 - {parsed_data.get('map', '알 수 없음')}",
+                description=(
+                    f"**모드:** {parsed_data.get('mode', '알 수 없음')}\n"
+                    f"**스코어:** Team 1 {parsed_data.get('team1_score', 0)} : {parsed_data.get('team2_score', 0)} Team 2\n"
+                    f"**총 라운드:** {parsed_data.get('round_count', 0)}"
+                ),
+                color=discord.Color.blue()
+            )
+
+            for i, p in enumerate(parsed_data.get("players", [])):
+                # Attempt to find Discord ID using Riot ID for mentioning
+                discord_id = None
+                if self.bot.pool:  # Ensure database pool is available
+                    try:
+                        async with self.bot.pool.acquire() as conn:
+                            row = await conn.fetchrow(
+                                "SELECT discord_id FROM registrations WHERE riot_id = $1",
+                                p.get("name")
+                            )
+                            if row:
+                                discord_id = row['discord_id']
+                    except Exception as db_e:
+                        self.logger.warning(f"Could not fetch discord_id for {p.get('name')}: {db_e}")
+
+                medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else ""
+                mention_text = f"<@{discord_id}>\n" if discord_id else ""
+                riot_id = p.get('name', '알 수 없음')
+
+                # Encode the Riot ID for the Tracker.gg profile URL
+                encoded_riot_id = urllib.parse.quote_plus(riot_id)
                 profile_url = f"https://tracker.gg/valorant/profile/riot/{encoded_riot_id}/overview"
 
-                discord_id = None
+                # Display Riot ID as a hyperlink to their Tracker.gg profile
+                riot_id_display = f"[{riot_id}]({profile_url})"
+
+                # Handle 'plus_minus' which might be a string like "+17" or "?"
+                plus_minus_val = p.get('plus_minus', '0').replace('+', '')  # Remove '+' for conversion
                 try:
-                    async with self.bot.pool.acquire() as conn:
-                        discord_id = await conn.fetchval(
-                            "SELECT discord_id FROM clan WHERE riot_id = $1 LIMIT 1", riot_id
-                        )
-                except Exception as e:
-                    self.logger.error(f"DB에서 discord_id 조회 실패 ({riot_id}): {e}")
-
-                medal_emojis = {1: "🥇", 2: "🥈", 3: "🥉"}
-                medal = medal_emojis.get(i, f"{i}.")
-
-                mention_text = f"<@{discord_id}>\n" if discord_id else ""
-                riot_id_display = f"🕹️ [{riot_id}]({profile_url})"
+                    plus_minus_int = int(plus_minus_val)
+                    plus_minus_display = f"{'+' if plus_minus_int > 0 else ''}{plus_minus_int}"
+                except ValueError:
+                    plus_minus_display = plus_minus_val  # If not a number, keep original string (e.g., "?")
 
                 field_value = (
                     f"{medal}\n"
                     f"{mention_text}"
                     f"{riot_id_display}\n"
                     f"🎭 요원: {p.get('agent', '알 수 없음')} | 🧬 팀: {p.get('team', '알 수 없음')}\n"
-                    f"📈 ACS: {p.get('acs', 0)} (+{p.get('acs_bonus', 0)} pts)\n"
-                    f"🔄 라운드 승리: {p.get('round_win_points', 0)} pts\n"
-                    f"🎯 총 포인트: {p.get('total_points', 0)}"
+                    f"📈 ACS: {p.get('acs', 0)} ({plus_minus_display}) | 📊 KDA: {p.get('kills', 0)} / {p.get('deaths', 0)} / {p.get('assists', 0)}\n"
+                    f"🔥 FK/FD: {p.get('fk', 0)} / {p.get('fd', 0)} | 🎯 헤드샷률: {p.get('hs_pct', 0)}%\n"
+                    f"🌟 총 포인트: {p.get('total_points', 0)}"
                 )
 
                 embed.add_field(
-                    name="\u200b",
+                    name=f"[{p.get('tier', '?')}] {riot_id}",  # Player tier and Riot ID as field name
                     value=field_value,
                     inline=False
                 )
 
+            # Send the embed, with screenshot if available
             if os.path.exists(output_path):
                 file = discord.File(output_path, filename="screenshot.png")
                 await interaction.followup.send(embed=embed, file=file)
@@ -151,10 +186,18 @@ class TrackerScraper(commands.Cog):
 
         except subprocess.TimeoutExpired:
             self.logger.error("Puppeteer 스크립트 실행 시간 초과")
-            await interaction.followup.send("❌ Puppeteer 스크립트 실행 시간 초과")
+            await interaction.followup.send("❌ 스크레이퍼 실행 시간이 초과되었습니다. 다시 시도해주세요.", ephemeral=True)
+        except FileNotFoundError:
+            self.logger.error(f"Puppeteer script not found at {script_path}")
+            await interaction.followup.send("❌ 스크레이퍼 파일을 찾을 수 없습니다. 봇 설정 오류입니다.", ephemeral=True)
         except Exception as e:
-            self.logger.error(f"스크래핑 중 예외 발생: {e}", exc_info=True)
-            await interaction.followup.send(f"❌ 오류 발생: {str(e)}")
+            self.logger.critical(f"Unexpected error in trackerscore command: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ 매치 데이터를 가져오는 중 알 수 없는 오류가 발생했습니다: `{e}`", ephemeral=True)
+            # Notify the log channel for critical errors
+            await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
+                f"🚨 **치명적인 오류 발생!** `/내전등록` 명령어 실행 중 예상치 못한 문제: `{e}`"
+            )
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TrackerScraper(bot))
