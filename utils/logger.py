@@ -31,6 +31,12 @@ class DiscordLogHandler(logging.Handler):
             except Exception as e:
                 print(f"Failed to send log to Discord channel: {e}")
 
+# Custom FileHandler that flushes after each log write
+class FlushFileHandler(logging.FileHandler):
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
 def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=None) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level)
@@ -48,11 +54,11 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    # Daily file log
+    # Daily file log with flushing
     date_str = datetime.now().strftime("%Y-%m-%d")
     os.makedirs("logs", exist_ok=True)
     file_path = f"logs/{date_str}.log"
-    file_handler = logging.FileHandler(file_path, encoding='utf-8')
+    file_handler = FlushFileHandler(file_path, encoding='utf-8')
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 

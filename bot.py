@@ -3,32 +3,36 @@ import os
 import discord
 from discord.ext import commands
 import asyncio
-import asyncpg  # Make sure asyncpg is installed: pip install asyncpg
+import asyncpg
+from datetime import datetime, timedelta, time
+import pytz
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 from utils import config
 from utils.logger import get_logger
 from cogs.interview import DecisionButtonView
+from upload_to_drive import upload_log_to_drive
 
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.message_content = True  # Enable if you need to read message content
+intents.message_content = True
 
 class ExceedBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
         self.logger = None
-        self.pool = None  # Database pool will be set later
+        self.pool = None
+        self.scheduler = AsyncIOScheduler(timezone="US/Eastern")
 
     async def setup_hook(self):
-        # Initialize database pool here with statement_cache_size=0
         self.pool = await asyncpg.create_pool(
             dsn=config.DATABASE_URL,
             statement_cache_size=0
         )
         self.logger.info("✅ Database pool created successfully.")
 
-        # Load cogs
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py"):
                 try:
@@ -37,7 +41,6 @@ class ExceedBot(commands.Bot):
                 except Exception as e:
                     self.logger.error(f"{filename} 로드 실패: {e}")
 
-        # Sync slash commands globally or per guild as you want
         await self.tree.sync()
         self.logger.info("슬래시 명령어 동기화 완료.")
 
@@ -50,6 +53,59 @@ class ExceedBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"Persistent view 등록 실패: {e}")
 
+        # Set presence example (optional)
+        activity = discord.Activity(type=discord.ActivityType.watching, name="you sleep")
+        await self.change_presence(activity=activity)
+
+        # Immediately upload previous log on startup
+        await self.upload_and_cleanup_log()
+
+        # Schedule daily upload at 12 AM ET
+        self.scheduler.add_job(
+            self.upload_and_cleanup_log,
+            CronTrigger(hour=0, minute=0, timezone="US/Eastern"),
+            id="daily_log_upload",
+            replace_existing=True
+        )
+        self.scheduler.start()
+
+    async def upload_and_cleanup_log(self):
+        """
+        Upload the current log file to Google Drive, then delete and recreate a fresh empty log file.
+        """
+        # Determine log file path for "yesterday" in case bot starts after midnight
+        eastern = pytz.timezone("US/Eastern")
+        now_et = datetime.now(eastern)
+        # Upload yesterday's log if time is shortly after midnight, else today's
+        if now_et.time() < time(1, 0):  # before 1 AM ET, upload yesterday's log
+            log_date = now_et.date() - timedelta(days=1)
+        else:
+            log_date = now_et.date()
+
+        log_file_path = f"logs/{log_date.strftime('%Y-%m-%d')}.log"
+        if not os.path.exists(log_file_path):
+            self.logger.warning(f"로그 파일이 없습니다: {log_file_path}, 업로드 생략")
+            return
+
+        # Run synchronous upload function without blocking event loop
+        self.logger.info(f"📤 Uploading log file {log_file_path} to Google Drive...")
+        try:
+            await self.loop.run_in_executor(None, upload_log_to_drive, log_file_path)
+            self.logger.info("✅ 업로드 성공!")
+
+            # Delete the uploaded log file
+            os.remove(log_file_path)
+            self.logger.info(f"🗑️ 로그 파일 삭제 완료: {log_file_path}")
+
+            # Recreate an empty file so logger can continue logging without error
+            with open(log_file_path, "w", encoding="utf-8") as f:
+                pass
+
+            self.logger.info("🆕 새 로그 파일 생성 완료")
+
+        except Exception as e:
+            self.logger.error(f"❌ 업로드 또는 삭제 중 오류 발생: {e}")
+
 def main():
     bot = ExceedBot()
 
@@ -59,7 +115,6 @@ def main():
         discord_log_channel_id=config.LOG_CHANNEL_ID
     )
 
-    # Fix Windows console code page to UTF-8, if on Windows
     if sys.platform == "win32":
         import ctypes
         ctypes.windll.kernel32.SetConsoleOutputCP(65001)

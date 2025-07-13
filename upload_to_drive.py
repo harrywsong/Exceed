@@ -1,30 +1,30 @@
-# upload_to_drive.py
-
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
-from google.oauth2 import service_account
-from datetime import datetime
 import os
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 SERVICE_ACCOUNT_FILE = 'exceed-465801-9a237edcd3b1.json'
 FOLDER_ID = '1QL24lQBS-rtJTieNrgoltTPTukD8XxaL'
 
-def upload_log_to_drive():
+def upload_log_to_drive(file_path):
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
+    from google.oauth2 import service_account
+
+    SCOPES = ['https://www.googleapis.com/auth/drive.file']
+    SERVICE_ACCOUNT_FILE = 'exceed-465801-9a237edcd3b1.json'
+    FOLDER_ID = '1QL24lQBS-rtJTieNrgoltTPTukD8XxaL'
+
     try:
         creds = service_account.Credentials.from_service_account_file(
             SERVICE_ACCOUNT_FILE, scopes=SCOPES)
         service = build('drive', 'v3', credentials=creds)
 
-        today = datetime.now().strftime("%Y-%m-%d")
-        file_path = f"logs/{today}.log"
-
         if not os.path.exists(file_path):
             print(f"❌ Log file {file_path} does not exist.")
             return
 
+        file_name = os.path.basename(file_path)
         file_metadata = {
-            'name': f"{today}.log",
+            'name': file_name,
             'parents': [FOLDER_ID]
         }
 
@@ -40,3 +40,4 @@ def upload_log_to_drive():
 
     except Exception as e:
         print(f"❌ Failed to upload log to Google Drive: {e}")
+        raise
