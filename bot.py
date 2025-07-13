@@ -1,10 +1,11 @@
 import sys
 import os
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import asyncio
-import asyncpg  # Make sure asyncpg is installed: pip install asyncpg
-from datetime import datetime
+import asyncpg
+from datetime import datetime, timedelta, time
+import pytz
 
 from utils import config
 from utils.logger import get_logger
@@ -22,8 +23,13 @@ class ExceedBot(commands.Bot):
         self.logger = None
         self.pool = None  # Database pool will be set later
 
+    async def upload_and_delete_log_async(self, log_path):
+        """Run the blocking upload_log_to_drive in an executor"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, upload_log_to_drive, log_path)
+
     async def setup_hook(self):
-        # Initialize database pool here with statement_cache_size=0
+        # Initialize database pool with statement_cache_size=0
         self.pool = await asyncpg.create_pool(
             dsn=config.DATABASE_URL,
             statement_cache_size=0
@@ -43,6 +49,18 @@ class ExceedBot(commands.Bot):
         await self.tree.sync()
         self.logger.info("슬래시 명령어 동기화 완료.")
 
+        # Upload yesterday's log file on startup
+        est = pytz.timezone("US/Eastern")
+        yesterday = datetime.now(est) - timedelta(days=1)
+        yesterday_log = os.path.join("logs", yesterday.strftime("%Y-%m-%d") + ".log")
+        try:
+            await self.upload_and_delete_log_async(yesterday_log)
+        except Exception as e:
+            self.logger.error(f"❌ 어제 로그 업로드 실패: {e}")
+
+        # Start daily log upload task
+        self.daily_log_upload_task.start()
+
     async def on_ready(self):
         self.logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
 
@@ -52,10 +70,33 @@ class ExceedBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"Persistent view 등록 실패: {e}")
 
-        # Upload today's log file asynchronously without blocking
-        log_file = os.path.join("logs", datetime.now().strftime("%Y-%m-%d") + ".log")
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, upload_log_to_drive, log_file)
+    @tasks.loop(count=1)
+    async def daily_log_upload_task(self):
+        """Runs once on startup to start the forever loop"""
+        # Just call the forever loop below
+        self.logger.info("Starting daily log upload scheduler...")
+        self.loop.create_task(self._daily_log_upload_forever())
+
+    async def _daily_log_upload_forever(self):
+        est = pytz.timezone("US/Eastern")
+        while True:
+            now = datetime.now(est)
+            # Next midnight in EST timezone
+            next_midnight = datetime.combine(now.date() + timedelta(days=1), time(0, 0, 0), tzinfo=est)
+            seconds_until_midnight = (next_midnight - now).total_seconds()
+
+            self.logger.info(f"Waiting {seconds_until_midnight:.2f}s until next log upload at midnight EST.")
+            await asyncio.sleep(seconds_until_midnight)
+
+            # Upload the previous day's log after midnight hits
+            log_date = next_midnight.date() - timedelta(days=1)
+            log_path = os.path.join("logs", f"{log_date.strftime('%Y-%m-%d')}.log")
+
+            try:
+                self.logger.info(f"Uploading daily log: {log_path}")
+                await self.upload_and_delete_log_async(log_path)
+            except Exception as e:
+                self.logger.error(f"❌ 일일 로그 업로드 실패: {e}")
 
 def main():
     bot = ExceedBot()

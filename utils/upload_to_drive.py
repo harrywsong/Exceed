@@ -9,43 +9,52 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_PICKLE = 'token.pickle'
 FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # Your Google Drive folder ID
 
-def upload_log_to_drive(file_path):
+
+def upload_log_to_drive(file_path: str) -> str | None:
+    """
+    Uploads a log file to Google Drive in the specified folder, appending a timestamp
+    to the filename on Drive. Deletes the local file upon successful upload.
+
+    Args:
+        file_path (str): Path to the local log file to upload.
+
+    Returns:
+        str | None: The Google Drive file ID of the uploaded file, or None if upload failed.
+    """
     try:
         if not os.path.exists(file_path):
             print(f"❌ Log file not found: {file_path}")
             return None
 
-        # Load credentials
+        # Load stored credentials from token.pickle
         creds = None
         if os.path.exists(TOKEN_PICKLE):
-            with open(TOKEN_PICKLE, 'rb') as token:
-                creds = pickle.load(token)
+            with open(TOKEN_PICKLE, 'rb') as token_file:
+                creds = pickle.load(token_file)
 
+        # Refresh or raise if creds invalid
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                raise Exception("Invalid or missing credentials. Run get_token.py again.")
+                raise Exception("Invalid or missing credentials. Please run the auth flow again.")
 
-        # Build Drive API service
+        # Build the Drive API service client
         service = build('drive', 'v3', credentials=creds)
 
+        # Extract file extension and create a timestamped filename for Drive
         original_name = os.path.basename(file_path)
-        name_part, ext_part = os.path.splitext(original_name)
-
-        # Timestamp for upload time
-        upload_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-        # Compose filename with timestamp
-        drive_filename = f"{upload_timestamp}{ext_part}"
+        _, ext = os.path.splitext(original_name)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        drive_filename = f"{timestamp}{ext}"
 
         file_metadata = {
             'name': drive_filename,
             'parents': [FOLDER_ID]
         }
-
         media = MediaFileUpload(file_path, mimetype='text/plain')
 
+        # Upload file
         uploaded_file = service.files().create(
             body=file_metadata,
             media_body=media,
@@ -56,12 +65,12 @@ def upload_log_to_drive(file_path):
         print(f"✅ Uploaded {file_path} to Google Drive as {drive_filename}")
         print(f"🔗 File link: https://drive.google.com/file/d/{file_id}/view")
 
-        # Delete the local log file after successful upload
+        # Delete local log file after successful upload
         try:
             os.remove(file_path)
             print(f"🗑️ Deleted local log file: {file_path}")
-        except Exception as e:
-            print(f"⚠️ Failed to delete local log file: {e}")
+        except Exception as delete_error:
+            print(f"⚠️ Failed to delete local log file: {delete_error}")
 
         return file_id
 
