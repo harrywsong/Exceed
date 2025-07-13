@@ -45,6 +45,18 @@ async def create_db_pool_in_bot():
 # --- Flask API Setup ---
 api_app = Flask(__name__)
 
+# Suppress werkzeug INFO level messages for this Flask API app
+# This needs to be done early to prevent werkzeug from adding its default handlers
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.ERROR) # Set level to ERROR to suppress INFO and WARNING
+# Remove existing handlers from werkzeug logger to ensure no default output
+if not werkzeug_logger.handlers: # Only add if no handlers are present to avoid duplicates on reload
+    for handler in list(werkzeug_logger.handlers):
+        werkzeug_logger.removeHandler(handler)
+    # You can optionally add a NullHandler if you want to completely silence it
+    # werkzeug_logger.addHandler(logging.NullHandler())
+
+
 # Store bot_instance globally or pass it, so API can access it
 # This will be set in the main function
 global bot_instance
@@ -262,7 +274,11 @@ class MyBot(commands.Bot):
         ]
         for ext in initial_extensions:
             try:
-                await self.load_extension(ext)
+                if ext == 'cogs.autoguest':
+                    # AutoRoleCog requires role_ids during initialization
+                    await self.load_extension(ext, extras={'role_ids': config.AUTO_ROLE_IDS})
+                else:
+                    await self.load_extension(ext)
                 self.logger.info(f"✅ Cog 로드됨: {ext}")
             except commands.ExtensionAlreadyLoaded:
                 self.logger.warning(f"⚠️ Cog '{ext}'는 이미 로드되어 있습니다. 건너_.")
