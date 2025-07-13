@@ -81,7 +81,6 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
 
     # Use suffix for rotated log files: log.log.YYYY-MM-DD
     file_handler.suffix = "%Y-%m-%d"
-    file_handler.extMatch = logging.handlers.TimedRotatingFileHandler.extMatch
 
     logger.addHandler(file_handler)
 
