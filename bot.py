@@ -1,5 +1,4 @@
-# bot.py (Your main bot file - no changes needed from your last provided version)
-
+# bot.py
 import sys
 import os
 import shutil
@@ -10,10 +9,10 @@ import asyncio
 import asyncpg
 from datetime import datetime, timedelta, time
 import pytz
-import logging  # Import logging to access handlers
+import logging
 
 from utils import config
-from utils.logger import get_logger
+from utils.logger import get_logger, reconfigure_file_handler # Import reconfigure_file_handler
 from cogs.interview import DecisionButtonView
 from utils.upload_to_drive import upload_log_to_drive
 
@@ -40,9 +39,16 @@ class ExceedBot(commands.Bot):
             if isinstance(handler, logging.FileHandler):
                 try:
                     handler.flush()
-                    self.logger.debug(f"Flushed file handler: {handler.baseFilename}")
+                    # Use self.logger if available, otherwise print
+                    if self.logger:
+                        self.logger.debug(f"Flushed file handler: {handler.baseFilename}")
+                    else:
+                        print(f"DEBUG: Flushed file handler: {handler.baseFilename}")
                 except Exception as e:
-                    self.logger.error(f"Error flushing log handler {handler.baseFilename}: {e}")
+                    if self.logger:
+                        self.logger.error(f"Error flushing log handler {handler.baseFilename}: {e}")
+                    else:
+                        print(f"ERROR: Error flushing log handler {handler.baseFilename}: {e}")
 
     async def setup_hook(self):
         # Initialize database pool with statement_cache_size=0
@@ -71,12 +77,18 @@ class ExceedBot(commands.Bot):
             self.logger.info("Flushing log handlers before startup upload...")
             self._flush_log_handlers()
 
-            await asyncio.sleep(0.5)
+            # CRITICAL CHANGE: Reconfigure file handler before moving the file
+            # This ensures the old file handle is released and a new one will be opened for log.log
+            reconfigure_file_handler() # Call the new helper function from utils.logger
+
+            await asyncio.sleep(0.5) # Give a moment for handler to fully detach/reattach if needed
 
             timestamped_path = os.path.join("logs", f"log.log.{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
             try:
                 shutil.move(log_path, timestamped_path)
                 self.logger.info(f"Renamed current log to {timestamped_path} before startup upload.")
+                # Now, any new logs will go into the *new* log.log file
+                # The timestamped_path contains logs from before the move.
                 await self.upload_and_delete_log_async(timestamped_path)
             except Exception as e:
                 self.logger.error(f"❌ Failed to rename or upload startup log: {e}")
@@ -126,6 +138,9 @@ class ExceedBot(commands.Bot):
             if os.path.exists(log_path):
                 self.logger.info("Flushing log handlers before daily upload.")
                 self._flush_log_handlers()
+
+                # CRITICAL CHANGE: Reconfigure file handler before moving the file
+                reconfigure_file_handler() # Call the new helper function
 
                 await asyncio.sleep(0.5)
 
