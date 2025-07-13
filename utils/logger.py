@@ -13,6 +13,7 @@ CRASH_LOG_FILE = pathlib.Path(
 LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
 CRASH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+
 LOGGING_FORMATTER = logging.Formatter(
     "[{asctime}] [{levelname:.<8}] [{name}] {message}",
     datefmt="%Y-%m-%d %H:%M:%S",
@@ -49,7 +50,7 @@ class DiscordHandler(logging.Handler):
 
     def emit(self, record):
         # DEBUG: This print statement confirms if emit is being called at all
-        print(f"DEBUG: DiscordHandler.emit called for level {record.levelname}: {record.msg}", file=sys.stderr)
+        # print(f"DEBUG: DiscordHandler.emit called for level {record.levelname}: {record.msg}", file=sys.stderr)
 
         log_entry = self.format(record)
         if self.stopped:  # Don't buffer if closing
@@ -58,16 +59,14 @@ class DiscordHandler(logging.Handler):
 
         # Ensure that the record's level is at or above the handler's level
         if record.levelno < self.level:
-            print(
-                f"DEBUG: Log level ({record.levelname}) below handler's level ({logging.getLevelName(self.level)}). Skipping.",
-                file=sys.stderr)
+            # print(f"DEBUG: Log level ({record.levelname}) below handler's level ({logging.getLevelName(self.level)}). Skipping.", file=sys.stderr)
             return
 
         try:
             # If bot loop is running, use run_coroutine_threadsafe for thread safety
             if self.bot and self.bot.loop and not self.bot.loop.is_closed():
                 asyncio.run_coroutine_threadsafe(self._add_to_buffer(log_entry), self.bot.loop)
-                print(f"DEBUG: Log scheduled to buffer via run_coroutine_threadsafe: {log_entry}", file=sys.stderr)
+                # print(f"DEBUG: Log scheduled to buffer via run_coroutine_threadsafe: {log_entry}", file=sys.stderr)
             else:
                 # Fallback for very early startup before bot.loop is active
                 self._message_buffer.append(log_entry)
@@ -81,7 +80,7 @@ class DiscordHandler(logging.Handler):
     async def _add_to_buffer(self, msg):
         async with self._buffer_lock:
             self._message_buffer.append(msg)
-            print(f"DEBUG: Message added to buffer. Current buffer size: {len(self._message_buffer)}", file=sys.stderr)
+            # print(f"DEBUG: Message added to buffer. Current buffer size: {len(self._message_buffer)}", file=sys.stderr)
 
     async def _send_buffered_logs(self):
         """
@@ -100,62 +99,73 @@ class DiscordHandler(logging.Handler):
 
         print("DEBUG: DiscordHandler: Bot is ready, starting to send buffered logs.", file=sys.stderr)  # Debug print
 
+        # Process any existing buffered messages immediately before entering the loop
+        await self._process_and_send_buffer()
+
         while not self.stopped:
-            messages_to_send = []
-            async with self._buffer_lock:
-                if self._message_buffer:  # Check buffer before sleeping
-                    messages_to_send = self._message_buffer[:10]  # Send up to 10 messages at once
-                    self._message_buffer = self._message_buffer[10:]
-
-            if messages_to_send:
-                full_message = "```\n" + "\n".join(messages_to_send) + "\n```"
-
-                print(
-                    f"DEBUG: Attempting to send {len(messages_to_send)} log messages to Discord. Message length: {len(full_message)}",
-                    file=sys.stderr)
-
-                try:
-                    channel = self.bot.get_channel(self.channel_id)
-                    if not channel:
-                        print(
-                            f"ERROR: DiscordHandler: 로그 채널 ID {self.channel_id}을(를) 찾을 수 없습니다. 버퍼링된 로그 {len(messages_to_send)}개 지움.",
-                            file=sys.stderr)
-                        # Clear buffer if we can't find channel, to prevent endless loop of unsent messages
-                        async with self._buffer_lock:
-                            self._message_buffer.clear()
-                        break  # Exit the loop if channel is permanently unavailable
-
-                    if len(full_message) > 2000:
-                        # Discord message limit is 2000 characters. Split if necessary.
-                        print(f"DEBUG: Message too long ({len(full_message)} chars). Chunking and sending.",
-                              file=sys.stderr)
-                        for i, chunk in enumerate(self._chunk_message(full_message, 1990)):
-                            await channel.send(chunk)
-                            if i < len(full_message) / 1990 - 1:  # Don't sleep after the last chunk
-                                await asyncio.sleep(0.7)  # Small delay between parts
-                    else:
-                        await channel.send(full_message)
-                    print(f"DEBUG: Successfully sent {len(messages_to_send)} log messages to Discord.", file=sys.stderr)
-
-                except discord.Forbidden:
-                    print(
-                        f"ERROR: DiscordHandler: 채널 {self.channel_id}에 메시지를 보낼 권한이 없습니다. 버퍼링된 로그 {len(messages_to_send)}개 지움.",
-                        file=sys.stderr)
-                    # Clear buffer if we can't send, to prevent endless loop of unsent messages
-                    async with self._buffer_lock:
-                        self._message_buffer.clear()
-                    break  # Exit the loop if permissions are an issue
-                except discord.HTTPException as e:
-                    print(f"ERROR: Discord HTTP 오류 로그 전송: {e}", file=sys.stderr)
-                    await asyncio.sleep(5)  # Wait before retrying on HTTP error
-                except Exception as e:
-                    print(f"CRITICAL: DiscordHandler: 로그 메시지 전송 중 알 수 없는 오류 발생: {e}", file=sys.stderr)
-                    await asyncio.sleep(5)  # Wait before retrying on unknown error
-            else:
-                print("DEBUG: DiscordHandler buffer is empty. Skipping send cycle.", file=sys.stderr)  # Added debug
-
-            # Always sleep after a cycle, whether messages were sent or not
             await asyncio.sleep(5)  # Adjust sending interval as needed
+            await self._process_and_send_buffer()
+
+    async def _process_and_send_buffer(self):
+        """Helper to process and send a batch of messages from the buffer."""
+        messages_to_send = []
+        async with self._buffer_lock:
+            if not self._message_buffer:
+                print("DEBUG: DiscordHandler buffer is empty. Skipping send cycle.", file=sys.stderr)
+                return  # Nothing to send
+
+            # Take a batch of messages from the buffer
+            messages_to_send = self._message_buffer[:10]  # Send up to 10 messages at once
+            self._message_buffer = self._message_buffer[10:]
+
+        if not messages_to_send:
+            print("DEBUG: messages_to_send list is empty after taking from buffer. This should not happen if buffer was not empty.", file=sys.stderr)
+            return
+
+        full_message = "```\n" + "\n".join(messages_to_send) + "\n```"
+
+        print(
+            f"DEBUG: Attempting to send {len(messages_to_send)} log messages to Discord. Message length: {len(full_message)}",
+            file=sys.stderr)
+
+        try:
+            channel = self.bot.get_channel(self.channel_id)
+            if not channel:
+                print(
+                    f"ERROR: DiscordHandler: 로그 채널 ID {self.channel_id}을(를) 찾을 수 없습니다. 버퍼링된 로그 {len(messages_to_send)}개 지움.",
+                    file=sys.stderr)
+                # Clear buffer if we can't find channel, to prevent endless loop of unsent messages
+                async with self._buffer_lock: # Re-acquire lock to clear buffer
+                    self._message_buffer.clear()
+                return  # Exit if channel is permanently unavailable
+
+            if len(full_message) > 2000:
+                # Discord message limit is 2000 characters. Split if necessary.
+                print(f"DEBUG: Message too long ({len(full_message)} chars). Chunking and sending.",
+                      file=sys.stderr)
+                for i, chunk in enumerate(self._chunk_message(full_message, 1990)):
+                    await channel.send(chunk)
+                    if i < len(full_message) / 1990 - 1:  # Don't sleep after the last chunk
+                        await asyncio.sleep(0.7)  # Small delay between parts
+            else:
+                await channel.send(full_message)
+            print(f"DEBUG: Successfully sent {len(messages_to_send)} log messages to Discord.", file=sys.stderr)
+
+        except discord.Forbidden:
+            print(
+                f"ERROR: DiscordHandler: 채널 {self.channel_id}에 메시지를 보낼 권한이 없습니다. 버퍼링된 로그 {len(messages_to_send)}개 지움.",
+                file=sys.stderr)
+            # Clear buffer if we can't send, to prevent endless loop of unsent messages
+            async with self._buffer_lock: # Re-acquire lock to clear buffer
+                self._message_buffer.clear()
+            return  # Exit if permissions are an issue
+        except discord.HTTPException as e:
+            print(f"ERROR: Discord HTTP 오류 로그 전송: {e}", file=sys.stderr)
+            # Do not clear buffer on HTTP error, retry on next cycle
+        except Exception as e:
+            print(f"CRITICAL: DiscordHandler: 로그 메시지 전송 중 알 수 없는 오류 발생: {e}", file=sys.stderr)
+            # Do not clear buffer on unknown error, retry on next cycle
+
 
     def _chunk_message(self, msg, max_length):
         """Splits a message into chunks that fit Discord's character limit."""
