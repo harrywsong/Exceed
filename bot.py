@@ -468,6 +468,15 @@ class MyBot(commands.Bot):
             # Re-assign self.logger to the root logger which now has all handlers
             self.logger = logging.getLogger('기본 로그')  # Get the root logger instance
             self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
+
+            # Find the DiscordHandler instance and start its sending task
+            # This loop is necessary because _configure_root_handlers doesn't return the handler instance
+            for handler in self.logger.handlers:
+                if isinstance(handler, logger_module.DiscordHandler):
+                    handler.start_sending_logs()
+                    self.logger.info("✅ DiscordHandler의 로그 전송 작업을 시작했습니다.")
+                    break # Assuming only one DiscordHandler is added to the root logger
+
         except Exception as e:
             self.logger.critical(f"❌ 로거 설정 중 심각한 오류 발생: {e}", exc_info=True)
             # Continue with basic logger if configuration fails, but log it.
@@ -702,11 +711,12 @@ async def main():
     # Redirect sys.stderr to the crash log file before starting the bot
     # This ensures any unhandled exceptions are written to the crash log
     try:
-        sys.stderr = open(CRASH_LOG_FILE, 'a', encoding='utf-8')
+        sys.stderr = open(logger_module.CRASH_LOG_FILE, 'a', encoding='utf-8') # Use CRASH_LOG_FILE from logger_module
     except Exception as e:
         print(f"❌ 충돌 로그 파일로 stderr 리디렉션 실패: {e}", file=original_stderr)
         # Revert to original stderr if redirection fails
         sys.stderr = original_stderr
+
 
     try:
         # Start the bot
@@ -742,7 +752,7 @@ if __name__ == "__main__":
     # Start the Flask API in a separate thread
     # This ensures the API runs concurrently with the Discord bot.
     api_thread = Thread(target=run_api_server)
-    api_thread.daemon = True  # Allow main program to exit even if thread is running
+    api_thread.daemon = True # Allow main program to exit even if thread is running
     api_thread.start()
     print(f"Existing Bot API running on http://127.0.0.1:5001")
 
