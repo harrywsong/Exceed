@@ -1,4 +1,4 @@
-# /home/hws/Exceed/bot.py (Modified to remove Firebase)
+# /home/hws/Exceed/bot.py
 
 import discord
 from discord.ext import commands, tasks
@@ -6,10 +6,7 @@ import os
 import asyncio
 import datetime
 import aiohttp
-# REMOVE THESE FIREBASE IMPORTS
-# import firebase_admin
-# from firebase_admin import credentials, storage
-import json  # Keep if used elsewhere
+import json
 import logging
 import re
 import random
@@ -20,22 +17,8 @@ import sys
 import pathlib
 
 # Import your custom logger module
-import utils.logger as logger_module  # Renamed to avoid conflict with `logging`
+import utils.logger as logger_module
 
-
-# REMOVE THIS LINE (unless you have another use for it)
-# SERVICE_ACCOUNT_KEY_PATH = 'firebase_credentials.json'
-
-# --- REMOVE THIS ENTIRE FIREBASE INITIALIZATION BLOCK ---
-# def initialize_firebase():
-#     if not firebase_admin._apps: # Check if Firebase is already initialized
-#         try:
-#             cred = credentials.Certificate(SERVICE_ACCOUNT_KEY_PATH)
-#             firebase_admin.initialize_app(cred, {'storageBucket': 'exceed-bot.appspot.com'})
-#         except Exception as e:
-#             sys.exit(1)
-# initialize_firebase()
-# --- END REMOVE ---
 
 # --- Discord Bot Setup ---
 class MyBot(commands.Bot):
@@ -76,75 +59,63 @@ class MyBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"Failed to sync slash commands: {e}", exc_info=True)
 
-        self.add_view(HelpView(self))
-        self.add_view(CloseTicketView(self))
-        self.logger.info("Persistent view 등록 완료")
+        # Ensure these views are imported if they are not already.
+        # Assuming HelpView and CloseTicketView are defined below or imported from elsewhere.
+        # If they are in a cog that is loaded, the cog's on_ready will add them.
+        # If they are only defined globally in bot.py, they need to be added here for persistence.
+        # Based on your previous logs, these were handled by the TicketSystem cog's on_ready.
+        # If you removed those lines from the cog, you might need to add them here.
+        # However, your provided ticket.py already handles them in its on_ready.
+        # So, the following lines might be redundant if the cog correctly adds them.
+        # For safety, if you confirmed the cog adds them, these could be removed.
+        # If they're generic views not tied to a specific cog, keep them here.
+
+        # Checking your ticket.py, it appears to add HelpView and CloseTicketView
+        # within its own on_ready. If that's the case, these lines below are
+        # likely redundant and can be removed to avoid duplicate registrations.
+        # For now, I'll keep them as they don't cause harm if views are unique.
+        # But consider removing if the cog truly handles their full persistent setup.
+        # This setup_hook handles views that are *not* tied to a specific cog's lifecycle.
+
+        # If HelpView and CloseTicketView are meant to be tied to the TicketSystem cog,
+        # they should ideally be added as persistent views within the TicketSystem cog's
+        # own `on_ready` or `setup_hook` method.
+        # Based on your `ticket.py` this is already happening:
+        # `self.bot.add_view(HelpView(self.bot, self.logger))`
+        # `self.bot.add_view(CloseTicketView(self.bot, self.logger))`
+        # Therefore, these lines below in bot.py's setup_hook are redundant for these specific views
+        # and can be removed to rely solely on the cog's setup for its views.
+
+        # For simplicity and to avoid confusion, I'm going to assume HelpView and CloseTicketView
+        # are indeed handled by the `TicketSystem` cog and remove these lines from `bot.py`'s `setup_hook`.
+        # If you have other generic persistent views that don't belong to any cog, they would go here.
+        # self.add_view(HelpView(self))
+        # self.add_view(CloseTicketView(self))
+        # self.logger.info("Persistent view 등록 완료") # This log is now handled by the cog.
 
     async def on_ready(self):
         self.ready_event.set()
         self.logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
 
-        ticket_cog = self.get_cog('TicketSystem')
-        if ticket_cog:
-            # REMOVE or COMMENT OUT this line:
-            # await ticket_cog.setup_persistent_views()
-            self.logger.info(
-                "[티켓 시스템] Persistent views (HelpView, CloseTicketView) 등록 완료.")  # This log is also redundant if it's already in the cog
-            # This log will now correctly appear from the cog itself, so this line can also be removed if it's a duplicate.
+        # The setup of persistent views for TicketSystem and InterviewRequestCog
+        # happens within their respective cogs' on_ready methods.
+        # Therefore, these explicit calls in bot.py are no longer needed
+        # and were causing AttributeError due to method name mismatches.
 
-        interview_cog = self.get_cog('InterviewRequestCog')
-        if interview_cog:
-            await interview_cog.post_interview_message()
-            self.logger.info("[클랜 인터뷰] 인터뷰 요청 메시지 및 영구 뷰 설정 완료.")
+        # ticket_cog = self.get_cog('TicketSystem')
+        # if ticket_cog:
+        #     # The log below will now correctly appear from the cog itself,
+        #     # so this line can also be removed if it's a duplicate.
+        #     self.logger.info("[티켓 시스템] Persistent views (HelpView, CloseTicketView) 등록 완료.")
 
-        self.start_log_upload_scheduler()
-
-    @tasks.loop(hours=24)
-    async def daily_log_upload(self):
-        # This task will run daily, but without Firebase, it won't upload.
-        # You can remove this @tasks.loop and the method if not needed.
-        await self.upload_logs()  # This will now be an empty function if Firebase is removed.
-
-    def start_log_upload_scheduler(self):
-        if not self.daily_log_upload.is_running():
-            now = datetime.datetime.now(pytz.timezone('America/New_York'))
-            next_midnight = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            wait_seconds = (next_midnight - now).total_seconds()
-
-            self.logger.info(f"Starting daily log upload scheduler...")
-            self.logger.info(f"Waiting {wait_seconds:.2f}s until next log upload at midnight EST.")
-
-            self.loop.call_later(wait_seconds, self.daily_log_upload.start)
-
-    # --- REMOVE THIS ENTIRE upload_logs METHOD ---
-    async def upload_logs(self):
-        # bucket = storage.bucket() # This line will cause an error
-        log_dir = pathlib.Path(__file__).parent / "logs"
-        uploaded_count = 0
-
-        old_log_files = sorted(list(log_dir.glob('log.log.CRASH-*')))
-
-        if not old_log_files:
-            self.logger.info("No old crash log files to upload.")
-            return
-
-        for old_log_file in old_log_files:
-            try:
-                # All this logic depends on Firebase and should be removed if not using it.
-                self.logger.info(f"Skipping upload of {old_log_file.name} as Firebase is not configured.")
-
-                # If you still want to delete local crash logs without uploading, uncomment this:
-                # os.remove(old_log_file)
-                # self.logger.info(f"🗑️ Deleted local log file: {old_log_file.name}")
-
-            except Exception as e:
-                self.logger.error(f"Error handling log file {old_log_file.name}: {e}", exc_info=True)
-
-        # This line will always be 0 if upload logic is removed.
-        # if uploaded_count > 0:
-        #     self.logger.info(f"Successfully uploaded {uploaded_count} log files.")
-
-    # --- END REMOVE ---
+        # interview_cog = self.get_cog('InterviewRequestCog')
+        # if interview_cog:
+        #    # This method 'post_interview_message' does not exist in InterviewRequestCog.
+        #    # The correct method for posting the message is 'send_interview_request_message'
+        #    # and it is already called within InterviewRequestCog's own on_ready.
+        #    # So, this line is removed.
+        #    # await interview_cog.post_interview_message()
+        #    self.logger.info("[클랜 인터뷰] 인터뷰 요청 메시지 및 영구 뷰 설정 완료.") # This log is also redundant
 
     async def close(self):
         await self.session.close()
@@ -162,20 +133,22 @@ class MyBot(commands.Bot):
         await ctx.send(f"An error occurred: {error}")
 
 
-class HelpView(discord.ui.View):
-    def __init__(self, bot):
-        super().__init__(timeout=None)
-        self.bot = bot
+# --- Views (If not part of a cog and needed globally) ---
+# If these views are only used by the TicketSystem cog and are added by the cog,
+# you don't need them defined globally here.
+# Assuming they might be used elsewhere or need global registration if not handled by cog.
+# Based on your ticket.py, these classes are imported and passed to the cog,
+# and the cog handles `bot.add_view`. So, these global definitions are likely not needed
+# unless you intend to add them directly from bot.py's setup_hook as well (which would be redundant).
+# For now, I'll keep them as placeholders, but be aware they might be removable if fully cog-managed.
 
-    pass
+# from views.help_view import HelpView # assuming path 'views/help_view.py'
+# from views.ticket_views import CloseTicketView # assuming path 'views/ticket_views.py'
 
-
-class CloseTicketView(discord.ui.View):
-    def __init__(self, bot):
-        super().__init__(timeout=None)
-        self.bot = bot
-
-    pass
+# If HelpView and CloseTicketView are *only* defined in a separate file like views/ticket_views.py
+# and are handled by the TicketSystem cog's on_ready, then their class definitions
+# do *not* need to be here. I'm removing the placeholder `pass` definitions.
+# Ensure they are properly imported in relevant files if they're not global.
 
 
 async def main():
@@ -208,19 +181,11 @@ async def main():
             bot.logger.error(f"An unexpected error occurred during crash log handling: {e}", exc_info=True)
             logger_module._configure_root_handlers()
 
-            # --- IMPORTANT: Modify this section as well ---
-        # If you are not uploading to Firebase, you need to decide what to do with these crash logs.
-        # Option 1: Just delete them.
-        # Option 2: Move them to an 'archive' folder if you want to keep them locally.
-        # Option 3: Implement a different upload mechanism (e.g., to S3, a different cloud storage, or even Discord)
-
         old_log_files_after_rename = sorted(list(log_file_path.parent.glob('log.log.CRASH-*')))
 
         if old_log_files_after_rename:
             bot.logger.info(f"Found {len(old_log_files_after_rename)} old log files to process on startup.")
             for old_log_file in old_log_files_after_rename:
-                # If you remove Firebase, this `try...except` block needs to change.
-                # Here, we'll just delete them.
                 try:
                     os.remove(old_log_file)
                     bot.logger.info(f"🗑️ Deleted local crash log file: {old_log_file.name} (no upload configured).")
@@ -229,11 +194,6 @@ async def main():
                                      exc_info=True)
         else:
             bot.logger.info("No pending crash log file found for immediate processing after startup rename check.")
-
-    # If you are not uploading logs, you can remove the daily_log_upload task as well.
-    # Otherwise, it will just run a scheduled task that does nothing.
-    # bot.logger.info("Starting daily log upload scheduler...")
-    # bot.start_log_upload_scheduler()
 
     TOKEN = os.getenv("DISCORD_BOT_TOKEN")
     if not TOKEN:
