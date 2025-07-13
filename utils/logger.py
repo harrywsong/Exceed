@@ -6,6 +6,12 @@ import asyncio
 from logging.handlers import TimedRotatingFileHandler
 import discord # Make sure discord is imported for HTTPException handling
 
+# --- CRITICAL DIAGNOSTIC LINE ---
+# This will print the file path of the TimedRotatingFileHandler module Python is actually loading.
+# Please run your bot with this line and provide the output from 'journalctl -u exceed-bot.service -f'.
+print(f"DEBUG: TimedRotatingFileHandler loaded from: {TimedRotatingFileHandler.__module__} at {getattr(sys.modules.get(TimedRotatingFileHandler.__module__), '__file__', 'unknown location')}")
+# --- END CRITICAL DIAGNOSTIC LINE ---
+
 BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True, parents=True)  # Ensure logs directory exists
@@ -109,9 +115,8 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
             encoding='utf-8',
             utc=False,
             delay=False,
-            # ✨ NEW: Force line buffering for more immediate writes
-            # buffering=1 means flush after every newline.
-            # buffering=0 would mean unbuffered, which can be very slow.
+            # ✨ This 'buffering=1' is causing the TypeError on your system.
+            # It should be supported by Python 3.7+, but your environment is not recognizing it.
             buffering=1
         )
         file_handler.suffix = "%Y-%m-%d"
