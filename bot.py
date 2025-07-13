@@ -53,10 +53,8 @@ class ExceedBot(commands.Bot):
 def main():
     bot = ExceedBot()
 
-    # Create logger after bot instance exists, so we can pass it
     bot.logger = get_logger(
         "bot",
-        log_file="bot.log",
         bot=bot,
         discord_log_channel_id=config.LOG_CHANNEL_ID
     )

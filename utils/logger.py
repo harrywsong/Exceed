@@ -2,6 +2,8 @@ import logging
 import sys
 import asyncio
 import io
+import os
+from datetime import datetime
 
 # Fix Windows UTF-8 console output:
 if sys.platform == "win32":
@@ -17,8 +19,7 @@ class DiscordLogHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            # Schedule async send (fire-and-forget)
-            asyncio.create_task(self.send_log(msg))
+            asyncio.create_task(self.send_log(msg))  # async send
         except Exception:
             self.handleError(record)
 
@@ -30,11 +31,10 @@ class DiscordLogHandler(logging.Handler):
             except Exception as e:
                 print(f"Failed to send log to Discord channel: {e}")
 
-def get_logger(name: str, log_file: str = None, level=logging.INFO, bot=None, discord_log_channel_id=None) -> logging.Logger:
+def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=None) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # Clear handlers to prevent closed file errors & duplicates
     if logger.hasHandlers():
         logger.handlers.clear()
 
@@ -43,20 +43,24 @@ def get_logger(name: str, log_file: str = None, level=logging.INFO, bot=None, di
         "%Y-%m-%d %H:%M:%S"
     )
 
+    # Console output
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    if log_file:
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+    # Daily file log
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    os.makedirs("logs", exist_ok=True)
+    file_path = f"logs/{date_str}.log"
+    file_handler = logging.FileHandler(file_path, encoding='utf-8')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
+    # Discord handler (optional)
     if bot and discord_log_channel_id:
         discord_handler = DiscordLogHandler(bot, discord_log_channel_id)
         discord_handler.setFormatter(formatter)
         logger.addHandler(discord_handler)
 
-    logger.propagate = False  # Avoid propagation to root handlers that might be closed
-
+    logger.propagate = False
     return logger
