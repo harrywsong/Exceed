@@ -1,4 +1,3 @@
-# utils/logger.py
 import logging
 import sys
 from datetime import datetime
@@ -75,12 +74,17 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
         interval=1,
         backupCount=30,  # keep logs for 30 days, adjust as needed
         encoding='utf-8',
-        utc=False,  # rotates at local server time, if you want EST you must ensure server timezone or customize
+        utc=False,
     )
     file_handler.setFormatter(formatter)
 
-    # Use suffix for rotated log files: log.log.YYYY-MM-DD
+    # Set the suffix pattern for rotated log files (e.g., log.log.2025-07-12)
     file_handler.suffix = "%Y-%m-%d"
+
+    # The extMatch attribute is an internal regex used by TimedRotatingFileHandler to find old log files.
+    # We set it manually here to avoid AttributeError, matching the suffix pattern above.
+    import re
+    file_handler.extMatch = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
     logger.addHandler(file_handler)
 

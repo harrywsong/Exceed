@@ -9,7 +9,6 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_PICKLE = 'token.pickle'
 FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # Your Google Drive folder ID
 
-
 def upload_log_to_drive(file_path: str) -> str | None:
     """
     Uploads a log file to Google Drive in the specified folder, appending a timestamp
@@ -42,9 +41,10 @@ def upload_log_to_drive(file_path: str) -> str | None:
         # Build the Drive API service client
         service = build('drive', 'v3', credentials=creds)
 
-        # Extract file extension and create a timestamped filename for Drive
-        original_name = os.path.basename(file_path)
-        _, ext = os.path.splitext(original_name)
+        # Get extension of the local file (e.g., ".log")
+        _, ext = os.path.splitext(file_path)
+
+        # Create timestamped filename for Google Drive
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         drive_filename = f"{timestamp}{ext}"
 
