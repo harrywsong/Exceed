@@ -621,3 +621,6 @@ if __name__ == "__main__":
         if bot_instance:
             # If bot_instance exists, its logger should be safe to use here at cleanup
             bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
+        else:
+            # Fallback to root_logger if bot_instance somehow failed to initialize
+            logger_module.root_logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
