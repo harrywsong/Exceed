@@ -7,3 +7,4 @@ APScheduler~=3.11.0
 google-api-python-client~=2.176.0
 google~=3.0.0
 protobuf~=6.31.1
+oauth2client<4.0.0
