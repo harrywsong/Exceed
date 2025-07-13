@@ -1,12 +1,13 @@
 import os
 import pickle
+from datetime import datetime
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_PICKLE = 'token.pickle'
-FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # ✅ your target folder
+FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # Your target folder
 
 def upload_log_to_drive(file_path):
     try:
@@ -29,10 +30,14 @@ def upload_log_to_drive(file_path):
         # Build Drive API service
         service = build('drive', 'v3', credentials=creds)
 
-        # File metadata with folder
-        file_name = os.path.basename(file_path)
+        # Generate timestamped filename
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        original_name = os.path.basename(file_path)
+        name_part, ext_part = os.path.splitext(original_name)
+        drive_filename = f"{name_part}_{timestamp}{ext_part}"
+
         file_metadata = {
-            'name': file_name,
+            'name': drive_filename,
             'parents': [FOLDER_ID]
         }
 
@@ -45,7 +50,7 @@ def upload_log_to_drive(file_path):
         ).execute()
 
         file_id = uploaded_file.get('id')
-        print(f"✅ Uploaded {file_path} to Google Drive with ID: {file_id}")
+        print(f"✅ Uploaded {file_path} to Google Drive as {drive_filename}")
         print(f"🔗 File link: https://drive.google.com/file/d/{file_id}/view")
         return file_id
 
