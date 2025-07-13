@@ -9,18 +9,23 @@ import aiohttp
 import logging
 import sys
 import pathlib
-import asyncpg # Import for PostgreSQL async operations
+import asyncpg  # Import for PostgreSQL async operations
+import pytz  # Import pytz for timezone handling
 
 # --- Flask API Imports ---
 from flask import Flask, jsonify, request
 from threading import Thread
-import time # For uptime calculation
-import subprocess # For git pull command
+import time  # For uptime calculation
+import subprocess  # For git pull command
 # --- End Flask API Imports ---
 
 import utils.config as config
-import utils.logger as logger_module # This module contains get_logger and _configure_root_handlers
-from utils import upload_to_drive
+import utils.logger as logger_module  # This module contains get_logger and _configure_root_handlers
+from utils import upload_to_drive  # Ensure this import is correct
+
+# Define Eastern Timezone
+EASTERN_TZ = pytz.timezone("US/Eastern")
+
 
 # --- Database Functions (Moved from utils/database.py) ---
 async def create_db_pool_in_bot():
@@ -31,7 +36,7 @@ async def create_db_pool_in_bot():
             raise ValueError("DATABASE_URL 환경 변수가 설정되지 않았습니다.")
 
         pool = await asyncpg.create_pool(
-            database_url, # Pass the URL directly
+            database_url,  # Pass the URL directly
             min_size=5,
             max_size=10,
             command_timeout=60
@@ -40,30 +45,64 @@ async def create_db_pool_in_bot():
     except Exception as e:
         # Print directly as logger might not be fully set up yet during early startup
         print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}", file=sys.stderr)
-        raise # Re-raise to ensure bot doesn't start without DB
+        raise  # Re-raise to ensure bot doesn't start without DB
+
 
 async def ensure_db_tables(pool):
     """Ensures necessary database tables exist."""
     async with pool.acquire() as conn:
         # Table for reaction roles
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS reaction_role_entries (
-                id SERIAL PRIMARY KEY,
-                message_id BIGINT NOT NULL,
-                channel_id BIGINT NOT NULL,
-                emoji TEXT NOT NULL,
-                role_id BIGINT NOT NULL,
-                UNIQUE(message_id, emoji)
-            );
-        """)
+                           CREATE TABLE IF NOT EXISTS reaction_role_entries
+                           (
+                               id
+                               SERIAL
+                               PRIMARY
+                               KEY,
+                               message_id
+                               BIGINT
+                               NOT
+                               NULL,
+                               channel_id
+                               BIGINT
+                               NOT
+                               NULL,
+                               emoji
+                               TEXT
+                               NOT
+                               NULL,
+                               role_id
+                               BIGINT
+                               NOT
+                               NULL,
+                               UNIQUE
+                           (
+                               message_id,
+                               emoji
+                           )
+                               );
+                           """)
         # Table for user registrations (if not already handled by clanstats/registration cogs)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS registrations (
-                discord_id BIGINT PRIMARY KEY,
-                riot_id TEXT NOT NULL,
-                registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
+                           CREATE TABLE IF NOT EXISTS registrations
+                           (
+                               discord_id
+                               BIGINT
+                               PRIMARY
+                               KEY,
+                               riot_id
+                               TEXT
+                               NOT
+                               NULL,
+                               registered_at
+                               TIMESTAMP
+                               WITH
+                               TIME
+                               ZONE
+                               DEFAULT
+                               CURRENT_TIMESTAMP
+                           );
+                           """)
     print("✅ 데이터베이스 테이블이 확인되거나 생성되었습니다.")
 
 
@@ -73,19 +112,19 @@ api_app = Flask(__name__)
 # Suppress werkzeug INFO level messages for this Flask API app
 # This needs to be done early to prevent werkzeug from adding its default handlers
 werkzeug_logger = logging.getLogger('werkzeug')
-werkzeug_logger.setLevel(logging.ERROR) # Set level to ERROR to suppress INFO and WARNING
+werkzeug_logger.setLevel(logging.ERROR)  # Set level to ERROR to suppress INFO and WARNING
 # Remove existing handlers from werkzeug logger to ensure no default output
-if not werkzeug_logger.handlers: # Only add if no handlers are present to avoid duplicates on reload
+if not werkzeug_logger.handlers:  # Only add if no handlers are present to avoid duplicates on reload
     for handler in list(werkzeug_logger.handlers):
         werkzeug_logger.removeHandler(handler)
     # You can optionally add a NullHandler if you want to completely silence it
     # werkzeug_logger.addHandler(logging.NullHandler())
 
-
 # Store bot_instance globally or pass it, so API can access it
 # This will be set in the main function
 global bot_instance
 bot_instance = None
+
 
 @api_app.route('/status')
 def bot_status():
@@ -118,6 +157,7 @@ def bot_status():
             "error": "Bot is not ready or offline."
         })
 
+
 @api_app.route('/command_stats')
 def command_stats():
     """Returns command usage statistics."""
@@ -140,10 +180,11 @@ def command_stats():
             "error": "Bot instance not available."
         })
 
+
 @api_app.route('/logs')
 def get_logs():
     """Returns the last 500 lines of the bot's log file."""
-    log_file_path = logger_module.LOG_FILE_PATH # Use the path from logger_module
+    log_file_path = logger_module.LOG_FILE_PATH  # Use the path from logger_module
     try:
         if not os.path.exists(log_file_path):
             return jsonify({"status": "error", "error": "Log file not found."}), 404
@@ -151,7 +192,7 @@ def get_logs():
         with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
             # Read all lines and get the last 500
             lines = f.readlines()
-            last_500_lines = lines[-500:] # Get the last 500 lines
+            last_500_lines = lines[-500:]  # Get the last 500 lines
 
         # Filter out specific Werkzeug access logs if they are still being written to the file
         # The logger setup in logger.py aims to prevent this, but as a fallback for the API.
@@ -160,7 +201,7 @@ def get_logs():
             if "GET /status HTTP/1.1" not in line and
                "GET /logs HTTP/1.1" not in line and
                "GET /command_stats HTTP/1.1" not in line and
-               "INFO....] [werkzeug]" not in line # General werkzeug info logs
+               "INFO....] [werkzeug]" not in line  # General werkzeug info logs
         ]
 
         return jsonify({"status": "success", "logs": filtered_logs})
@@ -198,7 +239,8 @@ def control_bot_api(action):
                 bot_instance.logger.info(f"Git pull 성공: {result.stdout.strip()}")
                 # After successful pull, restart the bot to apply changes
                 asyncio.run_coroutine_threadsafe(bot_instance.close(), bot_instance.loop)
-                return jsonify({"status": "success", "message": "Git pull successful. Bot restarting to apply updates."})
+                return jsonify(
+                    {"status": "success", "message": "Git pull successful. Bot restarting to apply updates."})
             else:
                 bot_instance.logger.error(f"Git pull 실패: {result.stderr.strip()}")
                 return jsonify({"status": "error", "error": f"Git pull failed: {result.stderr.strip()}"}), 500
@@ -207,6 +249,7 @@ def control_bot_api(action):
             return jsonify({"status": "error", "error": f"Error during git update: {e}"}), 500
     else:
         return jsonify({"status": "error", "error": "Invalid control action."}), 400
+
 
 @api_app.route('/command/announce', methods=['POST'])
 def send_announcement_api():
@@ -235,6 +278,7 @@ def send_announcement_api():
     except Exception as e:
         bot_instance.logger.error(f"공지 전송 실패: {e}")
         return jsonify({"status": "error", "error": f"Failed to send announcement: {e}"}), 500
+
 
 @api_app.route('/api/config', methods=['GET'])
 def get_bot_config():
@@ -384,7 +428,8 @@ async def remove_reaction_role():
 def run_api_server():
     """Runs the Flask API server for the bot in a separate thread."""
     # Use a different port than the UI Flask app (5000)
-    api_app.run(host='127.0.0.1', port=5001, debug=False) # Set debug=False for this API server
+    api_app.run(host='127.0.0.1', port=5001, debug=False)  # Set debug=False for this API server
+
 
 # --- End Flask API Setup ---
 
@@ -393,20 +438,19 @@ class MyBot(commands.Bot):
     def __init__(self, command_prefix, intents):
         super().__init__(command_prefix=command_prefix, intents=intents)
         self.start_time = datetime.datetime.now(datetime.timezone.utc)
-        self.pool = None # Database connection pool
-        self.session = aiohttp.ClientSession() # For HTTP requests
-        self.command_counts = {} # For command usage stats
-        self.total_commands_today = 0 # Track total commands for the day
+        self.pool = None  # Database connection pool
+        self.session = aiohttp.ClientSession()  # For HTTP requests
+        self.command_counts = {}  # For command usage stats
+        self.total_commands_today = 0  # Track total commands for the day
         # Initialize a basic logger immediately to ensure it always exists
-        self.logger = logging.getLogger('discord') # This is a standard Python logger
-
+        self.logger = logging.getLogger('discord')  # This is a standard Python logger
 
     async def setup_hook(self):
         # Initialize database pool
         try:
             self.pool = await create_db_pool_in_bot()
             self.logger.info("✅ 데이터베이스 연결 풀이 성공적으로 생성되었습니다.")
-            await ensure_db_tables(self.pool) # Ensure tables exist
+            await ensure_db_tables(self.pool)  # Ensure tables exist
         except Exception as e:
             self.logger.critical(f"❌ 데이터베이스 풀 생성 실패: {e}", exc_info=True)
             # Exit if DB connection fails, as bot won't function correctly
@@ -422,7 +466,7 @@ class MyBot(commands.Bot):
                 discord_log_channel_id=config.LOG_CHANNEL_ID
             )
             # Re-assign self.logger to the root logger which now has all handlers
-            self.logger = logging.getLogger('기본 로그') # Get the root logger instance
+            self.logger = logging.getLogger('기본 로그')  # Get the root logger instance
             self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
         except Exception as e:
             self.logger.critical(f"❌ 로거 설정 중 심각한 오류 발생: {e}", exc_info=True)
@@ -435,7 +479,7 @@ class MyBot(commands.Bot):
             'cogs.clear_messages',
             'cogs.interview',
             'cogs.leaderboard',
-            'cogs.reaction_roles', # This cog will be modified to use DB
+            'cogs.reaction_roles',  # This cog will be modified to use DB
             'cogs.registration',
             'cogs.scraper',
             'cogs.ticket',
@@ -460,18 +504,16 @@ class MyBot(commands.Bot):
             except Exception as e:
                 self.logger.critical(f"❌ Cog '{ext}' 로드 중 예상치 못한 오류 발생: {e}", exc_info=True)
 
-
         # Sync slash commands globally (or to a specific guild for faster testing)
         try:
-            synced = await self.tree.sync() # Sync globally or self.tree.sync(guild=discord.Object(id=YOUR_GUILD_ID))
+            synced = await self.tree.sync()  # Sync globally or self.tree.sync(guild=discord.Object(id=YOUR_GUILD_ID))
             self.logger.info(f"✅ 슬래시 명령어 {len(synced)}개 동기화 완료.")
         except Exception as e:
             self.logger.error(f"❌ 슬래시 명령어 동기화 실패: {e}", exc_info=True)
 
-
     async def reload_all_cogs(self):
         """Reloads all currently loaded cogs."""
-        for ext in list(self.extensions.keys()): # Iterate over a copy
+        for ext in list(self.extensions.keys()):  # Iterate over a copy
             try:
                 await self.reload_extension(ext)
                 self.logger.info(f"🔄 Cog 재로드됨: {ext}")
@@ -501,6 +543,12 @@ class MyBot(commands.Bot):
         # Ensure crash log handling runs after logger is fully set up
         await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
 
+        # Start the daily log upload task
+        self.daily_log_upload.start()
+        self.logger.info("일일 로그 업로드 작업을 시작했습니다.")
+
+        # Upload any un-uploaded rotated logs from previous days on startup
+        await self.loop.run_in_executor(None, upload_daily_logs_on_startup, self.logger)
 
     async def on_command_completion(self, context):
         """Event that fires when a traditional prefix command is successfully completed."""
@@ -521,7 +569,6 @@ class MyBot(commands.Bot):
         self.total_commands_today += 1
         self.logger.info(f"사용자 {user_name} ({user_id})님이 슬래시 명령어 '/{command_name}'을(를) 사용했습니다.")
 
-
     async def on_command_error(self, context, error):
         """Global command error handler."""
         if isinstance(error, commands.CommandNotFound):
@@ -540,11 +587,42 @@ class MyBot(commands.Bot):
             self.logger.error(f"명령어 '{context.command}' 실행 중 예상치 못한 오류 발생: {error}", exc_info=True)
             await context.send("❌ 명령어 실행 중 예상치 못한 오류가 발생했습니다. 관리자에게 문의해주세요.", ephemeral=True)
 
+    @tasks.loop(time=datetime.time(0, 0, 0, tzinfo=EASTERN_TZ))  # 12 AM Eastern Time
+    async def daily_log_upload(self):
+        """
+        Uploads the previous day's log file to Google Drive at 12 AM Eastern.
+        """
+        await self.bot.wait_until_ready()  # Ensure bot is ready before performing operations
+
+        # Get yesterday's date in Eastern Time
+        now_eastern = datetime.datetime.now(EASTERN_TZ)
+        yesterday_eastern = now_eastern - datetime.timedelta(days=1)
+        yesterday_date_str = yesterday_eastern.strftime("%Y-%m-%d")
+
+        # Construct the path to yesterday's rotated log file
+        # TimedRotatingFileHandler renames log.log to log.log.YYYY-MM-DD at midnight
+        log_file_to_upload = logger_module.LOG_FILE_PATH.parent / f"log.log.{yesterday_date_str}"
+
+        if log_file_to_upload.exists():
+            self.logger.info(f"일일 로그 업로드 시작: {log_file_to_upload.name}")
+            try:
+                # Use the updated upload_file function
+                upload_to_drive.upload_file(str(log_file_to_upload), f"daily_log_{log_file_to_upload.name}")
+                self.logger.info(f"✅ 일일 로그 '{log_file_to_upload.name}' Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
+            except Exception as e:
+                self.logger.error(f"❌ 일일 로그 '{log_file_to_upload.name}' 업로드 실패: {e}", exc_info=True)
+        else:
+            self.logger.info(f"일일 로그 파일 '{log_file_to_upload.name}'을(를) 찾을 수 없습니다. (어제 로그 없음 또는 이미 처리됨)")
+
 
 # --- Crash Log Handling ---
 CRASH_LOG_DIR = pathlib.Path(__file__).parent.parent / "logs"
 CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"
 CRASH_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+# Store original stderr
+original_stderr = sys.stderr
+
 
 def check_crash_log_and_handle(logger_instance: logging.Logger):
     """
@@ -554,26 +632,59 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
     if CRASH_LOG_FILE.exists():
         logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
         try:
-            # Assuming upload_to_drive is synchronous or handles its own async
-            upload_to_drive.upload_file(str(CRASH_LOG_FILE), "bot_crash_logs")
-            os.remove(CRASH_LOG_FILE)
+            # Call upload_file with the new signature
+            upload_to_drive.upload_file(str(CRASH_LOG_FILE),
+                                        f"crash_log_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
+            # The upload_file function already handles deletion upon successful upload
             logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
         except Exception as e:
             logger_instance.error(f"❌ 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
     else:
         logger_instance.info("변경 확인 후 처리할 보류 중인 충돌 로그 파일이 없습니다.")
+
+
 # --- End Crash Log Handling ---
+
+def upload_daily_logs_on_startup(logger_instance: logging.Logger):
+    """
+    Checks for and uploads any rotated log files from previous days that might not have been uploaded.
+    This runs on bot startup.
+    """
+    log_dir = logger_module.LOG_FILE_PATH.parent
+    today_date_str = datetime.datetime.now(EASTERN_TZ).strftime("%Y-%m-%d")
+
+    logger_instance.info("시작 시 이전 일일 로그 파일 확인 및 업로드 중...")
+    for filename in os.listdir(log_dir):
+        if filename.startswith("log.log.") and filename.endswith(".log"):
+            # Extract date from filename (e.g., "log.log.2023-10-26")
+            file_date_str = filename.replace("log.log.", "").replace(".log", "")
+
+            # Only process if it's a valid date string and not today's log
+            try:
+                file_date = datetime.datetime.strptime(file_date_str, "%Y-%m-%d").date()
+                if file_date < datetime.datetime.now(EASTERN_TZ).date():  # Only upload logs older than today
+                    local_file_path = log_dir / filename
+                    drive_file_name = f"daily_log_{filename}"
+                    logger_instance.info(f"시작 시 이전 일일 로그 파일 업로드: {filename}")
+                    try:
+                        upload_to_drive.upload_file(str(local_file_path), drive_file_name)
+                        logger_instance.info(f"✅ 시작 시 '{filename}' Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
+                    except Exception as e:
+                        logger_instance.error(f"❌ 시작 시 '{filename}' 업로드 실패: {e}", exc_info=True)
+            except ValueError:
+                # Ignore files that don't match the date format
+                logger_instance.debug(f"로그 파일 '{filename}'이(가) 예상 날짜 형식과 일치하지 않아 건너뜁니다.")
 
 
 async def main():
     # Define intents required by your bot
     intents = discord.Intents.default()
-    intents.members = True          # Required for on_member_join, member caching
+    intents.members = True  # Required for on_member_join, member caching
     intents.message_content = True  # Required to read message content (for prefix commands)
-    intents.presences = True        # Required for presence updates (e.g., active users count)
+    intents.presences = True  # Required for presence updates (e.g., active users count)
 
     # Create bot instance
-    global bot_instance # Declare global to assign to it
+    global bot_instance  # Declare global to assign to it
     bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents)
 
     # For very early startup, before setup_hook runs, configure a basic console logger.
@@ -586,7 +697,6 @@ async def main():
     # Assign this basic logger to bot_instance.logger for early use
     bot_instance.logger = logging.getLogger('초기 로거')
 
-
     # Check for Discord Token
     TOKEN = config.DISCORD_TOKEN
     if not TOKEN:
@@ -596,6 +706,15 @@ async def main():
         else:
             print("CRITICAL: DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.", file=sys.stderr)
         sys.exit(1)
+
+    # Redirect sys.stderr to the crash log file before starting the bot
+    # This ensures any unhandled exceptions are written to the crash log
+    try:
+        sys.stderr = open(CRASH_LOG_FILE, 'a', encoding='utf-8')
+    except Exception as e:
+        print(f"❌ 충돌 로그 파일로 stderr 리디렉션 실패: {e}", file=original_stderr)
+        # Revert to original stderr if redirection fails
+        sys.stderr = original_stderr
 
     try:
         # Start the bot
@@ -621,13 +740,17 @@ async def main():
         # Ensure bot_instance is not None before calling close
         if bot_instance:
             await bot_instance.close()
+        # Restore original stderr
+        if sys.stderr != original_stderr:
+            sys.stderr.close()
+            sys.stderr = original_stderr
 
 
 if __name__ == "__main__":
     # Start the Flask API in a separate thread
     # This ensures the API runs concurrently with the Discord bot.
     api_thread = Thread(target=run_api_server)
-    api_thread.daemon = True # Allow main program to exit even if thread is running
+    api_thread.daemon = True  # Allow main program to exit even if thread is running
     api_thread.start()
     print(f"Existing Bot API running on http://127.0.0.1:5001")
 
