@@ -1,5 +1,7 @@
 import sys
 import os
+import shutil
+import glob
 import discord
 from discord.ext import commands, tasks
 import asyncio
@@ -49,14 +51,18 @@ class ExceedBot(commands.Bot):
         await self.tree.sync()
         self.logger.info("슬래시 명령어 동기화 완료.")
 
-        # Upload yesterday's log file on startup
-        est = pytz.timezone("US/Eastern")
-        yesterday = datetime.now(est) - timedelta(days=1)
-        yesterday_log = os.path.join("logs", yesterday.strftime("%Y-%m-%d") + ".log")
-        try:
-            await self.upload_and_delete_log_async(yesterday_log)
-        except Exception as e:
-            self.logger.error(f"❌ 어제 로그 업로드 실패: {e}")
+        # On startup: Upload current log.log if it exists (rename first)
+        log_path = os.path.join("logs", "log.log")
+        if os.path.exists(log_path):
+            timestamped_path = os.path.join("logs", f"log.log.{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
+            try:
+                shutil.move(log_path, timestamped_path)
+                self.logger.info(f"Renamed current log to {timestamped_path} before startup upload.")
+                await self.upload_and_delete_log_async(timestamped_path)
+            except Exception as e:
+                self.logger.error(f"❌ Failed to rename or upload startup log: {e}")
+        else:
+            self.logger.info("No current log.log file to upload at startup.")
 
         # Start daily log upload task
         self.daily_log_upload_task.start()
@@ -80,22 +86,34 @@ class ExceedBot(commands.Bot):
         est = pytz.timezone("US/Eastern")
         while True:
             now = datetime.now(est)
-            # Next midnight in EST timezone
             next_midnight = datetime.combine(now.date() + timedelta(days=1), time(0, 0, 0), tzinfo=est)
             seconds_until_midnight = (next_midnight - now).total_seconds()
 
             self.logger.info(f"Waiting {seconds_until_midnight:.2f}s until next log upload at midnight EST.")
             await asyncio.sleep(seconds_until_midnight)
 
-            # Upload the previous day's log after midnight hits
-            log_date = next_midnight.date() - timedelta(days=1)
-            log_path = os.path.join("logs", f"{log_date.strftime('%Y-%m-%d')}.log")
+            # Delete old rotated logs first
+            old_logs_pattern = os.path.join("logs", "log.log.*")
+            old_logs = glob.glob(old_logs_pattern)
+            for old_log in old_logs:
+                try:
+                    os.remove(old_log)
+                    self.logger.info(f"Deleted old uploaded log file: {old_log}")
+                except Exception as e:
+                    self.logger.error(f"Failed to delete old log file {old_log}: {e}")
 
-            try:
-                self.logger.info(f"Uploading daily log: {log_path}")
-                await self.upload_and_delete_log_async(log_path)
-            except Exception as e:
-                self.logger.error(f"❌ 일일 로그 업로드 실패: {e}")
+            # Rename current log.log to timestamped name before upload
+            log_path = os.path.join("logs", "log.log")
+            if os.path.exists(log_path):
+                timestamped_path = os.path.join("logs", f"log.log.{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
+                try:
+                    shutil.move(log_path, timestamped_path)
+                    self.logger.info(f"Renamed current log to {timestamped_path} before upload.")
+                    await self.upload_and_delete_log_async(timestamped_path)
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to rename or upload daily log: {e}")
+            else:
+                self.logger.info("No current log.log file to upload at daily task.")
 
 def main():
     bot = ExceedBot()

@@ -4,6 +4,7 @@ import sys
 from datetime import datetime
 import pathlib
 import asyncio
+from logging.handlers import TimedRotatingFileHandler
 
 BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 LOG_DIR = BASE_DIR / "logs"
@@ -66,10 +67,22 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    file_path = LOG_DIR / f"{date_str}.log"
-    file_handler = FlushFileHandler(str(file_path), encoding='utf-8')
+    # Use TimedRotatingFileHandler to rotate logs at midnight
+    file_path = LOG_DIR / "log.log"
+    file_handler = TimedRotatingFileHandler(
+        filename=str(file_path),
+        when="midnight",
+        interval=1,
+        backupCount=30,  # keep logs for 30 days, adjust as needed
+        encoding='utf-8',
+        utc=False,  # rotates at local server time, if you want EST you must ensure server timezone or customize
+    )
     file_handler.setFormatter(formatter)
+
+    # Use suffix for rotated log files: log.log.YYYY-MM-DD
+    file_handler.suffix = "%Y-%m-%d"
+    file_handler.extMatch = logging.handlers.TimedRotatingFileHandler.extMatch
+
     logger.addHandler(file_handler)
 
     if bot and discord_log_channel_id:
