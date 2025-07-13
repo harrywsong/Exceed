@@ -340,7 +340,7 @@ class InterviewRequestCog(commands.Cog):
         self.FONT = None
         try:
             self.CONGRATS_BG_PATH = getattr(config, 'CONGRATS_BG_PATH', os.path.join("assets", "congrats_bg.gif"))
-            FONT_PATH_CONFIG = getattr(config, 'FONT_PATH', os.path.join("assets", "fonts", "NotoSansKR-Regular.ttf"))
+            FONT_PATH_CONFIG = getattr(config, 'FONT_PATH', os.path.join("assets", "fonts", "NotoSansKR-Bold.ttf"))
             self.FONT = ImageFont.truetype(FONT_PATH_CONFIG, 40)
             self.logger.info(f"폰트 로드 성공: {FONT_PATH_CONFIG}")
         except ImportError:
