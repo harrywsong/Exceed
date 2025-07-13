@@ -42,6 +42,31 @@ async def create_db_pool_in_bot():
         print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}", file=sys.stderr)
         raise # Re-raise to ensure bot doesn't start without DB
 
+async def ensure_db_tables(pool):
+    """Ensures necessary database tables exist."""
+    async with pool.acquire() as conn:
+        # Table for reaction roles
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS reaction_role_entries (
+                id SERIAL PRIMARY KEY,
+                message_id BIGINT NOT NULL,
+                channel_id BIGINT NOT NULL,
+                emoji TEXT NOT NULL,
+                role_id BIGINT NOT NULL,
+                UNIQUE(message_id, emoji)
+            );
+        """)
+        # Table for user registrations (if not already handled by clanstats/registration cogs)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS registrations (
+                discord_id BIGINT PRIMARY KEY,
+                riot_id TEXT NOT NULL,
+                registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    print("✅ 데이터베이스 테이블이 확인되거나 생성되었습니다.")
+
+
 # --- Flask API Setup ---
 api_app = Flask(__name__)
 
@@ -211,6 +236,150 @@ def send_announcement_api():
         bot_instance.logger.error(f"공지 전송 실패: {e}")
         return jsonify({"status": "error", "error": f"Failed to send announcement: {e}"}), 500
 
+@api_app.route('/api/config', methods=['GET'])
+def get_bot_config():
+    """
+    Returns a subset of non-sensitive configuration values.
+    This is a read-only endpoint for displaying current settings.
+    """
+    if not bot_instance:
+        return jsonify({"status": "error", "error": "Bot instance not available."}), 500
+
+    # Collect desired config values. Be careful not to expose sensitive tokens/keys.
+    config_data = {
+        "COMMAND_PREFIX": config.COMMAND_PREFIX,
+        "LOG_CHANNEL_ID": config.LOG_CHANNEL_ID,
+        "GUILD_ID": config.GUILD_ID,
+        "AUTO_ROLE_IDS": config.AUTO_ROLE_IDS,
+        "TICKET_CATEGORY_ID": config.TICKET_CATEGORY_ID,
+        "STAFF_ROLE_ID": config.STAFF_ROLE_ID,
+        "WELCOME_CHANNEL_ID": config.WELCOME_CHANNEL_ID,
+        "GOODBYE_CHANNEL_ID": config.GOODBYE_CHANNEL_ID,
+        "INTERVIEW_PUBLIC_CHANNEL_ID": config.INTERVIEW_PUBLIC_CHANNEL_ID,
+        "INTERVIEW_PRIVATE_CHANNEL_ID": config.INTERVIEW_PRIVATE_CHANNEL_ID,
+        "RULES_CHANNEL_ID": config.RULES_CHANNEL_ID,
+        "ROLE_ASSIGN_CHANNEL_ID": config.ROLE_ASSIGN_CHANNEL_ID,
+        "ANNOUNCEMENTS_CHANNEL_ID": config.ANNOUNCEMENTS_CHANNEL_ID,
+        "ACCEPTED_ROLE_ID": config.ACCEPTED_ROLE_ID,
+        "MEMBER_CHAT_CHANNEL_ID": config.MEMBER_CHAT_CHANNEL_ID,
+        "CLAN_LEADERBOARD_CHANNEL_ID": config.CLAN_LEADERBOARD_CHANNEL_ID,
+        "APPLICANT_ROLE_ID": config.APPLICANT_ROLE_ID,
+        "GUEST_ROLE_ID": config.GUEST_ROLE_ID,
+        "LOBBY_VOICE_CHANNEL_ID": config.LOBBY_VOICE_CHANNEL_ID,
+        "TEMP_VOICE_CATEGORY_ID": config.TEMP_VOICE_CATEGORY_ID,
+        "HISTORY_CHANNEL_ID": config.HISTORY_CHANNEL_ID,
+        "TICKET_CHANNEL_ID": config.TICKET_CHANNEL_ID,
+    }
+    bot_instance.logger.info("API 요청: 봇 설정 조회 완료.")
+    return jsonify({"status": "success", "config": config_data})
+
+
+@api_app.route('/api/reaction_roles', methods=['GET'])
+async def get_reaction_roles():
+    """
+    Fetches all reaction role entries from the database.
+    """
+    if not bot_instance or not bot_instance.pool:
+        return jsonify({"status": "error", "error": "봇 또는 데이터베이스가 준비되지 않았습니다."}), 503
+
+    try:
+        reaction_roles_cog = bot_instance.get_cog('ReactionRoles')
+        if not reaction_roles_cog:
+            return jsonify({"status": "error", "error": "ReactionRoles Cog가 로드되지 않았습니다."}), 500
+
+        # Run the async database fetch in the bot's event loop
+        entries = await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                reaction_roles_cog.get_all_reaction_role_entries_db(), bot_instance.loop
+            )
+        )
+        bot_instance.logger.info("API 요청: 리액션 역할 조회 완료.")
+        return jsonify({"status": "success", "reaction_roles": entries})
+    except Exception as e:
+        bot_instance.logger.error(f"리액션 역할 조회 실패: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": f"리액션 역할 가져오기 실패: {e}"}), 500
+
+
+@api_app.route('/api/reaction_roles/add', methods=['POST'])
+async def add_reaction_role():
+    """
+    Adds a new reaction role entry to the database.
+    Requires message_id, channel_id, emoji, and role_id in the request body.
+    """
+    if not bot_instance or not bot_instance.pool:
+        return jsonify({"status": "error", "error": "봇 또는 데이터베이스가 준비되지 않았습니다."}), 503
+
+    data = request.get_json()
+    message_id = data.get('message_id')
+    channel_id = data.get('channel_id')
+    emoji = data.get('emoji')
+    role_id = data.get('role_id')
+
+    if not all([message_id, channel_id, emoji, role_id]):
+        return jsonify({"status": "error", "error": "필수 필드 (메시지 ID, 채널 ID, 이모지, 역할 ID)가 누락되었습니다."}), 400
+
+    try:
+        reaction_roles_cog = bot_instance.get_cog('ReactionRoles')
+        if not reaction_roles_cog:
+            return jsonify({"status": "error", "error": "ReactionRoles Cog가 로드되지 않았습니다."}), 500
+
+        await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                reaction_roles_cog.add_reaction_role_entry_db(
+                    int(message_id), int(channel_id), emoji, int(role_id)
+                ), bot_instance.loop
+            )
+        )
+        bot_instance.logger.info(f"API 요청: 리액션 역할 추가 완료 (메시지: {message_id}, 이모지: {emoji}, 역할: {role_id}).")
+        return jsonify({"status": "success", "message": "리액션 역할이 성공적으로 추가되었습니다."})
+    except ValueError:
+        return jsonify({"status": "error", "error": "잘못된 ID 형식입니다. 메시지 ID, 채널 ID, 역할 ID는 정수여야 합니다."}), 400
+    except asyncpg.exceptions.UniqueViolationError:
+        return jsonify({"status": "error", "error": "이 메시지 ID와 이모지를 가진 리액션 역할이 이미 존재합니다."}), 409
+    except Exception as e:
+        bot_instance.logger.error(f"리액션 역할 추가 실패: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": f"리액션 역할 추가 실패: {e}"}), 500
+
+
+@api_app.route('/api/reaction_roles/remove', methods=['POST'])
+async def remove_reaction_role():
+    """
+    Removes a reaction role entry from the database.
+    Requires message_id and emoji in the request body.
+    """
+    if not bot_instance or not bot_instance.pool:
+        return jsonify({"status": "error", "error": "봇 또는 데이터베이스가 준비되지 않았습니다."}), 503
+
+    data = request.get_json()
+    message_id = data.get('message_id')
+    emoji = data.get('emoji')
+
+    if not all([message_id, emoji]):
+        return jsonify({"status": "error", "error": "필수 필드 (메시지 ID, 이모지)가 누락되었습니다."}), 400
+
+    try:
+        reaction_roles_cog = bot_instance.get_cog('ReactionRoles')
+        if not reaction_roles_cog:
+            return jsonify({"status": "error", "error": "ReactionRoles Cog가 로드되지 않았습니다."}), 500
+
+        success = await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                reaction_roles_cog.remove_reaction_role_entry_db(
+                    int(message_id), emoji
+                ), bot_instance.loop
+            )
+        )
+        if success:
+            bot_instance.logger.info(f"API 요청: 리액션 역할 제거 완료 (메시지: {message_id}, 이모지: {emoji}).")
+            return jsonify({"status": "success", "message": "리액션 역할이 성공적으로 제거되었습니다."})
+        else:
+            return jsonify({"status": "error", "message": "리액션 역할을 찾을 수 없습니다."}), 404
+    except ValueError:
+        return jsonify({"status": "error", "error": "잘못된 ID 형식입니다. 메시지 ID는 정수여야 합니다."}), 400
+    except Exception as e:
+        bot_instance.logger.error(f"리액션 역할 제거 실패: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": f"리액션 역할 제거 실패: {e}"}), 500
+
 
 def run_api_server():
     """Runs the Flask API server for the bot in a separate thread."""
@@ -237,6 +406,7 @@ class MyBot(commands.Bot):
         try:
             self.pool = await create_db_pool_in_bot()
             self.logger.info("✅ 데이터베이스 연결 풀이 성공적으로 생성되었습니다.")
+            await ensure_db_tables(self.pool) # Ensure tables exist
         except Exception as e:
             self.logger.critical(f"❌ 데이터베이스 풀 생성 실패: {e}", exc_info=True)
             # Exit if DB connection fails, as bot won't function correctly
@@ -265,7 +435,7 @@ class MyBot(commands.Bot):
             'cogs.clear_messages',
             'cogs.interview',
             'cogs.leaderboard',
-            'cogs.reaction_roles',
+            'cogs.reaction_roles', # This cog will be modified to use DB
             'cogs.registration',
             'cogs.scraper',
             'cogs.ticket',
@@ -480,3 +650,4 @@ if __name__ == "__main__":
         # Attempt to use bot_instance's logger if it exists
         if 'bot_instance' in locals() and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
             bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생 (재시도): {e}", exc_info=True)
+
