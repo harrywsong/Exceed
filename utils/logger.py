@@ -115,9 +115,6 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
             encoding='utf-8',
             utc=False,
             delay=False,
-            # ✨ This 'buffering=1' is causing the TypeError on your system.
-            # It should be supported by Python 3.7+, but your environment is not recognizing it.
-            buffering=1
         )
         file_handler.suffix = "%Y-%m-%d"
         file_handler.setFormatter(LOGGING_FORMATTER)
