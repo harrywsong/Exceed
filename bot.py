@@ -21,7 +21,7 @@ from flask_cors import CORS # Import CORS for cross-origin requests
 # --- End Flask API Imports ---
 
 import utils.config as config
-import utils.logger as logger_module
+import utils.logger as logger_module # Good: using an alias for clarity
 from utils import upload_to_drive
 
 # --- Database Functions ---
@@ -95,32 +95,33 @@ class MyBot(commands.Bot):
                 await self.load_extension(ext)
                 logger_module.root_logger.info(f"코그 로드 완료: {ext.split('.')[-1]}.py")
             except Exception as e:
-                log_func = self.logger.error if hasattr(self, 'logger') else logger_module.root_logger.error
-                log_func(f"확장 로드 실패 {ext}: {e}", exc_info=True)
+                # FIX 1: Use root_logger here, as self.logger might not be assigned yet
+                logger_module.root_logger.error(f"확장 로드 실패 {ext}: {e}", exc_info=True)
 
         try:
             await self.tree.sync()
-            self.logger.info("슬래시 명령어 동기화 완료.")
+            # FIX 1: Use root_logger here as well for consistency during startup
+            logger_module.root_logger.info("슬래시 명령어 동기화 완료.")
         except Exception as e:
-            self.logger.error(f"슬래시 명령어 동기화 실패: {e}", exc_info=True)
+            # FIX 1: Use root_logger here as well
+            logger_module.root_logger.error(f"슬래시 명령어 동기화 실패: {e}", exc_info=True)
 
     async def on_ready(self):
         self.ready_event.set()
-        self.logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
+        # FIX 1: Use root_logger here for the initial "ready" message
+        logger_module.root_logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
 
-        # --- FIX: Start DiscordHandler's log sending task here ---
-        for handler in logging.getLogger().handlers:
-            if isinstance(handler, logger_module.DiscordHandler):
-                handler.start_sending_logs() # Call the new method to start the task
-                self.logger.info("Discord log sending task initiated by on_ready event.")
-                break # Assuming you only have one DiscordHandler configured
-        # --- END FIX ---
+        # The DiscordHandler's log sending task is now started in main()
+        # after _configure_root_handlers, so this block is no longer needed here.
+        # It's better to start the task immediately after adding the handler
+        # to ensure it's always running on the latest handler instance.
 
     async def close(self):
         if self.pool: # Ensure pool is closed when bot closes
             await self.pool.close()
             self.logger.info("✅ 데이터베이스 풀이 닫혔습니다.")
         await self.session.close()
+        # Ensure all log handlers are properly closed on shutdown
         for handler in logging.getLogger().handlers:
             if hasattr(handler, 'flush'):
                 handler.flush()
@@ -277,6 +278,7 @@ def api_announce():
             return {"status": "error", "error": "채널을 찾을 수 없습니다. ID가 올바르고 봇이 길드에 있는지 확인하세요."}
 
     try:
+        # Use bot_instance.loop to run coroutine in bot's thread
         future = asyncio.run_coroutine_threadsafe(_send_announcement(), bot_instance.loop)
         result = future.result(timeout=15) # Wait for the result with a timeout
         return jsonify(result)
@@ -295,7 +297,8 @@ def api_restart():
     """
     global bot_instance
     print("UI에서 재시작 명령을 받았습니다. 봇 종료를 시작합니다...")
-    bot_instance.logger.info("UI에서 재시작 명령을 받았습니다. 봇 종료를 시작합니다...")
+    # FIX 1: Use root_logger here as well for initial messages
+    logger_module.root_logger.info("UI에서 재시작 명령을 받았습니다. 봇 종료를 시작합니다...")
 
     async def _shutdown_bot():
         if bot_instance:
@@ -304,10 +307,14 @@ def api_restart():
     try:
         # Schedule the shutdown on the bot's event loop
         # This will cause the bot.run() call to eventually return
-        asyncio.run_coroutine_threadsafe(_shutdown_bot(), bot_instance.loop)
+        future = asyncio.run_coroutine_threadsafe(_shutdown_bot(), bot_instance.loop)
+        future.result(timeout=10) # Wait a short while for the shutdown to initiate
         return jsonify({"status": "success", "message": "봇 종료가 시작되었습니다. 재시작을 위해서는 외부 프로세스 관리자가 필요합니다."})
+    except asyncio.TimeoutError:
+        return jsonify({"status": "error", "error": "봇 종료 시작 시간 초과."}), 500
     except Exception as e:
-        bot_instance.logger.error(f"봇 종료 시작 중 오류 발생: {e}", exc_info=True)
+        # FIX 1: Use root_logger here
+        logger_module.root_logger.error(f"봇 종료 시작 중 오류 발생: {e}", exc_info=True)
         return jsonify({"status": "error", "error": f"종료 시작 실패: {e}"}), 500
 
 @api_app.route('/control/reload_cogs', methods=['POST'])
@@ -430,6 +437,7 @@ def get_command_stats():
             return {"status": "error", "error": f"명령어 통계 가져오기 실패: {e}"}
 
     try:
+        # Use bot_instance.loop to run coroutine in bot's thread
         future = asyncio.run_coroutine_threadsafe(_fetch_command_stats(), bot_instance.loop)
         result = future.result(timeout=10)
         return jsonify(result)
@@ -454,9 +462,29 @@ async def main():
     bot_instance = MyBot()
 
     # --- Logger Setup ---
-    # This initializes the DiscordHandler but does NOT start its sending task yet.
-    logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
+    # This initializes the DiscordHandler and adds it to the root logger.
+    if config.LOG_CHANNEL_ID is None:
+        print("❌ WARNING: LOG_CHANNEL_ID is not set in config. Discord logging will not be enabled.")
+    else:
+        logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
+        # FIX 2: Find the DiscordHandler instance and start its sending task immediately here.
+        # This ensures the task is created on the bot's event loop and starts as soon as possible.
+        discord_handler_instance = None
+        for handler in logger_module.root_logger.handlers: # Iterate on root_logger.handlers
+            if isinstance(handler, logger_module.DiscordHandler):
+                discord_handler_instance = handler
+                break
+
+        if discord_handler_instance:
+            bot_instance.loop.create_task(discord_handler_instance.start_sending_logs())
+            logger_module.root_logger.info("Discord log sending task initiated during main setup.")
+        else:
+            logger_module.root_logger.error("❌ DiscordHandler not found after initial configuration. Logs won't go to Discord.")
+
+    # Assign self.logger AFTER root handlers are configured and the task is started
     bot_instance.logger = logger_module.get_logger('기본 로그')
+    # Use bot_instance.logger for the first time for a direct test
+    bot_instance.logger.info("Bot instance logger initialized and ready.")
 
     # --- Database Pool Setup ---
     try:
@@ -469,11 +497,15 @@ async def main():
     # --- End Database Pool Setup ---
 
     # --- Crash Log Handling ---
-    log_file_path = pathlib.Path(__file__).parent / "logs" / "log.log"
+    # This section looks generally good.
+    # The key is that after os.rename, you re-configure handlers, which means
+    # you'll get a *new* DiscordHandler instance. Its task needs to be re-started.
+    # The existing logic should handle this.
+    log_file_path = pathlib.Path(__file__).parent / "logs" / "log.log" # Correct path
     if log_file_path.exists() and log_file_path.stat().st_size > 0:
         bot_instance.logger.info("이전 세션에서 'log.log' 파일이 발견되었습니다 (충돌 또는 비정상 종료 가능성).")
 
-        for handler in logging.getLogger().handlers:
+        for handler in logging.getLogger().handlers: # Using logging.getLogger() gets root_logger
             if hasattr(handler, 'flush'):
                 handler.flush()
 
@@ -494,15 +526,48 @@ async def main():
             except Exception as upload_error:
                 bot_instance.logger.error(f"❌ Google Drive 업로드 중 오류 발생: {upload_error}", exc_info=True)
 
+            # Re-configure handlers AFTER renaming the log file
+            # This creates a NEW DiscordHandler instance.
             logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
-            bot_instance.logger.info("충돌 로그 이름 변경 후 로그 핸들러를 다시 초기화했습니다.")
+            # FIX 3: Re-start the DiscordHandler's task after re-configuring handlers
+            discord_handler_instance_after_crash = None
+            for handler in logger_module.root_logger.handlers:
+                if isinstance(handler, logger_module.DiscordHandler):
+                    discord_handler_instance_after_crash = handler
+                    break
+            if discord_handler_instance_after_crash:
+                bot_instance.loop.create_task(discord_handler_instance_after_crash.start_sending_logs())
+                bot_instance.logger.info("충돌 로그 이름 변경 후 로그 핸들러를 다시 초기화하고 Discord 송신을 다시 시작했습니다.")
+            else:
+                bot_instance.logger.error("❌ 충돌 로그 처리 후 DiscordHandler를 다시 찾을 수 없어 Discord 송신을 다시 시작할 수 없습니다.")
+
 
         except OSError as e:
             bot_instance.logger.error(f"충돌 로그 파일 '{log_file_path}' 이름 변경 오류: {e}", exc_info=True)
+            # Ensure handlers are at least configured, even if rename failed
             logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
+            # And try to start its task too
+            discord_handler_instance_after_rename_fail = None
+            for handler in logger_module.root_logger.handlers:
+                if isinstance(handler, logger_module.DiscordHandler):
+                    discord_handler_instance_after_rename_fail = handler
+                    break
+            if discord_handler_instance_after_rename_fail:
+                bot_instance.loop.create_task(discord_handler_instance_after_rename_fail.start_sending_logs())
+
         except Exception as e:
             bot_instance.logger.error(f"충돌 로그 처리 중 예상치 못한 오류 발생: {e}", exc_info=True)
+            # Ensure handlers are at least configured
             logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
+            # And try to start its task too
+            discord_handler_instance_after_error = None
+            for handler in logger_module.root_logger.handlers:
+                if isinstance(handler, logger_module.DiscordHandler):
+                    discord_handler_instance_after_error = handler
+                    break
+            if discord_handler_instance_after_error:
+                bot_instance.loop.create_task(discord_handler_instance_after_error.start_sending_logs())
+
 
         old_log_files_after_rename = sorted(list(log_file_path.parent.glob('log.log.CRASH-*')))
 
@@ -523,7 +588,8 @@ async def main():
 
     TOKEN = config.DISCORD_TOKEN # Assuming DISCORD_BOT_TOKEN is in config.py now
     if not TOKEN:
-        bot_instance.logger.critical("DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
+        # FIX 1: Use root_logger here before bot_instance.logger is guaranteed safe
+        logger_module.root_logger.critical("DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
         sys.exit(1)
 
     try:
@@ -534,7 +600,7 @@ async def main():
         bot_instance.logger.critical(f"봇 런타임 중 처리되지 않은 오류 발생: {e}", exc_info=True)
     finally:
         await bot_instance.close()
-        bot_instance.logger.info("봇이 중지되었습니다.")
+        bot_instance.logger.info("봇이 종료되었습니다.")
 
 
 if __name__ == "__main__":
@@ -553,6 +619,5 @@ if __name__ == "__main__":
             logger_module.root_logger.info("봇이 수동으로 중단되었습니다 (Ctrl+C). 종료합니다.")
     except Exception as e:
         if bot_instance:
+            # If bot_instance exists, its logger should be safe to use here at cleanup
             bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
-        else:
-            logger_module.root_logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
