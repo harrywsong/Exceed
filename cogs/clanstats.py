@@ -36,14 +36,14 @@ class ValorantStats(commands.Cog):
                     match_id = await conn.fetchval(
                         """
                         INSERT INTO matches(match_uuid, map, mode, team1_score, team2_score, round_count)
-                        VALUES ($1, $2, $3, $4, $5, $6)
-                        ON CONFLICT (match_uuid) DO UPDATE SET
+                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (match_uuid) DO
+                        UPDATE SET
                             map = EXCLUDED.map,
                             mode = EXCLUDED.mode,
                             team1_score = EXCLUDED.team1_score,
                             team2_score = EXCLUDED.team2_score,
                             round_count = EXCLUDED.round_count
-                        RETURNING id
+                            RETURNING id
                         """,
                         match_uuid, map_name, mode, team1_score, team2_score, round_count
                     )
@@ -58,23 +58,28 @@ class ValorantStats(commands.Cog):
                         discord_id = riot_to_discord.get(riot_id)
 
                         try:
-                            acs = p.get("acs")
-                            score = p.get("score")
-                            kills = p.get("kills")
-                            deaths = p.get("deaths")
-                            assists = p.get("assists")
-                            plus_minus = p.get("plus_minus")
-                            kd_ratio = p.get("kd_ratio")
-                            dda = p.get("dda")
-                            adr = p.get("adr")
-                            hs_pct = p.get("hs_pct")
-                            kast_pct = p.get("kast_pct")
-                            fk = p.get("fk")
-                            fd = p.get("fd")
-                            mk = p.get("mk")
-                            acs_bonus = p.get("acs_bonus")
-                            round_win_points = p.get("round_win_points")
-                            total_points = p.get("total_points")
+                            # Safely convert numeric fields to appropriate types
+                            acs = float(p.get("acs", 0))
+                            score = int(p.get("score", 0))
+                            kills = int(p.get("kills", 0))
+                            deaths = int(p.get("deaths", 0))
+                            assists = int(p.get("assists", 0))
+
+                            # Special handling for plus_minus: remove '+' before converting to int
+                            plus_minus_str = p.get("plus_minus", "0")
+                            plus_minus = int(plus_minus_str.replace('+', ''))  # Remove '+' if present
+
+                            kd_ratio = float(p.get("kd_ratio", 0.0))
+                            dda = float(p.get("dda", 0.0))
+                            adr = float(p.get("adr", 0.0))
+                            hs_pct = float(p.get("hs_pct", 0.0))
+                            kast_pct = float(p.get("kast_pct", 0.0))
+                            fk = int(p.get("fk", 0))
+                            fd = int(p.get("fd", 0))
+                            mk = int(p.get("mk", 0))
+                            acs_bonus = int(p.get("acs_bonus", 0))
+                            round_win_points = int(p.get("round_win_points", 0))
+                            total_points = int(p.get("total_points", 0))
 
                             await conn.execute(
                                 """
@@ -85,8 +90,8 @@ class ValorantStats(commands.Cog):
                                 VALUES ($1, $2, $3, $4, $5, $6, $7,
                                         $8, $9, $10, $11, $12, $13,
                                         $14, $15, $16, $17, $18, $19, $20, $21,
-                                        $22, $23, $24)
-                                ON CONFLICT (match_id, riot_id) DO UPDATE SET
+                                        $22, $23, $24) ON CONFLICT (match_id, riot_id) DO
+                                UPDATE SET
                                     discord_id = EXCLUDED.discord_id,
                                     agent = EXCLUDED.agent,
                                     team = EXCLUDED.team,
@@ -110,21 +115,24 @@ class ValorantStats(commands.Cog):
                                     total_points = EXCLUDED.total_points
                                 """,
                                 match_id, discord_id, riot_id, riot_id, p.get("agent"), p.get("team"), p.get("tier"),
-                                acs, score, kills, deaths, assists, plus_minus,
+                                acs, score, kills, deaths, assists, plus_minus,  # plus_minus is now an int
                                 kd_ratio, dda, adr, hs_pct, kast_pct, fk,
                                 fd, mk, acs_bonus, round_win_points, total_points
                             )
                             if discord_id is not None:
-                                self.logger.debug(f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID: {discord_id}) for match {match_uuid}")
+                                self.logger.debug(
+                                    f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID: {discord_id}) for match {match_uuid}")
                             else:
-                                self.logger.debug(f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID 없음) for match {match_uuid}")
+                                self.logger.debug(
+                                    f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID 없음) for match {match_uuid}")
                         except Exception as player_e:
                             self.logger.error(
                                 f"Error saving player data for {riot_id} in match {match_uuid}: {player_e}\n{traceback.format_exc()}")
                             continue
 
         except asyncpg.exceptions.PostgresError as e:
-            self.logger.error(f"Database error during transaction for match {match_uuid}: {e}\n{traceback.format_exc()}")
+            self.logger.error(
+                f"Database error during transaction for match {match_uuid}: {e}\n{traceback.format_exc()}")
             await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
                 f"🚨 **데이터베이스 오류 발생!** 매치 데이터 저장 실패 (UUID: `{match_uuid}`): `{e}`"
             )
@@ -133,7 +141,6 @@ class ValorantStats(commands.Cog):
             await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
                 f"🚨 **치명적인 오류 발생!** 매치 데이터 저장 중 예상치 못한 문제 (UUID: `{match_uuid}`): `{e}`"
             )
-
 
     @app_commands.command(name="통계", description="최근 매치 요약 통계를 확인합니다.")
     @app_commands.describe(count="최근 포함할 경기 수 (기본값 10, 최대 50)")
