@@ -44,7 +44,7 @@ class DiscordHandler(logging.Handler):
 
         # Set the level for this handler.
         # CHANGE THIS TO logging.INFO or logging.WARNING if you want more logs in Discord.
-        self.setLevel(logging.WARNING) # Default to WARNING, adjust as needed
+        self.setLevel(logging.WARNING)
 
     def emit(self, record):
         # Format the record immediately
@@ -153,8 +153,7 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
     # --- NEW: Add DiscordHandler to root_logger if bot and channel ID are provided ---
     if bot and discord_log_channel_id:
         discord_handler = DiscordHandler(bot, discord_log_channel_id)
-        # Set the level here. Default to WARNING. Change to INFO if you want more logs.
-        discord_handler.setLevel(logging.WARNING) # You can change this to logging.INFO
+        discord_handler.setLevel(logging.DEBUG)
         discord_handler.setFormatter(LOGGING_FORMATTER)
         root_logger.addHandler(discord_handler)
 
