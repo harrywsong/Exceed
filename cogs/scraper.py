@@ -168,7 +168,7 @@ class TrackerScraper(commands.Cog):
                     f"{mention_text}"
                     f"{riot_id_display}\n"
                     f"🎭 요원: {p.get('agent', '알 수 없음')} | 🧬 팀: {p.get('team', '알 수 없음')}\n"
-                    f"📈 ACS: {p.get('acs', 0)} | 📊 KDA: {p.get('kills', 0)} / {p.get('deaths', 0)} / {p.get('assists', 0)} ({plus_minus_display})\n"
+                    f"📈 ACS: {p.get('acs', 0)}    | 📊 KDA: {p.get('kills', 0)} / {p.get('deaths', 0)} / {p.get('assists', 0)} ({plus_minus_display})\n"
                     f"🔥 FK/FD: {p.get('fk', 0)} / {p.get('fd', 0)} | 🎯 헤드샷률: {p.get('hs_pct', 0)}%\n"
                     f"🌟 총 포인트: {p.get('total_points', 0)}"
                 )
