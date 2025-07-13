@@ -82,20 +82,21 @@ class ValorantStats(commands.Cog):
                         discord_id = riot_to_discord.get(riot_id)
 
                         try:
-                            acs = float(p.get("acs", 0))
+                            acs = float(str(p.get("acs", 0)).replace('%', ''))
                             score = int(p.get("score", 0))
                             kills = int(p.get("kills", 0))
                             deaths = int(p.get("deaths", 0))
                             assists = int(p.get("assists", 0))
 
-                            plus_minus_str = p.get("plus_minus", "0")
-                            plus_minus = int(plus_minus_str.replace('+', ''))
+                            plus_minus_str = str(p.get("plus_minus", "0")).replace('+', '').strip()
+                            plus_minus = int(plus_minus_str) if plus_minus_str.isdigit() or (
+                                        plus_minus_str.startswith('-') and plus_minus_str[1:].isdigit()) else 0
 
-                            kd_ratio = float(p.get("kd_ratio", 0.0))
-                            dda = float(p.get("dda", 0.0))
-                            adr = float(p.get("adr", 0.0))
-                            hs_pct = float(p.get("hs_pct", 0.0))
-                            kast_pct = float(p.get("kast_pct", 0.0))
+                            kd_ratio = float(str(p.get("kd_ratio", 0.0)).replace('%', ''))
+                            dda = float(str(p.get("dda", 0.0)).replace('%', ''))
+                            adr = float(str(p.get("adr", 0.0)).replace('%', ''))
+                            hs_pct = float(str(p.get("hs_pct", 0.0)).replace('%', ''))
+                            kast_pct = float(str(p.get("kast_pct", 0.0)).replace('%', ''))
                             fk = int(p.get("fk", 0))
                             fd = int(p.get("fd", 0))
                             mk = int(p.get("mk", 0))
