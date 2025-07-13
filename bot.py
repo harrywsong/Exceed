@@ -16,13 +16,14 @@ from flask import Flask, jsonify, request
 from threading import Thread
 import time # For uptime calculation
 import subprocess # For git pull command
+from flask_cors import CORS # Import CORS for cross-origin requests
 # --- End Flask API Imports ---
 
 import utils.config as config
 import utils.logger as logger_module
 from utils import upload_to_drive
 
-# --- Database Functions (Moved from utils/database.py) ---
+# --- Database Functions ---
 async def create_db_pool_in_bot():
     """Creates and returns a PostgreSQL connection pool using DATABASE_URL from environment variables."""
     try:
@@ -42,7 +43,18 @@ async def create_db_pool_in_bot():
         print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}")
         raise # Re-raise to ensure bot doesn't start without DB
 
-# close_db_pool is handled directly in MyBot.close() now
+async def ensure_db_tables_exist(pool):
+    """Ensures necessary database tables (like command_usage) exist."""
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS command_usage (
+                command_name TEXT PRIMARY KEY,
+                usage_count INTEGER DEFAULT 0,
+                last_used TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    print("✅ 데이터베이스 테이블 확인 및 생성 완료.")
+
 
 # --- Discord Bot Setup ---
 class MyBot(commands.Bot):
@@ -70,9 +82,13 @@ class MyBot(commands.Bot):
         self.log_channel_id = config.LOG_CHANNEL_ID
         self.pool = None
         self.bot_start_time = time.time() # Store bot's start time for uptime
-        self.commands_executed_today = 0 # Counter for commands executed
+        # self.commands_executed_today is now managed by DB for persistence
 
     async def setup_hook(self):
+        # Ensure DB tables exist before loading cogs that might use them
+        if self.pool:
+            await ensure_db_tables_exist(self.pool)
+
         for ext in self.initial_extensions:
             try:
                 await self.load_extension(ext)
@@ -105,24 +121,58 @@ class MyBot(commands.Bot):
         self.logger.info("봇이 종료되었습니다.")
 
     async def on_command_error(self, ctx, error):
-        # Increment command counter for successful commands or even attempted ones
-        # You might want to refine this to only count successfully executed commands
+        # Log command errors, but don't increment usage for errors unless desired
         if not isinstance(error, commands.CommandNotFound):
-            self.commands_executed_today += 1
             self.logger.error(f"명령어 '{ctx.command}' 실행 중 오류 발생: {error}", exc_info=True)
             await ctx.send(f"오류가 발생했습니다: {error}")
-        else: # For CommandNotFound, still increment if you want to count all attempts
-             self.commands_executed_today += 1
-             return # Do not send error message for CommandNotFound
+        else:
+            # For CommandNotFound, we might still want to count it as an attempt,
+            # but for now, we'll only count recognized commands in on_command.
+            return # Do not send error message for CommandNotFound
 
-    # --- New: on_command hook to count successful commands ---
+    async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
+        """Hook for when an application command (slash command) is successfully completed."""
+        # This is a better place to count successful command executions for slash commands
+        command_name = command.name
+        if self.pool:
+            try:
+                async with self.pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO command_usage (command_name, usage_count, last_used)
+                        VALUES ($1, 1, CURRENT_TIMESTAMP)
+                        ON CONFLICT (command_name) DO UPDATE SET
+                            usage_count = command_usage.usage_count + 1,
+                            last_used = CURRENT_TIMESTAMP;
+                    """, command_name)
+                    self.logger.debug(f"Command '{command_name}' usage updated in DB.")
+            except Exception as e:
+                self.logger.error(f"Failed to update command usage for '{command_name}' in DB: {e}", exc_info=True)
+        else:
+            self.logger.warning(f"Database pool not available, cannot log command usage for '{command_name}'.")
+
     async def on_command(self, ctx):
-        self.commands_executed_today += 1
-        # You can also log successful commands here
-        # self.logger.info(f"Command '{ctx.command}' used by {ctx.author} in {ctx.guild.name}/{ctx.channel.name}")
+        """Hook for when a prefix command is successfully completed."""
+        command_name = ctx.command.name
+        if self.pool:
+            try:
+                async with self.pool.acquire() as conn:
+                    await conn.execute("""
+                        INSERT INTO command_usage (command_name, usage_count, last_used)
+                        VALUES ($1, 1, CURRENT_TIMESTAMP)
+                        ON CONFLICT (command_name) DO UPDATE SET
+                            usage_count = command_usage.usage_count + 1,
+                            last_used = CURRENT_TIMESTAMP;
+                    """, command_name)
+                    self.logger.debug(f"Command '{command_name}' usage updated in DB.")
+            except Exception as e:
+                self.logger.error(f"Failed to update command usage for '{command_name}' in DB: {e}", exc_info=True)
+        else:
+            self.logger.warning(f"Database pool not available, cannot log command usage for '{command_name}'.")
+
 
 # --- Flask API for the Management UI ---
 api_app = Flask(__name__)
+CORS(api_app) # Enable CORS for all routes
 
 # --- Helper to calculate uptime ---
 def get_uptime_string(start_timestamp):
@@ -150,16 +200,14 @@ def get_bot_status():
     API Endpoint: GET /status
     봇의 현재 작동 상태와 주요 통계를 반환합니다.
     """
-    # Access the bot instance from the global scope (or pass it if needed)
-    # In this structure, 'bot' is a global variable initialized in main()
-    global bot_instance # Make sure bot_instance is accessible
+    global bot_instance
 
     status = "Offline"
     latency = "N/A"
     guild_count = 0
     user_count = 0
     uptime_str = "N/A"
-    commands_today = 0
+    commands_today = 0 # This will now be fetched from DB for current day
 
     if bot_instance and bot_instance.is_ready():
         status = "Online"
@@ -167,7 +215,11 @@ def get_bot_status():
         guild_count = len(bot_instance.guilds)
         user_count = len(bot_instance.users) # This relies on Intents.members and Intents.presences
         uptime_str = get_uptime_string(bot_instance.bot_start_time)
-        commands_today = bot_instance.commands_executed_today
+        # Fetch commands executed today from DB (reset daily by DB logic or manual clear)
+        # For simplicity, we'll just return the total count for now,
+        # A more robust solution would involve a 'daily_commands' table or date filtering.
+        # For now, let's just make sure it's not 'N/A'
+        commands_today = "Loading..." # Will be fetched via /command_stats for the chart
 
     return jsonify({
         "status": status,
@@ -175,7 +227,7 @@ def get_bot_status():
         "latency_ms": latency,
         "guild_count": guild_count,
         "user_count": user_count,
-        "commands_used_today": commands_today
+        "commands_used_today": commands_today # This will be updated by /command_stats
     })
 
 @api_app.route('/command/announce', methods=['POST'])
@@ -323,14 +375,66 @@ def api_update_git():
         bot_instance.logger.error(f"Git 업데이트 중 예상치 못한 오류 발생: {e}", exc_info=True)
         return jsonify({"status": "error", "error": f"예상치 못한 오류 발생: {e}"}), 500
 
+@api_app.route('/logs', methods=['GET'])
+def get_logs():
+    """
+    API Endpoint: GET /logs
+    봇의 최신 로그 파일 내용을 반환합니다.
+    """
+    log_file_path = logger_module.LOG_FILE_PATH # Use the path from logger.py
+    try:
+        # Read the last N lines to avoid reading huge files, or implement pagination
+        with open(log_file_path, 'r', encoding='utf-8') as f:
+            # For simplicity, reading all for now. Consider tailing or pagination for large logs.
+            logs = f.readlines()
+        return jsonify({"status": "success", "logs": logs})
+    except FileNotFoundError:
+        return jsonify({"status": "error", "error": "로그 파일을 찾을 수 없습니다."}), 404
+    except Exception as e:
+        global bot_instance
+        if bot_instance:
+            bot_instance.logger.error(f"로그 파일 읽기 실패: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": f"로그 파일 읽기 실패: {e}"}), 500
+
+@api_app.route('/command_stats', methods=['GET'])
+def get_command_stats():
+    """
+    API Endpoint: GET /command_stats
+    가장 많이 사용된 명령어 통계를 반환합니다.
+    """
+    global bot_instance
+    if not bot_instance or not bot_instance.pool:
+        return jsonify({"status": "error", "error": "봇 또는 데이터베이스 풀을 사용할 수 없습니다."}), 500
+
+    async def _fetch_command_stats():
+        try:
+            async with bot_instance.pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT command_name, usage_count
+                    FROM command_usage
+                    ORDER BY usage_count DESC
+                    LIMIT 10;
+                """)
+                return {"status": "success", "command_stats": [dict(row) for row in rows]}
+        except Exception as e:
+            bot_instance.logger.error(f"명령어 통계 가져오기 실패: {e}", exc_info=True)
+            return {"status": "error", "error": f"명령어 통계 가져오기 실패: {e}"}
+
+    try:
+        future = asyncio.run_coroutine_threadsafe(_fetch_command_stats(), bot_instance.loop)
+        result = future.result(timeout=10)
+        return jsonify(result)
+    except asyncio.TimeoutError:
+        return jsonify({"status": "error", "error": "명령어 통계 가져오기 시간 초과."}), 500
+    except Exception as e:
+        bot_instance.logger.error(f"명령어 통계 예약 중 오류 발생: {e}", exc_info=True)
+        return jsonify({"status": "error", "error": f"명령어 통계 예약 실패: {e}"}), 500
+
 
 def run_api_server():
     """
     별도의 스레드에서 Flask API 서버를 실행합니다.
     """
-    # UI의 Flask 앱과 다른 포트를 사용합니다 (예: 5001).
-    # '0.0.0.0'은 네트워크의 다른 머신에서 액세스할 수 있도록 합니다.
-    # 로컬 개발의 경우 '127.0.0.1'로 충분합니다.
     api_app.run(host='127.0.0.1', port=5001, debug=False) # 프로덕션에서는 debug=False로 설정하십시오!
 
 # Global variable to hold the bot instance so Flask routes can access it
@@ -348,6 +452,7 @@ async def main():
     try:
         bot_instance.pool = await create_db_pool_in_bot() # CALL THE EMBEDDED FUNCTION
         bot_instance.logger.info("✅ 데이터베이스 연결 풀이 생성되었습니다.")
+        await ensure_db_tables_exist(bot_instance.pool) # Ensure tables exist after pool creation
     except Exception as e:
         bot_instance.logger.critical(f"❌ 데이터베이스 연결 실패: {e}. 종료합니다.", exc_info=True)
         sys.exit(1)
