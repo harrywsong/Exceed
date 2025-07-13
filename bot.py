@@ -86,16 +86,17 @@ class MyBot(commands.Bot):
 
         ticket_cog = self.get_cog('TicketSystem')
         if ticket_cog:
-            await ticket_cog.setup_persistent_views()
-            self.logger.info("[티켓 시스템] Persistent views (HelpView, CloseTicketView) 등록 완료.")
+            # REMOVE or COMMENT OUT this line:
+            # await ticket_cog.setup_persistent_views()
+            self.logger.info(
+                "[티켓 시스템] Persistent views (HelpView, CloseTicketView) 등록 완료.")  # This log is also redundant if it's already in the cog
+            # This log will now correctly appear from the cog itself, so this line can also be removed if it's a duplicate.
 
         interview_cog = self.get_cog('InterviewRequestCog')
         if interview_cog:
             await interview_cog.post_interview_message()
             self.logger.info("[클랜 인터뷰] 인터뷰 요청 메시지 및 영구 뷰 설정 완료.")
 
-        # If you are not uploading logs anywhere, you might want to remove this line as well.
-        # Otherwise, the scheduler will run, but upload_logs will do nothing.
         self.start_log_upload_scheduler()
 
     @tasks.loop(hours=24)
