@@ -36,16 +36,25 @@ class DiscordHandler(logging.Handler):
         self._message_buffer = []
         self._send_task = None
         self._buffer_lock = asyncio.Lock()
+        # Initialize _bot_ready_event from the bot instance's ready_event
+        self._bot_ready_event = bot.ready_event # <-- **CRITICAL ADDITION**
 
         self.setLevel(logging.WARNING)
 
     def emit(self, record):
         log_entry = self.format(record)
         try:
-            asyncio.ensure_future(self._add_to_buffer(log_entry))
-        except RuntimeError:
-            print(f"DEBUG: No running event loop for DiscordHandler. Buffering for later: {log_entry}", file=sys.stderr)
-            self._message_buffer.append(log_entry)
+            # Schedule the coroutine on the bot's event loop
+            if self.bot and self.bot.loop and self.bot.loop.is_running():
+                asyncio.run_coroutine_threadsafe(self._add_to_buffer(log_entry), self.bot.loop)
+            else:
+                # Fallback if the event loop isn't running yet (very early startup)
+                self._message_buffer.append(log_entry)
+        except Exception as e:
+            # Catching general exceptions during scheduling for robustness
+            print(f"ERROR: Failed to schedule log to Discord buffer: {e} - Log: {log_entry}", file=sys.stderr)
+            self._message_buffer.append(log_entry) # Try to buffer anyway
+
 
     async def _add_to_buffer(self, msg):
         async with self._buffer_lock:
@@ -54,7 +63,8 @@ class DiscordHandler(logging.Handler):
                 self._send_task = asyncio.create_task(self._send_buffered_logs())
 
     async def _send_buffered_logs(self):
-        await self.bot.wait_until_ready()
+        # Wait until the bot explicitly signals it's ready using its event
+        await self._bot_ready_event.wait() # <-- **CRITICAL CHANGE**
 
         async with self._buffer_lock:
             if not self._message_buffer:
@@ -73,9 +83,11 @@ class DiscordHandler(logging.Handler):
                 try:
                     for chunk in self._chunk_message(msg_content, 1900):
                         await channel.send(f"```\n{chunk}\n```")
-                        await asyncio.sleep(0.7)
+                        await asyncio.sleep(0.7) # Add a small delay to avoid rate limits
+                except discord.Forbidden:
+                    print(f"❌ Discord Forbidden: Bot lacks permissions to send in channel {self.channel_id}", file=sys.stderr)
                 except discord.HTTPException as e:
-                    print(f"❌ Discord HTTP error sending log chunk: {e}", file=sys.stderr)
+                    print(f"❌ Discord HTTP error sending log chunk: {e} (Status: {e.status})", file=sys.stderr)
                 except Exception as e:
                     print(f"❌ Failed to send log to Discord channel: {e}", file=sys.stderr)
 
@@ -84,11 +96,13 @@ class DiscordHandler(logging.Handler):
         lines = msg.splitlines(keepends=True)
         chunk = ""
         for line in lines:
-            if len(chunk) + len(line) > max_length:
+            if len(chunk) + len(line) > max_length and chunk:
                 yield chunk
-                chunk = line
-            else:
-                chunk += line
+                chunk = ""
+            while len(line) > max_length:
+                yield line[:max_length]
+                line = line[max_length:]
+            chunk += line
         if chunk:
             yield chunk
 
@@ -99,10 +113,7 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
     This function is crucial for re-establishing handlers after log file
     renaming operations (e.g., crash log upload) and for initial setup.
     """
-    handlers_to_remove = []
-    for handler in root_logger.handlers:
-        handlers_to_remove.append(handler)
-
+    handlers_to_remove = root_logger.handlers[:]
     for handler in handlers_to_remove:
         try:
             handler.close()
@@ -133,7 +144,7 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
         discord_handler.setFormatter(LOGGING_FORMATTER)
         root_logger.addHandler(discord_handler)
 
-def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=None) -> logging.Logger:
+def get_logger(name: str, level=logging.INFO) -> logging.Logger: # Removed bot and discord_log_channel_id here
     """
     Retrieves a logger with the specified name and level.
     The DiscordHandler is now managed by the root logger configuration.
@@ -144,3 +155,5 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
     return logger
 
 logging.getLogger('discord').setLevel(logging.INFO)
+logging.getLogger('discord.http').setLevel(logging.INFO)
+logging.getLogger('websockets').setLevel(logging.INFO)
