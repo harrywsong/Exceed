@@ -219,4 +219,11 @@ class ReactionRoles(commands.Cog):
 
 
 async def setup(bot):
-    await bot.add_cog(ReactionRoles(bot))
+    try:
+        cog = ReactionRoles(bot)
+        await bot.add_cog(cog)
+        await cog.populate_reactions()
+    except Exception as e:
+        import traceback
+        print(f"❌ ReactionRoles cog failed to load: {e}")
+        traceback.print_exc()
