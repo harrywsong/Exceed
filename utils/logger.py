@@ -130,7 +130,8 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
     if bot and discord_log_channel_id:
         if not any(isinstance(h, DiscordLogHandler) for h in root_logger.handlers):
             discord_handler = DiscordLogHandler(bot, discord_log_channel_id)
-            discord_handler.setLevel(logging.WARNING)
+            # ⭐ CHANGE THIS LINE FOR TESTING ⭐
+            discord_handler.setLevel(logging.INFO) # Temporarily changed from logging.WARNING to INFO
             discord_handler.setFormatter(LOGGING_FORMATTER)
             root_logger.addHandler(discord_handler)
 
