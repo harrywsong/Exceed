@@ -1,7 +1,6 @@
 # /home/hws/Exceed/bot.py
 
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 import os
 import asyncio
@@ -17,14 +16,13 @@ from flask import Flask, jsonify, request
 from threading import Thread
 import time # For uptime calculation
 import subprocess # For git pull command
-from flask_cors import CORS # Import CORS for cross-origin requests
 # --- End Flask API Imports ---
 
 import utils.config as config
-import utils.logger as logger_module # Good: using an alias for clarity
+import utils.logger as logger_module # This module contains get_logger
 from utils import upload_to_drive
 
-# --- Database Functions ---
+# --- Database Functions (Moved from utils/database.py) ---
 async def create_db_pool_in_bot():
     """Creates and returns a PostgreSQL connection pool using DATABASE_URL from environment variables."""
     try:
@@ -41,586 +39,421 @@ async def create_db_pool_in_bot():
         return pool
     except Exception as e:
         # Print directly as logger might not be fully set up yet during early startup
-        print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}")
+        print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}", file=sys.stderr)
         raise # Re-raise to ensure bot doesn't start without DB
 
-async def ensure_db_tables_exist(pool):
-    """Ensures necessary database tables (like command_usage) exist."""
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS command_usage (
-                command_name TEXT PRIMARY KEY,
-                usage_count INTEGER DEFAULT 0,
-                last_used TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-    print("✅ 데이터베이스 테이블 확인 및 생성 완료.")
-
-
-# --- Discord Bot Setup ---
-class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(
-            command_prefix=commands.when_mentioned_or("!"),
-            intents=discord.Intents.all(), # discord.Intents.all() includes members and presences
-            sync_commands_debug=True
-        )
-        self.initial_extensions = [
-            'cogs.welcomegoodbye',
-            'cogs.interview',
-            'cogs.ticket',
-            'cogs.clanstats',
-            'cogs.registration',
-            'cogs.autoguest',
-            'cogs.voice',
-            'cogs.scraper',
-            'cogs.clear_messages',
-            'cogs.reaction_roles',
-            'cogs.leaderboard',
-        ]
-        self.session = aiohttp.ClientSession()
-        self.ready_event = asyncio.Event()
-        self.log_channel_id = config.LOG_CHANNEL_ID
-        self.pool = None
-        self.bot_start_time = time.time() # Store bot's start time for uptime
-        # self.commands_executed_today is now managed by DB for persistence
-
-    async def setup_hook(self):
-        # Ensure DB tables exist before loading cogs that might use them
-        if self.pool:
-            await ensure_db_tables_exist(self.pool)
-
-        for ext in self.initial_extensions:
-            try:
-                await self.load_extension(ext)
-                logger_module.root_logger.info(f"코그 로드 완료: {ext.split('.')[-1]}.py")
-            except Exception as e:
-                # FIX 1: Use root_logger here, as self.logger might not be assigned yet
-                logger_module.root_logger.error(f"확장 로드 실패 {ext}: {e}", exc_info=True)
-
-        try:
-            await self.tree.sync()
-            # FIX 1: Use root_logger here as well for consistency during startup
-            logger_module.root_logger.info("슬래시 명령어 동기화 완료.")
-        except Exception as e:
-            # FIX 1: Use root_logger here as well
-            logger_module.root_logger.error(f"슬래시 명령어 동기화 실패: {e}", exc_info=True)
-
-    async def on_ready(self):
-        self.ready_event.set()
-        # FIX 1: Use root_logger here for the initial "ready" message
-        logger_module.root_logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
-
-        # The DiscordHandler's log sending task is now started in main()
-        # after _configure_root_handlers, so this block is no longer needed here.
-        # It's better to start the task immediately after adding the handler
-        # to ensure it's always running on the latest handler instance.
-
-    async def close(self):
-        if self.pool: # Ensure pool is closed when bot closes
-            await self.pool.close()
-            self.logger.info("✅ 데이터베이스 풀이 닫혔습니다.")
-        await self.session.close()
-        # Ensure all log handlers are properly closed on shutdown
-        for handler in logging.getLogger().handlers:
-            if hasattr(handler, 'flush'):
-                handler.flush()
-            if hasattr(handler, 'close'):
-                handler.close()
-        await super().close()
-        self.logger.info("봇이 종료되었습니다.")
-
-    async def on_command_error(self, ctx, error):
-        # Log command errors, but don't increment usage for errors unless desired
-        if not isinstance(error, commands.CommandNotFound):
-            self.logger.error(f"명령어 '{ctx.command}' 실행 중 오류 발생: {error}", exc_info=True)
-            await ctx.send(f"오류가 발생했습니다: {error}")
-        else:
-            # For CommandNotFound, we might still want to count it as an attempt,
-            # but for now, we'll only count recognized commands in on_command.
-            return # Do not send error message for CommandNotFound
-
-    async def on_app_command_completion(self, interaction: discord.Interaction, command: app_commands.Command):
-        """Hook for when an application command (slash command) is successfully completed."""
-        # This is a better place to count successful command executions for slash commands
-        command_name = command.name
-        if self.pool:
-            try:
-                async with self.pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO command_usage (command_name, usage_count, last_used)
-                        VALUES ($1, 1, CURRENT_TIMESTAMP)
-                        ON CONFLICT (command_name) DO UPDATE SET
-                            usage_count = command_usage.usage_count + 1,
-                            last_used = CURRENT_TIMESTAMP;
-                    """, command_name)
-                    self.logger.debug(f"Command '{command_name}' usage updated in DB.")
-            except Exception as e:
-                self.logger.error(f"Failed to update command usage for '{command_name}' in DB: {e}", exc_info=True)
-        else:
-            self.logger.warning(f"Database pool not available, cannot log command usage for '{command_name}'.")
-
-    async def on_command(self, ctx):
-        """Hook for when a prefix command is successfully completed."""
-        command_name = ctx.command.name
-        if self.pool:
-            try:
-                async with self.pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO command_usage (command_name, usage_count, last_used)
-                        VALUES ($1, 1, CURRENT_TIMESTAMP)
-                        ON CONFLICT (command_name) DO UPDATE SET
-                            usage_count = command_usage.usage_count + 1,
-                            last_used = CURRENT_TIMESTAMP;
-                    """, command_name)
-                    self.logger.debug(f"Command '{command_name}' usage updated in DB.")
-            except Exception as e:
-                self.logger.error(f"Failed to update command usage for '{command_name}' in DB: {e}", exc_info=True)
-        else:
-            self.logger.warning(f"Database pool not available, cannot log command usage for '{command_name}'.")
-
-
-# --- Flask API for the Management UI ---
+# --- Flask API Setup ---
 api_app = Flask(__name__)
-CORS(api_app) # Enable CORS for all routes
 
-# --- Helper to calculate uptime ---
-def get_uptime_string(start_timestamp):
-    delta = datetime.timedelta(seconds=int(time.time() - start_timestamp))
-    total_seconds = int(delta.total_seconds())
-    days, remainder = divmod(total_seconds, 86400)
-    hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
+# Store bot_instance globally or pass it, so API can access it
+# This will be set in the main function
+global bot_instance
+bot_instance = None
 
-    uptime_parts = []
-    if days > 0:
-        uptime_parts.append(f"{days}d")
-    if hours > 0:
-        uptime_parts.append(f"{hours}h")
-    if minutes > 0:
-        uptime_parts.append(f"{minutes}m")
-    if seconds > 0 or not uptime_parts: # Always show seconds if nothing else, or if it's 0s
-        uptime_parts.append(f"{seconds}s")
-    return " ".join(uptime_parts) if uptime_parts else "0s"
-
-
-@api_app.route('/status', methods=['GET'])
-def get_bot_status():
-    """
-    API Endpoint: GET /status
-    봇의 현재 작동 상태와 주요 통계를 반환합니다.
-    """
-    global bot_instance
-
-    status = "Offline"
-    latency = "N/A"
-    guild_count = 0
-    user_count = 0
-    uptime_str = "N/A"
-    commands_today = 0 # This will now be fetched from DB for current day
-
+@api_app.route('/status')
+def bot_status():
+    """Returns the current status of the bot."""
     if bot_instance and bot_instance.is_ready():
-        status = "Online"
-        latency = round(bot_instance.latency * 1000)
-        guild_count = len(bot_instance.guilds)
-        user_count = len(bot_instance.users) # This relies on Intents.members and Intents.presences
-        uptime_str = get_uptime_string(bot_instance.bot_start_time)
-        # Fetch commands executed today from DB (reset daily by DB logic or manual clear)
-        # For simplicity, we'll just return the total count for now,
-        # A more robust solution would involve a 'daily_commands' table or date filtering.
-        # For now, let's just make sure it's not 'N/A'
-        commands_today = "Loading..." # Will be fetched via /command_stats for the chart
+        uptime = datetime.datetime.now(datetime.timezone.utc) - bot_instance.start_time
+        hours, remainder = divmod(int(uptime.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{hours}h {minutes}m {seconds}s"
 
-    return jsonify({
-        "status": status,
-        "uptime": uptime_str,
-        "latency_ms": latency,
-        "guild_count": guild_count,
-        "user_count": user_count,
-        "commands_used_today": commands_today # This will be updated by /command_stats
-    })
+        latency_ms = round(bot_instance.latency * 1000, 2) if bot_instance.latency else 'N/A'
+
+        return jsonify({
+            "status": "Online",
+            "uptime": uptime_str,
+            "latency_ms": latency_ms,
+            "guild_count": len(bot_instance.guilds),
+            "user_count": len(bot_instance.users),
+            "commands_used_today": bot_instance.total_commands_today,
+            "message": "Bot is running and ready."
+        })
+    else:
+        return jsonify({
+            "status": "Offline",
+            "uptime": "N/A",
+            "latency_ms": "N/A",
+            "guild_count": 0,
+            "user_count": 0,
+            "commands_used_today": 0,
+            "error": "Bot is not ready or offline."
+        })
+
+@api_app.route('/command_stats')
+def command_stats():
+    """Returns command usage statistics."""
+    if bot_instance:
+        # Convert command_counts dictionary to a list of objects for JSON
+        stats_list = []
+        for cmd, count in bot_instance.command_counts.items():
+            stats_list.append({"command_name": cmd, "usage_count": count})
+        # Sort by usage_count descending
+        stats_list.sort(key=lambda x: x['usage_count'], reverse=True)
+
+        return jsonify({
+            "status": "success",
+            "command_stats": stats_list,
+            "total_commands_today": bot_instance.total_commands_today
+        })
+    else:
+        return jsonify({
+            "status": "error",
+            "error": "Bot instance not available."
+        })
+
+@api_app.route('/logs')
+def get_logs():
+    """Returns the last 500 lines of the bot's log file."""
+    log_file_path = logger_module.LOG_FILE_PATH # Use the path from logger_module
+    try:
+        if not os.path.exists(log_file_path):
+            return jsonify({"status": "error", "error": "Log file not found."}), 404
+
+        with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            # Read all lines and get the last 500
+            lines = f.readlines()
+            last_500_lines = lines[-500:] # Get the last 500 lines
+
+        # Filter out specific Werkzeug access logs if they are still being written to the file
+        # The logger setup in logger.py aims to prevent this, but as a fallback for the API.
+        filtered_logs = [
+            line.strip() for line in last_500_lines
+            if "GET /status HTTP/1.1" not in line and
+               "GET /logs HTTP/1.1" not in line and
+               "GET /command_stats HTTP/1.1" not in line and
+               "INFO....] [werkzeug]" not in line # General werkzeug info logs
+        ]
+
+        return jsonify({"status": "success", "logs": filtered_logs})
+    except Exception as e:
+        print(f"Error reading log file: {e}", file=sys.stderr)
+        return jsonify({"status": "error", "error": f"Failed to read log file: {e}"}), 500
+
+
+@api_app.route('/control/<action>', methods=['POST'])
+def control_bot_api(action):
+    """Handles bot control actions like restart, reload cogs, update git."""
+    if not bot_instance:
+        return jsonify({"status": "error", "error": "Bot instance not available."}), 500
+
+    if action == 'restart':
+        bot_instance.logger.info("API 요청: 봇 재시작 중...")
+        # This will stop the current bot and trigger systemd to restart it
+        asyncio.run_coroutine_threadsafe(bot_instance.close(), bot_instance.loop)
+        return jsonify({"status": "success", "message": "Bot restart initiated."})
+    elif action == 'reload_cogs':
+        bot_instance.logger.info("API 요청: 모든 Cog 재로드 중...")
+        try:
+            asyncio.run_coroutine_threadsafe(bot_instance.reload_all_cogs(), bot_instance.loop)
+            return jsonify({"status": "success", "message": "All cogs reloaded successfully."})
+        except Exception as e:
+            bot_instance.logger.error(f"Cog 재로드 실패: {e}")
+            return jsonify({"status": "error", "error": f"Failed to reload cogs: {e}"}), 500
+    elif action == 'update_git':
+        bot_instance.logger.info("API 요청: Git 업데이트 및 재시작 준비 중...")
+        try:
+            # Execute git pull in a non-blocking way if possible, or in a separate thread
+            # For simplicity, using subprocess.run which is blocking, but in a separate thread.
+            result = subprocess.run(['git', 'pull'], capture_output=True, text=True, cwd=os.getcwd())
+            if result.returncode == 0:
+                bot_instance.logger.info(f"Git pull 성공: {result.stdout.strip()}")
+                # After successful pull, restart the bot to apply changes
+                asyncio.run_coroutine_threadsafe(bot_instance.close(), bot_instance.loop)
+                return jsonify({"status": "success", "message": "Git pull successful. Bot restarting to apply updates."})
+            else:
+                bot_instance.logger.error(f"Git pull 실패: {result.stderr.strip()}")
+                return jsonify({"status": "error", "error": f"Git pull failed: {result.stderr.strip()}"}), 500
+        except Exception as e:
+            bot_instance.logger.error(f"Git 업데이트 중 오류 발생: {e}")
+            return jsonify({"status": "error", "error": f"Error during git update: {e}"}), 500
+    else:
+        return jsonify({"status": "error", "error": "Invalid control action."}), 400
 
 @api_app.route('/command/announce', methods=['POST'])
-def api_announce():
-    """
-    API Endpoint: POST /command/announce
-    봇이 공지 메시지를 보내도록 트리거합니다.
-    """
-    data = request.json
+def send_announcement_api():
+    """Sends an announcement to a specified channel."""
+    if not bot_instance or not bot_instance.is_ready():
+        return jsonify({"status": "error", "error": "Bot is not ready."}), 503
+
+    data = request.get_json()
     channel_id = data.get('channel_id')
     message = data.get('message')
 
     if not channel_id or not message:
-        return jsonify({"status": "error", "error": "Missing channel_id or message"}), 400
+        return jsonify({"status": "error", "error": "Channel ID and message are required."}), 400
 
     try:
-        channel_id = int(channel_id)
+        channel = bot_instance.get_channel(int(channel_id))
+        if not channel:
+            return jsonify({"status": "error", "error": "Channel not found or bot does not have access."}), 404
+
+        # Run the Discord send operation in the bot's event loop
+        asyncio.run_coroutine_threadsafe(channel.send(message), bot_instance.loop)
+        bot_instance.logger.info(f"API 요청: 채널 {channel_id}에 공지 전송 완료.")
+        return jsonify({"status": "success", "message": "Announcement sent successfully."})
     except ValueError:
-        return jsonify({"status": "error", "error": "Invalid channel_id. Must be an integer."}), 400
-
-    async def _send_announcement():
-        """비동기 함수로 discord.py를 통해 메시지를 보냅니다."""
-        global bot_instance
-        if not bot_instance or not bot_instance.is_ready():
-            return {"status": "error", "error": "Bot is not ready or offline."}
-
-        channel = bot_instance.get_channel(channel_id)
-        if channel:
-            try:
-                await channel.send(f"**UI에서 공지:** {message}")
-                return {"status": "success", "message": "공지가 성공적으로 전송되었습니다."}
-            except discord.Forbidden:
-                return {"status": "error", "error": "봇이 해당 채널에 메시지를 보낼 권한이 없습니다."}
-            except Exception as e:
-                bot_instance.logger.error(f"Discord API 오류 (공지): {e}", exc_info=True)
-                return {"status": "error", "error": f"Discord API 오류: {e}"}
-        else:
-            return {"status": "error", "error": "채널을 찾을 수 없습니다. ID가 올바르고 봇이 길드에 있는지 확인하세요."}
-
-    try:
-        # Use bot_instance.loop to run coroutine in bot's thread
-        future = asyncio.run_coroutine_threadsafe(_send_announcement(), bot_instance.loop)
-        result = future.result(timeout=15) # Wait for the result with a timeout
-        return jsonify(result)
-    except asyncio.TimeoutError:
-        return jsonify({"status": "error", "error": "봇이 공지에 제시간에 응답하지 않았습니다."}), 500
+        return jsonify({"status": "error", "error": "Invalid channel ID format."}), 400
     except Exception as e:
-        bot_instance.logger.error(f"공지 예약 중 오류 발생: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": f"공지 예약 실패: {e}"}), 500
-
-
-@api_app.route('/control/restart', methods=['POST'])
-def api_restart():
-    """
-    API Endpoint: POST /control/restart
-    봇 종료를 시작합니다. 실제 재시작을 위해서는 외부 프로세스 관리자가 필요합니다.
-    """
-    global bot_instance
-    print("UI에서 재시작 명령을 받았습니다. 봇 종료를 시작합니다...")
-    # FIX 1: Use root_logger here as well for initial messages
-    logger_module.root_logger.info("UI에서 재시작 명령을 받았습니다. 봇 종료를 시작합니다...")
-
-    async def _shutdown_bot():
-        if bot_instance:
-            await bot_instance.close() # This will close the Discord connection and session
-
-    try:
-        # Schedule the shutdown on the bot's event loop
-        # This will cause the bot.run() call to eventually return
-        future = asyncio.run_coroutine_threadsafe(_shutdown_bot(), bot_instance.loop)
-        future.result(timeout=10) # Wait a short while for the shutdown to initiate
-        return jsonify({"status": "success", "message": "봇 종료가 시작되었습니다. 재시작을 위해서는 외부 프로세스 관리자가 필요합니다."})
-    except asyncio.TimeoutError:
-        return jsonify({"status": "error", "error": "봇 종료 시작 시간 초과."}), 500
-    except Exception as e:
-        # FIX 1: Use root_logger here
-        logger_module.root_logger.error(f"봇 종료 시작 중 오류 발생: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": f"종료 시작 실패: {e}"}), 500
-
-@api_app.route('/control/reload_cogs', methods=['POST'])
-def api_reload_cogs():
-    """
-    API Endpoint: POST /control/reload_cogs
-    로드된 모든 코그(확장)를 다시 로드합니다.
-    봇이 discord.py의 확장 시스템을 사용한다고 가정합니다.
-    """
-    global bot_instance
-    if not bot_instance or not bot_instance.is_ready():
-        return jsonify({"status": "error", "error": "Bot is not ready or offline."}), 500
-
-    async def _reload_all_cogs():
-        reloaded_cogs = []
-        failed_cogs = []
-        # Create a copy of keys as the dictionary might change during iteration
-        for extension in list(bot_instance.extensions.keys()):
-            try:
-                await bot_instance.reload_extension(extension)
-                reloaded_cogs.append(extension)
-                bot_instance.logger.info(f"코그 다시 로드됨: {extension}")
-            except Exception as e:
-                failed_cogs.append(f"{extension} ({e})")
-                bot_instance.logger.error(f"코그 다시 로드 실패 {extension}: {e}", exc_info=True)
-
-        if not failed_cogs:
-            return {"status": "success", "message": f"성공적으로 {len(reloaded_cogs)}개의 코그를 다시 로드했습니다."}
-        else:
-            return {"status": "error", "error": f"성공적으로 {len(reloaded_cogs)}개의 코그를 다시 로드했지만, 다음에서 실패했습니다: {', '.join(failed_cogs)}"}
-
-    try:
-        future = asyncio.run_coroutine_threadsafe(_reload_all_cogs(), bot_instance.loop)
-        result = future.result(timeout=30) # Give more time for reloads
-        return jsonify(result)
-    except asyncio.TimeoutError:
-        return jsonify({"status": "error", "error": "코그 다시 로드 시간 초과."}), 500
-    except Exception as e:
-        bot_instance.logger.error(f"코그 다시 로드 예약 중 오류 발생: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": f"코그 다시 로드 예약 실패: {e}"}), 500
-
-@api_app.route('/control/update_git', methods=['POST'])
-def api_update_git():
-    """
-    API Endpoint: POST /control/update_git
-    Git pull을 트리거합니다.
-    경고: 웹 서버에서 직접 셸 명령을 실행하는 것은 보안 위험이 될 수 있습니다.
-    전용 배포 시스템이나 더 안전한 방법을 고려하십시오.
-    """
-    global bot_instance
-    bot_directory = "/home/hws/Exceed/" # 봇의 저장소에 대한 올바른 경로인지 확인하십시오.
-
-    try:
-        # 'git pull' 명령을 봇 디렉토리에서 실행합니다.
-        result = subprocess.run(
-            ['git', 'pull'],
-            cwd=bot_directory,
-            capture_output=True,
-            text=True,
-            check=True # 0이 아닌 종료 코드에 대해 예외를 발생시킵니다.
-        )
-        bot_instance.logger.info(f"Git pull 출력:\n{result.stdout}")
-        if "Already up to date." in result.stdout:
-            message = "Git 저장소가 이미 최신 상태입니다."
-        else:
-            message = "Git pull 성공. 변경 사항을 적용하려면 봇 재시작이 필요할 수 있습니다."
-        return jsonify({"status": "success", "message": message})
-    except subprocess.CalledProcessError as e:
-        bot_instance.logger.error(f"Git pull 실패: {e.stderr}", exc_info=True)
-        return jsonify({"status": "error", "error": f"Git pull 실패: {e.stderr}"}), 500
-    except FileNotFoundError:
-        return jsonify({"status": "error", "error": "Git 명령을 찾을 수 없습니다. Git이 설치되어 있고 PATH에 있습니까?"}), 500
-    except Exception as e:
-        bot_instance.logger.error(f"Git 업데이트 중 예상치 못한 오류 발생: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": f"예상치 못한 오류 발생: {e}"}), 500
-
-@api_app.route('/logs', methods=['GET'])
-def get_logs():
-    """
-    API Endpoint: GET /logs
-    봇의 최신 로그 파일 내용을 반환합니다.
-    """
-    log_file_path = logger_module.LOG_FILE_PATH # Use the path from logger.py
-    try:
-        # Read the last N lines to avoid reading huge files, or implement pagination
-        with open(log_file_path, 'r', encoding='utf-8') as f:
-            # For simplicity, reading all for now. Consider tailing or pagination for large logs.
-            logs = f.readlines()
-        return jsonify({"status": "success", "logs": logs})
-    except FileNotFoundError:
-        return jsonify({"status": "error", "error": "로그 파일을 찾을 수 없습니다."}), 404
-    except Exception as e:
-        global bot_instance
-        if bot_instance:
-            bot_instance.logger.error(f"로그 파일 읽기 실패: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": f"로그 파일 읽기 실패: {e}"}), 500
-
-@api_app.route('/command_stats', methods=['GET'])
-def get_command_stats():
-    """
-    API Endpoint: GET /command_stats
-    가장 많이 사용된 명령어 통계를 반환합니다.
-    """
-    global bot_instance
-    if not bot_instance or not bot_instance.pool:
-        return jsonify({"status": "error", "error": "봇 또는 데이터베이스 풀을 사용할 수 없습니다."}), 500
-
-    async def _fetch_command_stats():
-        try:
-            async with bot_instance.pool.acquire() as conn:
-                rows = await conn.fetch("""
-                    SELECT command_name, usage_count
-                    FROM command_usage
-                    ORDER BY usage_count DESC
-                    LIMIT 10;
-                """)
-                return {"status": "success", "command_stats": [dict(row) for row in rows]}
-        except Exception as e:
-            bot_instance.logger.error(f"명령어 통계 가져오기 실패: {e}", exc_info=True)
-            return {"status": "error", "error": f"명령어 통계 가져오기 실패: {e}"}
-
-    try:
-        # Use bot_instance.loop to run coroutine in bot's thread
-        future = asyncio.run_coroutine_threadsafe(_fetch_command_stats(), bot_instance.loop)
-        result = future.result(timeout=10)
-        return jsonify(result)
-    except asyncio.TimeoutError:
-        return jsonify({"status": "error", "error": "명령어 통계 가져오기 시간 초과."}), 500
-    except Exception as e:
-        bot_instance.logger.error(f"명령어 통계 예약 중 오류 발생: {e}", exc_info=True)
-        return jsonify({"status": "error", "error": f"명령어 통계 예약 실패: {e}"}), 500
+        bot_instance.logger.error(f"공지 전송 실패: {e}")
+        return jsonify({"status": "error", "error": f"Failed to send announcement: {e}"}), 500
 
 
 def run_api_server():
-    """
-    Runs the Flask API server in a separate thread.
-    """
-    api_app.run(host='127.0.0.1', port=5001, debug=False) # Set debug=False in production!
+    """Runs the Flask API server for the bot in a separate thread."""
+    # Use a different port than the UI Flask app (5000)
+    api_app.run(host='127.0.0.1', port=5001, debug=False) # Set debug=False for this API server
 
-# Global variable to hold the bot instance so Flask routes can access it
-bot_instance = None
+# --- End Flask API Setup ---
+
+
+class MyBot(commands.Bot):
+    def __init__(self, command_prefix, intents):
+        super().__init__(command_prefix=command_prefix, intents=intents)
+        self.start_time = datetime.datetime.now(datetime.timezone.utc)
+        self.pool = None # Database connection pool
+        self.session = aiohttp.ClientSession() # For HTTP requests
+        self.command_counts = {} # For command usage stats
+        self.total_commands_today = 0 # Track total commands for the day
+        # Initialize a basic logger immediately to ensure it always exists
+        self.logger = logging.getLogger('discord') # This is a standard Python logger
+
+
+    async def setup_hook(self):
+        # Initialize database pool
+        try:
+            self.pool = await create_db_pool_in_bot()
+            self.logger.info("✅ 데이터베이스 연결 풀이 성공적으로 생성되었습니다.")
+        except Exception as e:
+            self.logger.critical(f"❌ 데이터베이스 풀 생성 실패: {e}", exc_info=True)
+            # Exit if DB connection fails, as bot won't function correctly
+            sys.exit(1)
+
+        # Configure the main logger using get_logger from utils.logger
+        # This runs after the bot is ready and has access to self (the bot instance)
+        try:
+            # Ensure get_logger is accessible and correctly configured
+            if hasattr(logger_module, 'get_logger'):
+                # Re-assign self.logger to the one configured by logger_module,
+                # which will now include the DiscordHandler as the bot's loop is active.
+                self.logger = logger_module.get_logger(
+                    '기본 로그',
+                    bot=self, # Pass the bot instance here as its loop is now available
+                    discord_log_channel_id=config.LOG_CHANNEL_ID
+                )
+                self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
+            else:
+                self.logger.warning("⚠️ 'get_logger' 함수가 'utils.logger' 모듈에 없습니다. 기본 로거를 사용합니다.")
+        except Exception as e:
+            self.logger.critical(f"❌ 로거 설정 중 심각한 오류 발생: {e}", exc_info=True)
+            # Continue with basic logger if configuration fails, but log it.
+
+        # Load cogs
+        initial_extensions = [
+            'cogs.autoguest',
+            'cogs.clanstats',
+            'cogs.clear_messages',
+            'cogs.interview',
+            'cogs.leaderboard',
+            'cogs.reaction_roles',
+            'cogs.registration',
+            'cogs.scraper',
+            'cogs.ticket',
+            'cogs.voice',
+            'cogs.welcomegoodbye',
+        ]
+        for ext in initial_extensions:
+            try:
+                if ext == 'cogs.autoguest':
+                    # AutoRoleCog requires role_ids during initialization
+                    await self.load_extension(ext, extras={'role_ids': config.AUTO_ROLE_IDS})
+                else:
+                    await self.load_extension(ext)
+                self.logger.info(f"✅ Cog 로드됨: {ext}")
+            except commands.ExtensionAlreadyLoaded:
+                self.logger.warning(f"⚠️ Cog '{ext}'는 이미 로드되어 있습니다. 건너_.")
+            except commands.ExtensionFailed as e:
+                self.logger.error(f"❌ Cog '{ext}' 로드 실패 (설정 오류 또는 내부 오류): {e}", exc_info=True)
+            except commands.ExtensionNotFound:
+                self.logger.error(f"❌ Cog '{ext}'를 찾을 수 없습니다. 파일 경로를 확인하세요.")
+            except Exception as e:
+                self.logger.critical(f"❌ Cog '{ext}' 로드 중 예상치 못한 오류 발생: {e}", exc_info=True)
+
+
+        # Sync slash commands globally (or to a specific guild for faster testing)
+        try:
+            synced = await self.tree.sync() # Sync globally or self.tree.sync(guild=discord.Object(id=YOUR_GUILD_ID))
+            self.logger.info(f"✅ 슬래시 명령어 {len(synced)}개 동기화 완료.")
+        except Exception as e:
+            self.logger.error(f"❌ 슬래시 명령어 동기화 실패: {e}", exc_info=True)
+
+
+    async def reload_all_cogs(self):
+        """Reloads all currently loaded cogs."""
+        for ext in list(self.extensions.keys()): # Iterate over a copy
+            try:
+                await self.reload_extension(ext)
+                self.logger.info(f"🔄 Cog 재로드됨: {ext}")
+            except commands.ExtensionNotLoaded:
+                self.logger.warning(f"⚠️ Cog '{ext}'가 로드되지 않았으므로 재로드할 수 없습니다.")
+            except commands.ExtensionFailed as e:
+                self.logger.error(f"❌ Cog '{ext}' 재로드 실패: {e}", exc_info=True)
+            except Exception as e:
+                self.logger.critical(f"❌ Cog '{ext}' 재로드 중 예상치 못한 오류 발생: {e}", exc_info=True)
+
+    async def on_ready(self):
+        """Event that fires when the bot is ready."""
+        self.logger.info(f"--- 봇 로그인 완료: {self.user} (ID: {self.user.id}) ---")
+        self.logger.info(f"봇이 다음 길드에 연결되었습니다:")
+        for guild in self.guilds:
+            self.logger.info(f"- {guild.name} (ID: {guild.id})")
+        self.logger.info(f"현재 핑: {round(self.latency * 1000)}ms")
+
+        # Set bot status
+        await self.change_presence(activity=discord.Game(name="클랜원 모집 중!"))
+
+        # Set the global bot_instance for the Flask API
+        global bot_instance
+        bot_instance = self
+        self.logger.info("Flask API에서 봇 인스턴스를 사용할 수 있습니다.")
+
+        # Ensure crash log handling runs after logger is fully set up
+        await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
+
+
+    async def on_command_completion(self, context):
+        """Event that fires when a command is successfully completed."""
+        command_name = context.command.name
+        self.command_counts[command_name] = self.command_counts.get(command_name, 0) + 1
+        self.total_commands_today += 1
+        self.logger.info(f"사용자 {context.author}님이 명령어 '{command_name}'을(를) 사용했습니다.")
+
+    async def on_command_error(self, context, error):
+        """Global command error handler."""
+        if isinstance(error, commands.CommandNotFound):
+            # Silently ignore if command not found, or send ephemeral message
+            # await context.send("알 수 없는 명령어입니다. `/`를 눌러 사용 가능한 명령어를 확인하세요.", ephemeral=True)
+            return
+        if isinstance(error, commands.MissingPermissions):
+            await context.send(f"❌ 이 명령어를 실행할 권한이 없습니다: {error}", ephemeral=True)
+        elif isinstance(error, commands.MissingRequiredArgument):
+            await context.send(f"❌ 필요한 인수가 누락되었습니다: {error}\n명령어 사용법을 확인해주세요.", ephemeral=True)
+        elif isinstance(error, commands.BadArgument):
+            await context.send(f"❌ 잘못된 인수입니다: {error}", ephemeral=True)
+        elif isinstance(error, commands.NoPrivateMessage):
+            await context.send("❌ 이 명령어는 DM에서 사용할 수 없습니다.", ephemeral=True)
+        else:
+            self.logger.error(f"명령어 '{context.command}' 실행 중 예상치 못한 오류 발생: {error}", exc_info=True)
+            await context.send("❌ 명령어 실행 중 예상치 못한 오류가 발생했습니다. 관리자에게 문의해주세요.", ephemeral=True)
+
+
+# --- Crash Log Handling ---
+CRASH_LOG_DIR = pathlib.Path(__file__).parent.parent / "logs"
+CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"
+CRASH_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+def check_crash_log_and_handle(logger_instance: logging.Logger):
+    """
+    Checks for a crash log file and attempts to upload it to Google Drive.
+    This runs in a separate thread/executor to avoid blocking the bot's main loop.
+    """
+    if CRASH_LOG_FILE.exists():
+        logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
+        try:
+            # Assuming upload_to_drive is synchronous or handles its own async
+            upload_to_drive.upload_file(str(CRASH_LOG_FILE), "bot_crash_logs")
+            os.remove(CRASH_LOG_FILE)
+            logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
+        except Exception as e:
+            logger_instance.error(f"❌ 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
+    else:
+        logger_instance.info("변경 확인 후 처리할 보류 중인 충돌 로그 파일이 없습니다.")
+# --- End Crash Log Handling ---
+
 
 async def main():
-    global bot_instance
-    bot_instance = MyBot()
+    # Define intents required by your bot
+    intents = discord.Intents.default()
+    intents.members = True          # Required for on_member_join, member caching
+    intents.message_content = True  # Required to read message content (for prefix commands)
+    intents.presences = True        # Required for presence updates (e.g., active users count)
 
-    # --- Logger Setup ---
-    # This initializes the DiscordHandler and adds it to the root logger.
-    if config.LOG_CHANNEL_ID is None:
-        print("❌ WARNING: LOG_CHANNEL_ID is not set in config. Discord logging will not be enabled.")
-    else:
-        logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
-        # FIX 2: Find the DiscordHandler instance and start its sending task immediately here.
-        # This ensures the task is created on the bot's event loop and starts as soon as possible.
-        discord_handler_instance = None
-        for handler in logger_module.root_logger.handlers: # Iterate on root_logger.handlers
-            if isinstance(handler, logger_module.DiscordHandler):
-                discord_handler_instance = handler
-                break
+    # Create bot instance
+    global bot_instance # Declare global to assign to it
+    bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents)
 
-        if discord_handler_instance:
-            bot_instance.loop.create_task(discord_handler_instance.start_sending_logs())
-            logger_module.root_logger.info("Discord log sending task initiated during main setup.")
-        else:
-            logger_module.root_logger.error("❌ DiscordHandler not found after initial configuration. Logs won't go to Discord.")
-
-    # Assign self.logger AFTER root handlers are configured and the task is started
-    bot_instance.logger = logger_module.get_logger('기본 로그')
-    # Use bot_instance.logger for the first time for a direct test
-    bot_instance.logger.info("Bot instance logger initialized and ready.")
-
-    # --- Database Pool Setup ---
-    try:
-        bot_instance.pool = await create_db_pool_in_bot() # CALL THE EMBEDDED FUNCTION
-        bot_instance.logger.info("✅ 데이터베이스 연결 풀이 생성되었습니다.")
-        await ensure_db_tables_exist(bot_instance.pool) # Ensure tables exist after pool creation
-    except Exception as e:
-        bot_instance.logger.critical(f"❌ 데이터베이스 연결 실패: {e}. 종료합니다.", exc_info=True)
-        sys.exit(1)
-    # --- End Database Pool Setup ---
-
-    # --- Crash Log Handling ---
-    # This section looks generally good.
-    # The key is that after os.rename, you re-configure handlers, which means
-    # you'll get a *new* DiscordHandler instance. Its task needs to be re-started.
-    # The existing logic should handle this.
-    log_file_path = pathlib.Path(__file__).parent / "logs" / "log.log" # Correct path
-    if log_file_path.exists() and log_file_path.stat().st_size > 0:
-        bot_instance.logger.info("이전 세션에서 'log.log' 파일이 발견되었습니다 (충돌 또는 비정상 종료 가능성).")
-
-        for handler in logging.getLogger().handlers: # Using logging.getLogger() gets root_logger
-            if hasattr(handler, 'flush'):
-                handler.flush()
-
-        crash_log_filename = f"log.log.CRASH-{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}"
-        crash_log_path = log_file_path.parent / crash_log_filename # Full path to the renamed crash log
-
-        bot_instance.logger.info("로그 핸들러를 플러시하여 이름 변경 전 모든 이전 데이터가 기록되도록 합니다...")
-        try:
-            os.rename(log_file_path, crash_log_path)
-            bot_instance.logger.info(f"충돌 로그를 처리용으로 {crash_log_path} (으)로 이름 변경했습니다.")
-
-            try:
-                uploaded_file_id = upload_to_drive.upload_log_to_drive(str(crash_log_path))
-                if uploaded_file_id:
-                    bot_instance.logger.info(f"✅ 충돌 로그가 Google Drive에 업로드되었습니다. 파일 ID: {uploaded_file_id}")
-                else:
-                    bot_instance.logger.warning("⚠️ 충돌 로그를 Google Drive에 업로드하지 못했습니다 (upload_to_drive.py 로그에서 세부 정보 확인).")
-            except Exception as upload_error:
-                bot_instance.logger.error(f"❌ Google Drive 업로드 중 오류 발생: {upload_error}", exc_info=True)
-
-            # Re-configure handlers AFTER renaming the log file
-            # This creates a NEW DiscordHandler instance.
-            logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
-            # FIX 3: Re-start the DiscordHandler's task after re-configuring handlers
-            discord_handler_instance_after_crash = None
-            for handler in logger_module.root_logger.handlers:
-                if isinstance(handler, logger_module.DiscordHandler):
-                    discord_handler_instance_after_crash = handler
-                    break
-            if discord_handler_instance_after_crash:
-                bot_instance.loop.create_task(discord_handler_instance_after_crash.start_sending_logs())
-                bot_instance.logger.info("충돌 로그 이름 변경 후 로그 핸들러를 다시 초기화하고 Discord 송신을 다시 시작했습니다.")
-            else:
-                bot_instance.logger.error("❌ 충돌 로그 처리 후 DiscordHandler를 다시 찾을 수 없어 Discord 송신을 다시 시작할 수 없습니다.")
+    # For very early startup, before setup_hook runs, use a basic logger.
+    # The full logger configuration with DiscordHandler will happen in setup_hook.
+    logging.basicConfig(level=logging.INFO,
+                        format='[%(asctime)s] [%(levelname)s] [%(name)s] {message}',
+                        datefmt='%Y-%m-%d %H:%M:%S',
+                        style='{')
+    # Assign this basic logger to bot_instance.logger for early use
+    bot_instance.logger = logging.getLogger('초기 로거')
 
 
-        except OSError as e:
-            bot_instance.logger.error(f"충돌 로그 파일 '{log_file_path}' 이름 변경 오류: {e}", exc_info=True)
-            # Ensure handlers are at least configured, even if rename failed
-            logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
-            # And try to start its task too
-            discord_handler_instance_after_rename_fail = None
-            for handler in logger_module.root_logger.handlers:
-                if isinstance(handler, logger_module.DiscordHandler):
-                    discord_handler_instance_after_rename_fail = handler
-                    break
-            if discord_handler_instance_after_rename_fail:
-                bot_instance.loop.create_task(discord_handler_instance_after_rename_fail.start_sending_logs())
-
-        except Exception as e:
-            bot_instance.logger.error(f"충돌 로그 처리 중 예상치 못한 오류 발생: {e}", exc_info=True)
-            # Ensure handlers are at least configured
-            logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
-            # And try to start its task too
-            discord_handler_instance_after_error = None
-            for handler in logger_module.root_logger.handlers:
-                if isinstance(handler, logger_module.DiscordHandler):
-                    discord_handler_instance_after_error = handler
-                    break
-            if discord_handler_instance_after_error:
-                bot_instance.loop.create_task(discord_handler_instance_after_error.start_sending_logs())
-
-
-        old_log_files_after_rename = sorted(list(log_file_path.parent.glob('log.log.CRASH-*')))
-
-        if old_log_files_after_rename:
-            bot_instance.logger.info(f"시작 시 처리할 {len(old_log_files_after_rename)}개의 이전 로그 파일이 발견되었습니다.")
-            for old_log_file in old_log_files_after_rename:
-                if os.path.exists(old_log_file):
-                    try:
-                        os.remove(old_log_file)
-                        bot_instance.logger.info(f"🗑️ 로컬 충돌 로그 파일 삭제됨: {old_log_file.name}.")
-                    except Exception as delete_e:
-                        bot_instance.logger.error(f"로컬 충돌 로그 파일 {old_log_file.name} 삭제 오류: {delete_e}", exc_info=True)
-                else:
-                    bot_instance.logger.info(f"로컬 충돌 로그 파일 {old_log_file.name}은(는) 이미 제거되었습니다 (아마도 업로드됨).")
-        else:
-            bot_instance.logger.info("시작 시 이름 변경 확인 후 처리할 보류 중인 충돌 로그 파일이 없습니다.")
-    # --- End Crash Log Handling ---
-
-    TOKEN = config.DISCORD_TOKEN # Assuming DISCORD_BOT_TOKEN is in config.py now
+    # Check for Discord Token
+    TOKEN = config.DISCORD_TOKEN
     if not TOKEN:
-        # FIX 1: Use root_logger here before bot_instance.logger is guaranteed safe
-        logger_module.root_logger.critical("DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
+        # Use the bot's logger if available, otherwise print
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical("DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
+        else:
+            print("CRITICAL: DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.", file=sys.stderr)
         sys.exit(1)
 
     try:
+        # Start the bot
         await bot_instance.start(TOKEN)
     except discord.HTTPException as e:
-        bot_instance.logger.critical(f"HTTP 예외: {e} - 봇 토큰이 올바르고 인텐트가 활성화되었는지 확인하세요.")
+        # Use the bot's logger
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"HTTP 예외: {e} - 봇 토큰이 올바르고 인텐트가 활성화되었는지 확인하세요.", exc_info=True)
+        else:
+            print(f"CRITICAL: HTTP 예외: {e} - 봇 토큰이 올바르고 인텐트가 활성화되었는지 확인하세요.", file=sys.stderr)
     except Exception as e:
-        bot_instance.logger.critical(f"봇 런타임 중 처리되지 않은 오류 발생: {e}", exc_info=True)
+        # Use the bot's logger
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"봇 런타임 중 처리되지 않은 오류 발생: {e}", exc_info=True)
+        else:
+            print(f"CRITICAL: 봇 런타임 중 처리되지 않은 오류 발생: {e}", file=sys.stderr)
     finally:
-        await bot_instance.close()
-        bot_instance.logger.info("봇이 종료되었습니다.")
+        # Ensure bot_instance.logger is checked before use in finally block
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.info("봇이 중지되었습니다.")
+        else:
+            print("INFO: 봇이 중지되었습니다 (로거 초기화 실패).", file=sys.stderr)
+        # Ensure bot_instance is not None before calling close
+        if bot_instance:
+            await bot_instance.close()
 
 
 if __name__ == "__main__":
     # Start the Flask API in a separate thread
+    # This ensures the API runs concurrently with the Discord bot.
     api_thread = Thread(target=run_api_server)
     api_thread.daemon = True # Allow main program to exit even if thread is running
     api_thread.start()
     print(f"Existing Bot API running on http://127.0.0.1:5001")
 
     try:
+        # Run the main Discord bot asynchronous loop
         asyncio.run(main())
     except KeyboardInterrupt:
+        # Handle graceful shutdown on Ctrl+C
         if bot_instance:
-            bot_instance.logger.info("봇이 수동으로 중단되었습니다 (Ctrl+C). 종료합니다.")
+            if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+                bot_instance.logger.info("봇이 수동으로 중지되었습니다 (KeyboardInterrupt).")
+            else:
+                print("INFO: 봇이 수동으로 중지되었습니다 (로거 초기화 실패, KeyboardInterrupt).", file=sys.stderr)
         else:
-            logger_module.root_logger.info("봇이 수동으로 중단되었습니다 (Ctrl+C). 종료합니다.")
+            print("INFO: 봇이 수동으로 중지되었습니다 (KeyboardInterrupt).", file=sys.stderr)
     except Exception as e:
-        if bot_instance:
-            # If bot_instance exists, its logger should be safe to use here at cleanup
-            bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
-        else:
-            # Fallback to root_logger if bot_instance somehow failed to initialize
-            logger_module.root_logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
+        # Catch any unhandled exceptions during the bot's main run
+        # Use a basic logger or print, as bot_instance.logger might not be fully initialized
+        logging.getLogger().critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
+        # Attempt to use bot_instance's logger if it exists
+        if 'bot_instance' in locals() and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생 (재시도): {e}", exc_info=True)
+
