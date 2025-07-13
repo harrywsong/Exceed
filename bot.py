@@ -543,12 +543,13 @@ class MyBot(commands.Bot):
         # Ensure crash log handling runs after logger is fully set up
         await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
 
+        # --- NEW: Upload current log.log on startup ---
+        await self.loop.run_in_executor(None, upload_current_log_on_startup, self.logger)
+        # --- END NEW ---
+
         # Start the daily log upload task
         self.daily_log_upload.start()
         self.logger.info("일일 로그 업로드 작업을 시작했습니다.")
-
-        # Upload any un-uploaded rotated logs from previous days on startup
-        await self.loop.run_in_executor(None, upload_daily_logs_on_startup, self.logger)
 
     async def on_command_completion(self, context):
         """Event that fires when a traditional prefix command is successfully completed."""
@@ -590,34 +591,31 @@ class MyBot(commands.Bot):
     @tasks.loop(time=datetime.time(0, 0, 0, tzinfo=EASTERN_TZ))  # 12 AM Eastern Time
     async def daily_log_upload(self):
         """
-        Uploads the previous day's log file to Google Drive at 12 AM Eastern.
+        Uploads the current log.log file to Google Drive at 12 AM Eastern, then clears it.
         """
         await self.bot.wait_until_ready()  # Ensure bot is ready before performing operations
 
-        # Get yesterday's date in Eastern Time
         now_eastern = datetime.datetime.now(EASTERN_TZ)
-        yesterday_eastern = now_eastern - datetime.timedelta(days=1)
-        yesterday_date_str = yesterday_eastern.strftime("%Y-%m-%d")
+        # For daily upload, we want to name it based on the day that just ended (yesterday's date)
+        previous_day_eastern = now_eastern - datetime.timedelta(days=1)
+        log_date_str = previous_day_eastern.strftime("%Y-%m-%d")
 
-        # Construct the path to yesterday's rotated log file
-        # TimedRotatingFileHandler renames log.log to log.log.YYYY-MM-DD at midnight
-        log_file_to_upload = logger_module.LOG_FILE_PATH.parent / f"log.log.{yesterday_date_str}"
+        self.logger.info(f"일일 로그 업로드 시작: log.log (날짜: {log_date_str})")
+        try:
+            # Upload the current log.log file
+            upload_to_drive.upload_file(str(logger_module.LOG_FILE_PATH), f"daily_log_{log_date_str}.log")
 
-        if log_file_to_upload.exists():
-            self.logger.info(f"일일 로그 업로드 시작: {log_file_to_upload.name}")
-            try:
-                # Use the updated upload_file function
-                upload_to_drive.upload_file(str(log_file_to_upload), f"daily_log_{log_file_to_upload.name}")
-                self.logger.info(f"✅ 일일 로그 '{log_file_to_upload.name}' Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
-            except Exception as e:
-                self.logger.error(f"❌ 일일 로그 '{log_file_to_upload.name}' 업로드 실패: {e}", exc_info=True)
-        else:
-            self.logger.info(f"일일 로그 파일 '{log_file_to_upload.name}'을(를) 찾을 수 없습니다. (어제 로그 없음 또는 이미 처리됨)")
+            # Clear the log.log file after successful upload
+            with open(logger_module.LOG_FILE_PATH, 'w', encoding='utf-8') as f:
+                f.truncate(0)  # Truncate to 0 bytes to clear content
+            self.logger.info(f"✅ 일일 로그 'log.log' Google Drive에 '{log_date_str}.log'로 성공적으로 업로드 및 로컬 파일이 지워졌습니다.")
+        except Exception as e:
+            self.logger.error(f"❌ 일일 로그 'log.log' 업로드 실패: {e}", exc_info=True)
 
 
 # --- Crash Log Handling ---
 CRASH_LOG_DIR = pathlib.Path(__file__).parent.parent / "logs"
-CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"  # This captures sys.stderr output
+CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"
 CRASH_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Store original stderr
@@ -626,75 +624,48 @@ original_stderr = sys.stderr
 
 def check_crash_log_and_handle(logger_instance: logging.Logger):
     """
-    Checks for crash log files (sys.stderr output and main log renamed on crash)
-    and attempts to upload them to Google Drive.
+    Checks for a crash log file and attempts to upload it to Google Drive.
     This runs in a separate thread/executor to avoid blocking the bot's main loop.
     """
-    # 1. Handle the sys.stderr crash log (crash_log.txt)
-    if CRASH_LOG_FILE.exists() and CRASH_LOG_FILE.stat().st_size > 0:  # Check if it's not empty
-        logger_instance.warning("⚠️ 이전 봇 충돌 (stderr) 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
+    if CRASH_LOG_FILE.exists() and os.path.getsize(CRASH_LOG_FILE) > 0:  # Check if file exists AND is not empty
+        logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
         try:
-            # Use datetime.datetime.now()
+            # Call upload_file with the new signature
             upload_to_drive.upload_file(str(CRASH_LOG_FILE),
-                                        f"stderr_crash_log_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
-            logger_instance.info("✅ stderr 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
+                                        f"crash_log_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
+            # The upload_file function already handles deletion upon successful upload
+            logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
         except Exception as e:
-            logger_instance.error(f"❌ stderr 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
+            logger_instance.error(f"❌ 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
     else:
-        logger_instance.info("처리할 보류 중인 stderr 충돌 로그 파일이 없습니다.")
-
-    # 2. Handle main log files renamed on crash (log.log.CRASH-YYYY-MM-DD_HH-MM-SS)
-    log_dir = logger_module.LOG_FILE_PATH.parent
-    for filename in os.listdir(log_dir):
-        if filename.startswith("log.log.CRASH-") and filename.endswith(".log"):
-            crash_log_path = log_dir / filename
-            if crash_log_path.exists() and crash_log_path.stat().st_size > 0:  # Check if it's not empty
-                logger_instance.warning(f"⚠️ 이전 메인 로그 충돌 파일 '{filename}'이(가) 감지되었습니다. Google Drive에 업로드 중...")
-                try:
-                    # Upload with its original crash-specific name
-                    upload_to_drive.upload_file(str(crash_log_path), filename)
-                    logger_instance.info(f"✅ 메인 로그 충돌 파일 '{filename}'이(가) Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
-                except Exception as e:
-                    logger_instance.error(f"❌ 메인 로그 충돌 파일 '{filename}' 업로드 또는 삭제 실패: {e}", exc_info=True)
-            else:
-                logger_instance.info(f"비어 있거나 유효하지 않은 메인 로그 충돌 파일 '{filename}'을(를) 건너뜁니다.")
+        logger_instance.info("처리할 보류 중인 충돌 로그 파일이 없습니다.")
 
 
 # --- End Crash Log Handling ---
 
-def upload_daily_logs_on_startup(logger_instance: logging.Logger):
+def upload_current_log_on_startup(logger_instance: logging.Logger):
     """
-    Checks for and uploads any rotated log files from previous days that might not have been uploaded.
-    This runs on bot startup.
+    Uploads the current log.log file to Google Drive when the bot starts, then clears it.
+    This replaces the old logic of uploading rotated files on startup.
     """
-    log_dir = logger_module.LOG_FILE_PATH.parent
-    today_date_str = datetime.datetime.now(EASTERN_TZ).strftime("%Y-%m-%d")
+    log_file_path = logger_module.LOG_FILE_PATH
 
-    logger_instance.info("시작 시 이전 일일 로그 파일 확인 및 업로드 중...")
-    for filename in os.listdir(log_dir):
-        # Exclude current log.log, crash_log.txt, and any log.log.CRASH-* files (as they are handled separately)
-        if filename == "log.log" or filename == "crash_log.txt" or filename.startswith("log.log.CRASH-"):
-            continue
+    if log_file_path.exists() and os.path.getsize(log_file_path) > 0:  # Only upload if file exists and has content
+        logger_instance.info("봇 시작 시 현재 log.log 파일 업로드 중...")
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            drive_file_name = f"startup_log_{timestamp}.log"
 
-        if filename.startswith("log.log.") and filename.endswith(".log"):
-            # Extract date from filename (e.g., "log.log.2023-10-26")
-            file_date_str = filename.replace("log.log.", "").replace(".log", "")
+            upload_to_drive.upload_file(str(log_file_path), drive_file_name)
 
-            # Only process if it's a valid date string and not today's log
-            try:
-                file_date = datetime.datetime.strptime(file_date_str, "%Y-%m-%d").date()
-                if file_date < datetime.datetime.now(EASTERN_TZ).date():  # Only upload logs older than today
-                    local_file_path = log_dir / filename
-                    drive_file_name = f"daily_log_{filename}"
-                    logger_instance.info(f"시작 시 이전 일일 로그 파일 업로드: {filename}")
-                    try:
-                        upload_to_drive.upload_file(str(local_file_path), drive_file_name)
-                        logger_instance.info(f"✅ 시작 시 '{filename}' Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
-                    except Exception as e:
-                        logger_instance.error(f"❌ 시작 시 '{filename}' 업로드 실패: {e}", exc_info=True)
-            except ValueError:
-                # Ignore files that don't match the date format
-                logger_instance.debug(f"로그 파일 '{filename}'이(가) 예상 날짜 형식과 일치하지 않아 건너뜁니다.")
+            # Clear the log.log file after successful upload
+            with open(log_file_path, 'w', encoding='utf-8') as f:
+                f.truncate(0)  # Truncate to 0 bytes to clear content
+            logger_instance.info(f"✅ 시작 시 'log.log' Google Drive에 '{drive_file_name}'으로 성공적으로 업로드 및 로컬 파일이 지워졌습니다.")
+        except Exception as e:
+            logger_instance.error(f"❌ 시작 시 'log.log' 업로드 실패: {e}", exc_info=True)
+    else:
+        logger_instance.info("시작 시 업로드할 'log.log' 파일이 없거나 비어 있습니다.")
 
 
 async def main():
