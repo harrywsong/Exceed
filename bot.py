@@ -60,8 +60,8 @@ class MyBot(commands.Bot):
         ]
         self.session = aiohttp.ClientSession()
         self.ready_event = asyncio.Event()
-        self.log_channel_id = 1389739434110484612 # Your Discord log channel ID
-        self.pool = None # Initialize pool attribute here
+        self.log_channel_id = config.LOG_CHANNEL_ID
+        self.pool = None
 
     async def setup_hook(self):
         for ext in self.initial_extensions:

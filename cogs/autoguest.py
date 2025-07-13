@@ -67,13 +67,4 @@ class AutoRoleCog(commands.Cog):
 
 
 async def setup(bot):
-    ROLE_IDS = [
-        1389711048461910057,
-        1391814186912452741,
-        1391812423966527498,
-        1391812274087264329,
-        1391812498549903421,
-        1391812623816982668,
-    ]
-
-    await bot.add_cog(AutoRoleCog(bot, ROLE_IDS))
+    await bot.add_cog(AutoRoleCog(bot, config.AUTO_ROLE_IDS))

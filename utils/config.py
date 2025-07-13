@@ -1,4 +1,5 @@
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,6 +10,10 @@ def parse_int(env_var_name, default=None):
         return int(val) if val is not None else default
     except ValueError:
         return default
+
+def parse_ids(env_var):
+    raw = os.getenv(env_var, "")
+    return [int(x) for x in raw.split(",") if x.strip().isdigit()]
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -41,3 +46,14 @@ MEMBER_CHAT_CHANNEL_ID = parse_int("MEMBER_CHAT_CHANNEL_ID")
 CLAN_LEADERBOARD_CHANNEL_ID = parse_int("CLAN_LEADERBOARD_CHANNEL_ID")
 
 GUILD_ID=int(os.getenv("GUILD_ID", "0"))
+
+AUTO_ROLE_IDS = parse_ids("AUTO_ROLE_IDS")
+
+APPLICANT_ROLE_ID = int(os.getenv("APPLICANT_ROLE_ID", 0))
+GUEST_ROLE_ID = int(os.getenv("GUEST_ROLE_ID", 0))
+
+try:
+    raw_map = json.loads(os.getenv("REACTION_ROLE_MAP_JSON"))
+    REACTION_ROLE_MAP = {int(k): {emj: int(rid) for emj, rid in v.items()} for k, v in raw_map.items()}
+except Exception as e:
+    raise RuntimeError(f"Failed to parse REACTION_ROLE_MAP_JSON: {e}")

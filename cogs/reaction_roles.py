@@ -5,6 +5,7 @@ import asyncio
 
 from utils import config
 from utils.logger import get_logger
+from utils.config import REACTION_ROLE_MAP
 
 
 class ReactionRoles(commands.Cog):
@@ -20,34 +21,7 @@ class ReactionRoles(commands.Cog):
         self.guild_id = config.GUILD_ID
         self.logger.info("ReactionRoles Cog 초기화 완료.")
 
-        self.reaction_role_map = {
-            1391796467060178984: {  # Message 1 - World, Clan, Event Roles
-                "🇼": 1391799163624100083,
-                "🇨": 1391799188165234688,
-                "🇪": 1391799211145822238,
-            },
-            1391800751856291870: {  # Message 2 - Valorant Rank Roles
-                "<:valoradiant:1390960105494810684>": 1391799337633448097,
-                "<:valoimmortal:1390960097483690044>": 1391799428473688104,
-                "<:valoascendant:1390960089241878559>": 1391799445691039874,
-                "<:valodiamond:1390960077262815252>": 1391799520651776030,
-                "<:valoplatinum:1390960067502936074>": 1391799537261351034,
-                "<:valogold:1390960054470971492>": 1391799554638221456,
-                "<:valosilver:1390960044509761617>": 1391799566889648179,
-                "<:valobronze:1390960028466282579>": 1391800045147818044,
-                "<:valoiron:1390960012993626233>": 1391799599336919233,
-                "<:valounranked:1390960604537290874>": 1391799825858564156,
-            },
-            1391803147080568974: {  # Message 3 - Valorant Agent Type Roles
-                "<:valoduelist:1390960470789193859>": 1391806841708613652,
-                "<:valoinitiator:1390960452854485102>": 1391806880401326080,
-                "<:valosentinel:1390960437805453502>": 1391806901569716355,
-                "<:valocontroller:1390960462455111782>": 1391806916640112660,
-            },
-            1391805023473762438: {  # Message 4 - Valorant Premier Role
-                "<:valopremier:1391803981864374414>": 1391804435918749777,
-            },
-        }
+        self.reaction_role_map = REACTION_ROLE_MAP
 
     async def populate_reactions(self):
         guild = self.bot.get_guild(self.guild_id)
