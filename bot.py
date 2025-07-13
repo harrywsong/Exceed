@@ -61,7 +61,7 @@ class MyBot(commands.Bot):
         ]
         self.session = aiohttp.ClientSession()
         self.ready_event = asyncio.Event()  # For voice cog cleanup
-        self.log_channel_id = 123456789012345678  # Replace with your actual log channel ID
+        self.log_channel_id = 1389739434110484612  # Replace with your actual log channel ID
 
     async def setup_hook(self):
         # Load extensions (cogs)
