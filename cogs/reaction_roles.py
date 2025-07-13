@@ -40,7 +40,7 @@ class ReactionRoles(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        self.logger.info("ReactionRoles 코그가 준비되었습니다. 이모지 반응을 추가하는 중...")
+        self.logger.info("ReactionRoles cog is ready. Populating reactions...")
         await self.populate_reactions()
 
     async def populate_reactions(self):
@@ -52,11 +52,11 @@ class ReactionRoles(commands.Cog):
         def format_emoji(e):
             if isinstance(e, str):
                 return e
-            return f"<:{e.name}:{e.id}>" if e.id else str(e)
+            # For custom emojis from message.reactions
+            return f"<:{e.name}:{e.id}>" if getattr(e, "id", None) else str(e)
 
         for message_id, emoji_role_map in self.reaction_role_map.items():
             message = None
-
             for channel in guild.text_channels:
                 try:
                     message = await channel.fetch_message(message_id)
@@ -79,7 +79,7 @@ class ReactionRoles(commands.Cog):
 
             for emoji in emoji_role_map.keys():
                 if emoji in existing_emojis:
-                    continue  # Already reacted with this emoji
+                    continue
                 try:
                     await message.add_reaction(emoji)
                     self.logger.info(f"Added emoji {emoji} to message {message_id}.")
@@ -91,9 +91,7 @@ class ReactionRoles(commands.Cog):
         if payload.message_id not in self.reaction_role_map:
             return
 
-        emoji_key = (
-            f"<:{payload.emoji.name}:{payload.emoji.id}>" if payload.emoji.id else str(payload.emoji)
-        )
+        emoji_key = f"<:{payload.emoji.name}:{payload.emoji.id}>" if payload.emoji.id else str(payload.emoji)
         role_id = self.reaction_role_map[payload.message_id].get(emoji_key)
 
         if not role_id:
@@ -108,28 +106,22 @@ class ReactionRoles(commands.Cog):
             return
 
         member = payload.member or await guild.fetch_member(payload.user_id)
-        if not member:
-            return
-
-        if member.bot:  # Skip bots
+        if not member or member.bot:
             return
 
         try:
-            await member.add_roles(role, reason="반응 역할 부여")
+            await member.add_roles(role, reason="Reaction role assigned")
             emoji_log = payload.emoji.name if payload.emoji.id else str(payload.emoji)
-            self.logger.info(
-                f"[ReactionRole] ✅ {member.display_name}님에게 '{emoji_log}' 이모지로 역할 '{role.name}'을(를) 부여했습니다.")
+            self.logger.info(f"[ReactionRole] ✅ Added role '{role.name}' to {member.display_name} via emoji '{emoji_log}'.")
         except Exception as e:
-            self.logger.error(f"[ReactionRole] 역할 부여 실패: {e}")
+            self.logger.error(f"[ReactionRole] Failed to add role: {e}")
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
         if payload.message_id not in self.reaction_role_map:
             return
 
-        emoji_key = (
-            f"<:{payload.emoji.name}:{payload.emoji.id}>" if payload.emoji.id else str(payload.emoji)
-        )
+        emoji_key = f"<:{payload.emoji.name}:{payload.emoji.id}>" if payload.emoji.id else str(payload.emoji)
         role_id = self.reaction_role_map[payload.message_id].get(emoji_key)
 
         if not role_id:
@@ -139,11 +131,12 @@ class ReactionRoles(commands.Cog):
         if not guild:
             return
 
-        member = await guild.fetch_member(payload.user_id)
-        if not member:
+        try:
+            member = await guild.fetch_member(payload.user_id)
+        except Exception:
             return
 
-        if member.bot:  # Skip bots
+        if not member or member.bot:
             return
 
         role = guild.get_role(role_id)
@@ -151,18 +144,16 @@ class ReactionRoles(commands.Cog):
             return
 
         try:
-            await member.remove_roles(role, reason="반응 역할 제거")
+            await member.remove_roles(role, reason="Reaction role removed")
             emoji_log = payload.emoji.name if payload.emoji.id else str(payload.emoji)
-            self.logger.info(
-                f"[ReactionRole] ❎ {member.display_name}님에게서 '{emoji_log}' 이모지로 역할 '{role.name}'을(를) 제거했습니다.")
+            self.logger.info(f"[ReactionRole] ❎ Removed role '{role.name}' from {member.display_name} via emoji '{emoji_log}'.")
         except Exception as e:
-            self.logger.error(f"[ReactionRole] 역할 제거 실패: {e}")
+            self.logger.error(f"[ReactionRole] Failed to remove role: {e}")
+
 
 async def setup(bot):
     from utils.logger import get_logger
-    # Set your guild ID and Discord log channel ID here:
-    GUILD_ID = 1389527318699053178  # replace with your guild ID
-    DISCORD_LOG_CHANNEL_ID = 1389739434110484612  # replace with your log channel ID
-
-    logger = get_logger("bot", bot=bot, discord_log_channel_id=DISCORD_LOG_CHANNEL_ID)
+    GUILD_ID = 1389527318699053178  # Your guild ID here
+    DISCORD_LOG_CHANNEL_ID = 1389739434110484612  # Your log channel ID here
+    logger = get_logger("reactionroles", bot=bot, discord_log_channel_id=DISCORD_LOG_CHANNEL_ID)
     await bot.add_cog(ReactionRoles(bot, logger, GUILD_ID))

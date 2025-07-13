@@ -38,9 +38,10 @@ class HelpView(View):
 
         existing = discord.utils.get(cat.text_channels, name=f"ticket-{member.id}")
         if existing:
-            return await interaction.response.send_message(
+            await interaction.response.send_message(
                 f"❗ 이미 열린 티켓이 있습니다: {existing.mention}", ephemeral=True
             )
+            return
 
         ticket_chan = await cat.create_text_channel(f"ticket-{member.id}", overwrites=overwrites)
         await interaction.response.send_message(
@@ -90,134 +91,126 @@ class CloseTicketView(View):
                 await interaction.response.send_message("❌ 권한이 없습니다.", ephemeral=True)
                 return
 
-            # Defer interaction response (acknowledge and allow more time)
             await interaction.response.defer(ephemeral=True)
-
-            # Notify user ticket is closing
             await interaction.followup.send("⏳ 티켓을 닫는 중입니다...", ephemeral=True)
 
-            # 1) Metadata
             created_ts = channel.created_at.strftime("%Y-%m-%d %H:%M UTC")
 
-            # 2) Fetch messages (up to 100) and skip the first if it's a bot message
             all_msgs = [m async for m in channel.history(limit=100, oldest_first=True)]
             msgs = all_msgs[1:] if all_msgs and all_msgs[0].author.bot else all_msgs
 
-            # 3) CSS for transcript HTML
             css = """
             @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
 
-body {
-  margin: 0;
-  padding: 30px 15px;
-  background: #f9fafb;
-  color: #2e2e2e;
-  font-family: 'Roboto', sans-serif;
-}
+            body {
+              margin: 0;
+              padding: 30px 15px;
+              background: #f9fafb;
+              color: #2e2e2e;
+              font-family: 'Roboto', sans-serif;
+            }
 
-.container {
-  max-width: 900px;
-  margin: 0 auto;
-  background: #ffffff;
-  border-radius: 16px;
-  box-shadow: 0 12px 24px rgba(0,0,0,0.1);
-  padding: 40px 30px;
-}
+            .container {
+              max-width: 900px;
+              margin: 0 auto;
+              background: #ffffff;
+              border-radius: 16px;
+              box-shadow: 0 12px 24px rgba(0,0,0,0.1);
+              padding: 40px 30px;
+            }
 
-.header {
-  text-align: center;
-  margin-bottom: 40px;
-}
+            .header {
+              text-align: center;
+              margin-bottom: 40px;
+            }
 
-.header h1 {
-  margin: 0;
-  color: #3b82f6; /* bright blue */
-  font-size: 2.75rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
+            .header h1 {
+              margin: 0;
+              color: #3b82f6;
+              font-size: 2.75rem;
+              font-weight: 700;
+              letter-spacing: -0.02em;
+            }
 
-.header .meta {
-  font-size: 1rem;
-  color: #6b7280; /* cool gray */
-  margin-top: 10px;
-  font-weight: 400;
-}
+            .header .meta {
+              font-size: 1rem;
+              color: #6b7280;
+              margin-top: 10px;
+              font-weight: 400;
+            }
 
-.messages {
-  display: flex;
-  flex-direction: column;
-  gap: 28px;
-}
+            .messages {
+              display: flex;
+              flex-direction: column;
+              gap: 28px;
+            }
 
-.msg {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
-  background: #f3f4f6; /* very light gray */
-  border-radius: 14px;
-  padding: 16px 20px;
-  box-shadow: 0 4px 8px rgba(59,130,246,0.1); /* subtle blue glow */
-  transition: background-color 0.2s ease;
-}
+            .msg {
+              display: flex;
+              gap: 20px;
+              align-items: flex-start;
+              background: #f3f4f6;
+              border-radius: 14px;
+              padding: 16px 20px;
+              box-shadow: 0 4px 8px rgba(59,130,246,0.1);
+              transition: background-color 0.2s ease;
+            }
 
-.msg:hover {
-  background-color: #e0e7ff; /* light blue highlight */
-}
+            .msg:hover {
+              background-color: #e0e7ff;
+            }
 
-.avatar {
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(59,130,246,0.2);
-}
+            .avatar {
+              width: 50px;
+              height: 50px;
+              border-radius: 50%;
+              flex-shrink: 0;
+              box-shadow: 0 2px 8px rgba(59,130,246,0.2);
+            }
 
-.bubble {
-  flex: 1;
-}
+            .bubble {
+              flex: 1;
+            }
 
-.username {
-  font-weight: 700;
-  font-size: 1.1rem;
-  color: #1e40af; /* dark blue */
-  display: inline-block;
-}
+            .username {
+              font-weight: 700;
+              font-size: 1.1rem;
+              color: #1e40af;
+              display: inline-block;
+            }
 
-.timestamp {
-  font-size: 0.8rem;
-  color: #9ca3af; /* gray */
-  margin-left: 14px;
-  font-weight: 500;
-}
+            .timestamp {
+              font-size: 0.8rem;
+              color: #9ca3af;
+              margin-left: 14px;
+              font-weight: 500;
+            }
 
-.text {
-  margin-top: 8px;
-  font-size: 1rem;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  color: #374151; /* dark gray */
-}
+            .text {
+              margin-top: 8px;
+              font-size: 1rem;
+              line-height: 1.55;
+              white-space: pre-wrap;
+              color: #374151;
+            }
 
-img.attachment {
-  max-width: 100%;
-  border-radius: 14px;
-  margin-top: 16px;
-  box-shadow: 0 8px 20px rgba(59,130,246,0.1);
-  border: 1px solid #d1d5db;
-}
+            img.attachment {
+              max-width: 100%;
+              border-radius: 14px;
+              margin-top: 16px;
+              box-shadow: 0 8px 20px rgba(59,130,246,0.1);
+              border: 1px solid #d1d5db;
+            }
 
-.footer {
-  text-align: center;
-  margin-top: 50px;
-  font-size: 0.9rem;
-  color: #6b7280;
-  font-weight: 400;
-}
-
+            .footer {
+              text-align: center;
+              margin-top: 50px;
+              font-size: 0.9rem;
+              color: #6b7280;
+              font-weight: 400;
+            }
             """
 
-            # 4) Build HTML for messages
             messages_html = ""
             for m in msgs:
                 when = m.created_at.strftime("%Y-%m-%d %H:%M")
@@ -234,7 +227,6 @@ img.attachment {
         <div class="text">{content}</div>
     """
 
-                # Inline attachments
                 for att in m.attachments:
                     b64 = base64.b64encode(await att.read()).decode("ascii")
                     ctype = att.content_type or "image/png"
@@ -267,11 +259,9 @@ img.attachment {
     </html>
     """.strip()
 
-            # Create buffer
             buf = BytesIO(html_doc.encode("utf-8"))
-            buf.seek(0)  # rewind before sending
+            buf.seek(0)
 
-            # Embed for closing
             close_embed = discord.Embed(
                 title="🎫 티켓 닫힘",
                 color=discord.Color.red(),
@@ -288,13 +278,13 @@ img.attachment {
             else:
                 logger.warning("⚠️ HISTORY 채널을 찾을 수 없습니다.")
 
-            # Finally delete the ticket channel
             await channel.delete(reason="티켓 종료")
 
         except Exception as e:
             logger.error(f"티켓 종료 중 오류 발생: {e}", exc_info=True)
             if not interaction.response.is_done():
                 await interaction.response.send_message("❌ 티켓 닫기 중 오류가 발생했습니다.", ephemeral=True)
+
 
 class TicketSystem(commands.Cog):
     def __init__(self, bot):
@@ -306,9 +296,8 @@ class TicketSystem(commands.Cog):
             logger.error("티켓 요청 채널을 찾을 수 없습니다!")
             return
 
-        # Delete all messages in that channel before sending a new message
         try:
-            await channel.purge(limit=None)  # Deletes all messages in the channel
+            await channel.purge(limit=None)
         except Exception as e:
             logger.error(f"{channel.name} 채널의 메시지 삭제 실패: {e}")
 
@@ -339,7 +328,6 @@ class TicketSystem(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        # Delay a bit to ensure bot is fully ready, optional
         await self.send_ticket_request_message()
 
     @app_commands.command(name="help", description="운영진에게 문의할 수 있는 티켓을 엽니다.")

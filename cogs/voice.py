@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import logging
 from utils import config
 
@@ -12,9 +12,14 @@ class TempVoice(commands.Cog):
         self.category_id = config.TEMP_VOICE_CATEGORY_ID
         self.temp_channels = {}
 
-        # Start cleanup task after bot is ready
-        self.cleanup_task = self.bot.loop.create_task(self.cleanup_empty_channels())
+        # Start the cleanup task loop
+        self.cleanup_empty_channels.start()
 
+    def cog_unload(self):
+        # Cancel the cleanup task when cog unloads
+        self.cleanup_empty_channels.cancel()
+
+    @tasks.loop(minutes=10)
     async def cleanup_empty_channels(self):
         await self.bot.wait_until_ready()
 
@@ -23,15 +28,20 @@ class TempVoice(commands.Cog):
             logger.warning("카테고리 채널을 찾을 수 없거나 정리 작업에 적합하지 않습니다!")
             return
 
-        for channel in category.voice_channels:
+        for channel in list(category.voice_channels):  # list() to avoid mutation issues
             if channel.id == self.lobby_channel_id:
                 continue
             if len(channel.members) == 0:
                 try:
                     await channel.delete()
+                    self.temp_channels.pop(channel.id, None)
                     logger.info(f"비어 있는 음성 채널 삭제됨: {channel.name}")
                 except Exception as e:
                     logger.error(f"채널 {channel.name} 삭제 실패: {e}")
+
+    @cleanup_empty_channels.before_loop
+    async def before_cleanup(self):
+        await self.bot.wait_until_ready()
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
@@ -77,7 +87,6 @@ class TempVoice(commands.Cog):
                     logger.info(f"빈 임시 음성 채널 삭제됨: {before.channel.name}")
                 except Exception as e:
                     logger.error(f"임시 채널 {before.channel.name} 삭제 실패: {e}")
-
 
 async def setup(bot):
     await bot.add_cog(TempVoice(bot))

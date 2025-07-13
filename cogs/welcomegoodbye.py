@@ -7,9 +7,9 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import asyncio
 import traceback
+import logging  # Import logging for unified logger usage
 
 from utils import config
-from utils.logger import get_logger
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 BG_PATH      = os.path.join(BASE_DIR, "..", "assets", "welcome_bg.png")
@@ -26,6 +26,8 @@ except OSError:
 class WelcomeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Use unified logger with child namespace "bot.welcome"
+        self.logger = logging.getLogger("bot.welcome")
 
     async def make_welcome_card(self, member: discord.Member) -> BytesIO:
         bg = Image.open(BG_PATH).convert("RGBA")
@@ -36,7 +38,7 @@ class WelcomeCog(commands.Cog):
         try:
             avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=5)
         except Exception as e:
-            await get_logger(self.bot, f"❌ [welcome] 아바타 가져오기 실패: {e}")
+            self.logger.error(f"❌ [welcome] 아바타 가져오기 실패: {e}")
             avatar_bytes = None
 
         if avatar_bytes:
@@ -59,20 +61,19 @@ class WelcomeCog(commands.Cog):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         ch = self.bot.get_channel(config.WELCOME_CHANNEL_ID)
-        logger = get_logger("welcome", bot=self.bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
-        logger.info(f"⚙️ 신규 회원 감지: {member} (ID: {member.id}); 채널 → {config.WELCOME_CHANNEL_ID}")
+        self.logger.info(f"⚙️ 신규 회원 감지: {member} (ID: {member.id}); 채널 → {config.WELCOME_CHANNEL_ID}")
 
         if not ch:
-            logger.error("❌ 환영 채널을 찾을 수 없습니다. WELCOME_CHANNEL_ID 확인 필요")
+            self.logger.error("❌ 환영 채널을 찾을 수 없습니다. WELCOME_CHANNEL_ID 확인 필요")
             return
 
         try:
-            logger.info("🔧 [welcome] 환영 카드 생성 중…")
+            self.logger.info("🔧 [welcome] 환영 카드 생성 중…")
             card_buf = await self.make_welcome_card(member)
-            logger.info("✅ [welcome] 환영 카드 생성 완료")
+            self.logger.info("✅ [welcome] 환영 카드 생성 완료")
         except Exception:
             traceback.print_exc()
-            logger.error("❌ [welcome] 환영 카드 생성 실패")
+            self.logger.error("❌ [welcome] 환영 카드 생성 실패")
             return await ch.send(f"⚠️ 환영 카드 생성 실패")
 
         file = File(card_buf, filename="welcome.png")
@@ -92,25 +93,24 @@ class WelcomeCog(commands.Cog):
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
         except Exception:
             traceback.print_exc()
-            logger.error("❌ [welcome] 임베드 빌드 실패")
+            self.logger.error("❌ [welcome] 임베드 빌드 실패")
             return
 
         try:
-            logger.info("🔧 [welcome] 환영 메시지 전송 중…")
+            self.logger.info("🔧 [welcome] 환영 메시지 전송 중…")
             await ch.send(content=member.mention, embed=embed, file=file,
                           allowed_mentions=discord.AllowedMentions(users=True))
-            logger.info("✅ [welcome] 환영 메시지 전송 완료")
+            self.logger.info("✅ [welcome] 환영 메시지 전송 완료")
         except Exception as e:
             traceback.print_exc()
-            logger.error(f"❌ [welcome] 환영 메시지 전송 실패: {e}")
+            self.logger.error(f"❌ [welcome] 환영 메시지 전송 실패: {e}")
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         ch = self.bot.get_channel(config.GOODBYE_CHANNEL_ID)
-        logger = get_logger("welcome", bot=self.bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
 
         if not ch:
-            logger.error("❌ 작별 채널을 찾을 수 없습니다. LEAVE_CHANNEL_ID 확인 필요")
+            self.logger.error("❌ 작별 채널을 찾을 수 없습니다. LEAVE_CHANNEL_ID 확인 필요")
             return
 
         embed = discord.Embed(
@@ -122,7 +122,7 @@ class WelcomeCog(commands.Cog):
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(text="Exceed • 작별 인사", icon_url=self.bot.user.display_avatar.url)
 
-        logger.info(f"👋 {member.display_name}님이 서버를 떠났습니다.")
+        self.logger.info(f"👋 {member.display_name}님이 서버를 떠났습니다.")
         await ch.send(embed=embed)
 
 

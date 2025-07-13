@@ -4,14 +4,10 @@ from discord.ext import commands
 from utils.logger import get_logger
 from utils import config  # your config module with LOG_CHANNEL_ID
 
-log = None
-
 class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        global log
-        if log is None:
-            log = get_logger("register", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.log = get_logger("register", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
 
     @app_commands.command(
         name="연동",
@@ -24,8 +20,10 @@ class Registration(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         if "#" not in riot_id:
-            await interaction.followup.send("❌ 올바르지 않은 형식입니다. `이름#태그` 형태로 입력해주세요.", ephemeral=True)
-            log.warning(f"{interaction.user} failed to register with invalid Riot ID format: {riot_id}")
+            await interaction.followup.send(
+                "❌ 올바르지 않은 형식입니다. `이름#태그` 형태로 입력해주세요.", ephemeral=True
+            )
+            self.log.warning(f"{interaction.user} failed to register with invalid Riot ID format: {riot_id}")
             return
 
         discord_id = interaction.user.id
@@ -40,10 +38,12 @@ class Registration(commands.Cog):
             await interaction.followup.send(
                 f"✅ 라이엇 ID `{riot_id}`와 성공적으로 연결되었습니다!", ephemeral=True
             )
-            log.info(f"✅ {interaction.user} linked Riot ID: {riot_id}")
+            self.log.info(f"✅ {interaction.user} linked Riot ID: {riot_id}")
         except Exception as e:
-            log.error(f"❌ Database error during registration for {interaction.user}: {e}")
-            await interaction.followup.send(f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True)
+            self.log.error(f"❌ Database error during registration for {interaction.user}: {e}")
+            await interaction.followup.send(
+                f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True
+            )
 
     @app_commands.command(
         name="myriot",
@@ -57,16 +57,20 @@ class Registration(commands.Cog):
             query = "SELECT riot_id FROM registrations WHERE discord_id = $1"
             row = await self.bot.pool.fetchrow(query, discord_id)
             if row and row["riot_id"]:
-                await interaction.followup.send(f"🔎 등록된 라이엇 ID: `{row['riot_id']}`", ephemeral=True)
-                log.info(f"{interaction.user} checked Riot ID: {row['riot_id']}")
+                await interaction.followup.send(
+                    f"🔎 등록된 라이엇 ID: `{row['riot_id']}`", ephemeral=True
+                )
+                self.log.info(f"{interaction.user} checked Riot ID: {row['riot_id']}")
             else:
                 await interaction.followup.send(
-                    "아직 라이엇 ID를 등록하지 않았습니다. `/register` 명령어로 등록해주세요.", ephemeral=True
+                    "아직 라이엇 ID를 등록하지 않았습니다. `/연동` 명령어로 등록해주세요.", ephemeral=True
                 )
-                log.info(f"{interaction.user} tried to check Riot ID but none was found.")
+                self.log.info(f"{interaction.user} tried to check Riot ID but none was found.")
         except Exception as e:
-            log.error(f"❌ Database error during myriot check for {interaction.user}: {e}")
-            await interaction.followup.send(f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True)
+            self.log.error(f"❌ Database error during myriot check for {interaction.user}: {e}")
+            await interaction.followup.send(
+                f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True
+            )
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Registration(bot))

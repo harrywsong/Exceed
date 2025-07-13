@@ -3,16 +3,12 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from typing import Optional, List
 
-from pip._internal.cli.cmdoptions import progress_bar
-
 from utils import config
 from utils.logger import get_logger
 from datetime import datetime, time, timedelta
 import pytz
 import asyncio
 import urllib.parse
-
-from typing import Optional
 
 LEADERBOARD_PAGE_SIZE = 5
 EASTERN_TZ = pytz.timezone("US/Eastern")
@@ -22,7 +18,7 @@ class LeaderboardView(discord.ui.View):
     def __init__(self, cog, interaction: Optional[discord.Interaction], entries: List[dict]):
         super().__init__(timeout=120)
         self.cog = cog
-        self.interaction = interaction  # can be None
+        self.interaction = interaction
         self.entries = entries
         self.page = 0
         self.message: discord.Message = None
@@ -58,7 +54,6 @@ class LeaderboardView(discord.ui.View):
             user_mention = f"<@{entry['discord_id']}>" if entry.get("discord_id") else "❔"
             riot_name = entry.get("name", "알 수 없음")
 
-            # URL encode Riot ID for safe URL use
             encoded_name = urllib.parse.quote(riot_name)
             tracker_url = f"https://tracker.gg/valorant/profile/riot/{encoded_name}/overview"
             riot_id_link = f"[{riot_name}]({tracker_url})"
@@ -84,7 +79,7 @@ class LeaderboardView(discord.ui.View):
 
         embed.set_footer(
             text=(
-                "\u2003\u2003"  # two em spaces as padding
+                "\u2003\u2003"
                 f"페이지 {self.page + 1} / {self.get_max_page() + 1}  |  "
                 f"{self.progress_bar(self.page, self.get_max_page())}"
             )
@@ -99,10 +94,8 @@ class LeaderboardView(discord.ui.View):
         await self.message.edit(embed=embed, view=self)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        # If self.interaction is None (like on startup), allow all users to use buttons
         if self.interaction is None:
             return True
-
         if interaction.user.id != self.interaction.user.id:
             await interaction.response.send_message(
                 "이 버튼을 사용할 권한이 없습니다.", ephemeral=True
@@ -143,7 +136,6 @@ class ClanLeaderboard(commands.Cog):
         self.leaderboard_channel = None
         self.current_message = None
 
-        # Start background task after bot is ready
         self.bot.loop.create_task(self.wait_until_ready())
 
     async def wait_until_ready(self):
@@ -155,11 +147,9 @@ class ClanLeaderboard(commands.Cog):
             )
             return
 
-        # On startup, post leaderboard
         await self.post_leaderboard()
         self.logger.info("봇 시작 시 리더보드 게시 완료.")
 
-        # Start the daily update task
         self.daily_leaderboard_update.start()
 
     async def fetch_leaderboard_data(self) -> List[dict]:
@@ -197,11 +187,9 @@ class ClanLeaderboard(commands.Cog):
                 await interaction.followup.send("❌ 리더보드에 표시할 데이터가 없습니다.", ephemeral=True)
             return
 
-        # Delete old leaderboard messages posted by bot in the channel (optional: limit to last 50 messages)
         try:
             async for msg in self.leaderboard_channel.history(limit=50):
                 if msg.author == self.bot.user and msg.embeds:
-                    # Check embed title to identify leaderboard messages (basic check)
                     if any("클랜 리더보드" in embed.title for embed in msg.embeds):
                         await msg.delete()
                         self.logger.info(f"기존 리더보드 메시지 삭제됨 (ID: {msg.id})")
@@ -214,7 +202,10 @@ class ClanLeaderboard(commands.Cog):
         self.current_message = msg
 
         if interaction:
-            await interaction.followup.send(f"✅ 클랜 리더보드가 {self.leaderboard_channel.mention} 채널에 게시되었습니다.", ephemeral=True)
+            await interaction.followup.send(
+                f"✅ 클랜 리더보드가 {self.leaderboard_channel.mention} 채널에 게시되었습니다.",
+                ephemeral=True,
+            )
         self.logger.info(f"클랜 리더보드 게시 완료 (메시지 ID: {msg.id})")
 
     @app_commands.command(name="leaderboard", description="클랜 멤버 상위 플레이어들을 점수 순으로 보여줍니다.")
@@ -224,29 +215,25 @@ class ClanLeaderboard(commands.Cog):
 
     @tasks.loop(hours=24)
     async def daily_leaderboard_update(self):
-        # Calculate next 4 AM Eastern time from now
         now = datetime.now(tz=EASTERN_TZ)
-        target_time = time(23, 0, 0)  # 11:00 PM Eastern
-        next_4am = datetime.combine(now.date(), target_time).replace(tzinfo=EASTERN_TZ)
-        if now >= next_4am:
-            next_4am += timedelta(days=1)
-        wait_seconds = (next_4am - now).total_seconds()
+        target_time = time(0, 0, 0)  # 매일 자정(미 동부 시간)
+        next_run = datetime.combine(now.date(), target_time).replace(tzinfo=EASTERN_TZ)
+        if now >= next_run:
+            next_run += timedelta(days=1)
+        wait_seconds = (next_run - now).total_seconds()
         self.logger.info(f"다음 리더보드 업데이트까지 대기: {wait_seconds:.1f}초")
         await asyncio.sleep(wait_seconds)
 
-        while True:
-            try:
-                await self.post_leaderboard()
-                self.logger.info("일일 리더보드 업데이트 완료.")
-            except Exception as e:
-                self.logger.error(f"일일 리더보드 업데이트 실패: {e}")
-
-            # Wait exactly 24 hours until next run
-            await asyncio.sleep(24 * 3600)
+        try:
+            await self.post_leaderboard()
+            self.logger.info("일일 리더보드 업데이트 완료.")
+        except Exception as e:
+            self.logger.error(f"일일 리더보드 업데이트 실패: {e}")
 
     @daily_leaderboard_update.before_loop
     async def before_daily_leaderboard_update(self):
         await self.bot.wait_until_ready()
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ClanLeaderboard(bot))

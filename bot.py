@@ -60,10 +60,11 @@ class ExceedBot(commands.Bot):
 def main():
     bot = ExceedBot()
 
+    # Create root 'bot' logger ONCE, with Discord log channel integration
     bot.logger = get_logger(
         "bot",
         bot=bot,
-        discord_log_channel_id=config.LOG_CHANNEL_ID
+        discord_log_channel_id=config.LOG_CHANNEL_ID,
     )
 
     # Fix Windows console code page to UTF-8, if on Windows

@@ -9,31 +9,53 @@ from PIL import Image, ImageDraw
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
 from discord import TextStyle
-import logging
 import traceback
 from discord import File
 from datetime import datetime, timezone
 
 from typing import Optional
 
-from cogs.welcomegoodbye import BG_PATH, FONT
+# Assuming these are correctly defined in your config and utils files
 from utils import config
 from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_ID, WELCOME_CHANNEL_ID, \
     RULES_CHANNEL_ID, ANNOUNCEMENTS_CHANNEL_ID, ACCEPTED_ROLE_ID, MEMBER_CHAT_CHANNEL_ID
 from utils.logger import get_logger
 
-logger = logging.getLogger("bot")
+# Define logger at the module level, but initialize it within setup or on_ready
+# to ensure the bot object is available for the DiscordLogHandler.
+# For now, we'll define a placeholder and ensure it's properly set in the cog's __init__.
+logger = get_logger("bot") # This will get the root 'bot' logger initialized in main.py
+
 
 CONGRATS_BG_PATH = os.path.join("assets", "congrats_bg.gif")
+# Ensure these asset paths are correct relative to where the bot is run
 
-APPLICANT_ROLE_ID = 1390188260956835893
-GUEST_ROLE_ID = 1389711048461910057
+# Placeholder font path, replace with your actual font path
+# If your font is in 'assets/fonts/NotoSansKR-Regular.ttf' for example:
+FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont() # Fallback, you should define a proper font path
+# from cogs.welcomegoodbye import BG_PATH, FONT # This import is problematic if welcomegoodbye isn't loaded first or if FONT isn't universally defined
+# For demonstration, let's assume FONT is properly loaded or defined globally.
+# For example, if you have a font file:
+try:
+    from PIL import ImageFont
+    FONT_PATH = os.path.join("assets", "fonts", "NotoSansKR-Regular.ttf") # Adjust this path as needed
+    FONT = ImageFont.truetype(FONT_PATH, 40) # Adjust font size as needed
+except ImportError:
+    logger.warning("Pillow ImageFont not found. Using default font.")
+    FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
+except IOError:
+    logger.warning(f"Font file not found at {FONT_PATH}. Using default font.")
+    FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
+
+
+APPLICANT_ROLE_ID = 1390188260956835893 # Replace with your actual Applicant Role ID
+GUEST_ROLE_ID = 1389711048461910057 # Replace with your actual Guest Role ID
 
 class DecisionButtonView(discord.ui.View):
     def __init__(self, applicant_id: int = None, cog=None):
         super().__init__(timeout=None)  # Persistent view must have timeout=None
         self.applicant_id = applicant_id
-        self.cog = cog
+        self.cog = cog # Store cog instance to access its logger and methods
 
     def _extract_user_id(self, interaction: discord.Interaction) -> Optional[int]:
         user_id = None
@@ -53,18 +75,7 @@ class DecisionButtonView(discord.ui.View):
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)  # Defer immediately
 
-        user_id = None
-        if interaction.message.embeds:
-            embed = interaction.message.embeds[0]
-            mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
-            if not mention_match:
-                for field in embed.fields:
-                    mention_match = re.search(r'<@!?(\d+)>', field.value)
-                    if mention_match:
-                        break
-            if mention_match:
-                user_id = int(mention_match.group(1))
-
+        user_id = self._extract_user_id(interaction) # Use the helper method
         if not user_id:
             return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
@@ -86,29 +97,35 @@ class DecisionButtonView(discord.ui.View):
                 )
 
             await member.add_roles(role, reason="합격 처리됨")
+            self.cog.logger.info(f"✅ {member.display_name} ({member.id})님을 합격 처리했습니다.")
+
 
             # Remove applicant role
             applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if applicant_role and applicant_role in member.roles:
                 await member.remove_roles(applicant_role, reason="합격 처리로 인한 지원자 역할 제거")
+                self.cog.logger.info(f"Removed applicant role from {member.display_name}")
 
             # Remove guest role
             guest_role = interaction.guild.get_role(GUEST_ROLE_ID)
             if guest_role and guest_role in member.roles:
                 await member.remove_roles(guest_role, reason="합격 처리로 인한 게스트 역할 제거")
+                self.cog.logger.info(f"Removed guest role from {member.display_name}")
 
             await interaction.followup.send(
                 f"✅ {member.mention}님을 합격 처리했습니다!"
             )
-            if self.cog:
+            if self.cog: # Ensure cog is available before sending welcome message
                 await self.cog.send_welcome_message(member)
 
         except discord.Forbidden:
+            self.cog.logger.error(f"❌ 역할을 부여할 권한이 없습니다. {traceback.format_exc()}")
             await interaction.followup.send(
                 "❌ 역할을 부여할 권한이 없습니다.",
                 ephemeral=True
             )
         except Exception as e:
+            self.cog.logger.error(f"❌ 합격 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
             await interaction.followup.send(
                 f"❌ 오류 발생: {str(e)}",
                 ephemeral=True
@@ -130,12 +147,14 @@ class DecisionButtonView(discord.ui.View):
         if not member:
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
-        test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
+        test_role = interaction.guild.get_role(APPLICANT_ROLE_ID) # APPLICANT_ROLE_ID is being used for "test role"
         if not test_role:
             return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
 
         try:
             await member.add_roles(test_role, reason="테스트 역할 부여 (관리자 승인)")
+            self.cog.logger.info(f"🟡 {member.display_name} ({member.id})님에게 테스트 역할을 부여했습니다.")
+
 
             await member.send(
                 "안녕하세요.\n\n"
@@ -155,39 +174,24 @@ class DecisionButtonView(discord.ui.View):
 
             await interaction.followup.send(f"🟡 {member.mention}님에게 테스트 역할을 부여했습니다.")
 
-            # Use logger properly (assuming self.cog.logger or some logger instance)
-            if self.cog and hasattr(self.cog, "logger"):
-                self.cog.logger.info(f"{member} ({member.id})님에게 테스트 역할을 부여했습니다.")
-
         except discord.Forbidden:
+            self.cog.logger.error(f"❌ 역할 부여 또는 DM 전송 권한이 없습니다. {traceback.format_exc()}")
             await interaction.followup.send("❌ 역할 부여 또는 DM 전송 권한이 없습니다.", ephemeral=True)
         except Exception as e:
+            self.cog.logger.error(f"❌ 테스트 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
             await interaction.followup.send(f"❌ 오류 발생: {str(e)}", ephemeral=True)
 
     @discord.ui.button(label="불합격", style=discord.ButtonStyle.danger, custom_id="interview_fail")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)  # Defer immediately
 
-        if not interaction.message.embeds:
-            return await interaction.followup.send(
-                "❌ 지원자 정보를 찾을 수 없습니다.",
-                ephemeral=True
-            )
-        embed = interaction.message.embeds[0]
-
-        mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
-        if not mention_match:
-            for field in embed.fields:
-                mention_match = re.search(r'<@!?(\d+)>', field.value)
-                if mention_match:
-                    break
-        if not mention_match:
+        user_id = self._extract_user_id(interaction)
+        if not user_id:
             return await interaction.followup.send(
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
 
-        user_id = int(mention_match.group(1))
         member = interaction.guild.get_member(user_id)
         if not member:
             return await interaction.followup.send(
@@ -212,10 +216,19 @@ class DecisionButtonView(discord.ui.View):
             applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if applicant_role and applicant_role in member.roles:
                 await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
+                self.cog.logger.info(f"Removed applicant role from {member.display_name}")
+
 
             await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다.")
+            self.cog.logger.info(f"❌ {member.display_name} ({member.id})님을 불합격 처리했습니다.")
+
         except discord.Forbidden:
+            self.cog.logger.error(f"❌ DM을 보낼 수 없습니다. {traceback.format_exc()}")
             await interaction.followup.send("DM을 보낼 수 없습니다.", ephemeral=True)
+        except Exception as e:
+            self.cog.logger.error(f"❌ 불합격 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ 오류 발생: {str(e)}", ephemeral=True)
+
 
 class InterviewModal(Modal, title="인터뷰 사전 질문"):
     def __init__(self):
@@ -271,6 +284,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
 
         cog = interaction.client.get_cog("InterviewRequestCog")  # Get the cog instance
         if not cog:
+            logger.error("❌ 인터뷰 코그를 찾을 수 없습니다. on_submit에서.")
             return await interaction.response.send_message(
                 "❌ 인터뷰 코그를 찾을 수 없습니다.",
                 ephemeral=True
@@ -278,6 +292,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
 
         private_channel = interaction.guild.get_channel(cog.private_channel_id)
         if not private_channel:
+            cog.logger.error(f"❌ 비공개 채널을 찾을 수 없습니다. ID: {cog.private_channel_id}")
             return await interaction.response.send_message(
                 "❌ 비공개 채널을 찾을 수 없습니다.",
                 ephemeral=True
@@ -302,6 +317,8 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
 
         view = DecisionButtonView(applicant_id=interaction.user.id, cog=cog)
         await private_channel.send(embed=embed, view=view)
+        cog.logger.info(f"인터뷰 요청 접수: {interaction.user.display_name} ({interaction.user.id})")
+
 
         await interaction.response.send_message(
             "✅ 인터뷰 요청이 성공적으로 전송되었습니다!",
@@ -312,7 +329,7 @@ class InterviewView(View):
     def __init__(self, private_channel_id: int, cog):
         super().__init__(timeout=None)
         self.private_channel_id = private_channel_id
-        self.cog = cog
+        self.cog = cog # Store cog instance to pass to modal
 
     @discord.ui.button(label="인터뷰 요청 시작하기", style=discord.ButtonStyle.primary, custom_id="start_interview")
     async def start_interview(self, interaction: discord.Interaction, button: Button):
@@ -324,9 +341,16 @@ class InterviewRequestCog(commands.Cog):
         self.bot = bot
         self.public_channel_id = INTERVIEW_PUBLIC_CHANNEL_ID
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
+        # Access the bot's logger directly
+        self.logger = self.bot.logger # Use the logger instance from the bot
 
     async def make_congrats_card(self, member: discord.Member) -> BytesIO:
-        bg = Image.open(CONGRATS_BG_PATH).convert("RGBA")
+        try:
+            bg = Image.open(CONGRATS_BG_PATH).convert("RGBA")
+        except FileNotFoundError:
+            self.logger.error(f"Congratulation background image not found at {CONGRATS_BG_PATH}")
+            return None # Indicate failure
+
         draw = ImageDraw.Draw(bg)
 
         # Fetch avatar bytes
@@ -334,20 +358,29 @@ class InterviewRequestCog(commands.Cog):
         try:
             avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=5)
         except Exception as e:
-            await get_logger(self.bot, f"❌ [congrats] 아바타 가져오기 실패: {e}")
+            self.logger.error(f"❌ [congrats] 아바타 가져오기 실패: {e}")
             avatar_bytes = None
 
         if avatar_bytes:
             avatar = Image.open(BytesIO(avatar_bytes)).resize((128, 128)).convert("RGBA")
-            bg.paste(avatar, (40, bg.height // 2 - 64), avatar)
+            # Calculate position to center the avatar vertically on the left side
+            avatar_x = 40
+            avatar_y = (bg.height - avatar.height) // 2
+            bg.paste(avatar, (avatar_x, avatar_y), avatar)
 
         # Draw congratulation text
-        font = FONT
         text = f"축하합니다, {member.display_name}님!"
-        bbox = draw.textbbox((0, 0), text, font=font)
-        x = 200
-        y = (bg.height // 2) - ((bbox[3] - bbox[1]) // 2)
-        draw.text((x, y), text, font=font, fill="white")
+        # Calculate text position to center it horizontally on the right side of the avatar
+        # and vertically centered on the image
+        text_bbox = draw.textbbox((0,0), text, font=FONT)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+
+        # Starting X for text, a bit to the right of the avatar
+        text_x = avatar_x + avatar.width + 30 # Adjust 30 for padding
+        text_y = (bg.height - text_height) // 2
+
+        draw.text((text_x, text_y), text, font=FONT, fill="white")
 
         buf = BytesIO()
         bg.save(buf, "PNG")
@@ -358,7 +391,7 @@ class InterviewRequestCog(commands.Cog):
         """Send welcome message to welcome channel"""
         channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
         if not channel:
-            return logger.error("환영 채널을 찾을 수 없습니다")
+            return self.logger.error("환영 채널을 찾을 수 없습니다")
 
         try:
             card_buf = await self.make_congrats_card(member)
@@ -385,18 +418,19 @@ class InterviewRequestCog(commands.Cog):
                 embed=embed,
                 file=file,
                 allowed_mentions=discord.AllowedMentions(users=True))
+            self.logger.info(f"환영 메시지 전송 완료: {member.display_name} ({member.id})")
 
         except Exception as e:
-            logger.error(f"환영 메시지 전송 실패: {str(e)}")
-            traceback.print_exc()
+            self.logger.error(f"환영 메시지 전송 실패: {str(e)}\n{traceback.format_exc()}")
+
 
     async def send_interview_request_message(self):
         channel = self.bot.get_channel(self.public_channel_id)
         if not channel:
-            return logger.error(f"공개 채널 ID {self.public_channel_id}를 찾을 수 없습니다.")
+            return self.logger.error(f"공개 채널 ID {self.public_channel_id}를 찾을 수 없습니다.")
 
         try:
-            await channel.purge(limit=None)
+            await channel.purge(limit=None) # Clear existing messages
 
             # 1. 가입 조건 안내 임베드 (원본 이모지 사용)
             rules_embed = discord.Embed(
@@ -478,13 +512,15 @@ class InterviewRequestCog(commands.Cog):
             )
 
             await channel.send(embed=interview_embed, view=InterviewView(self.private_channel_id, self))
-            logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")
+            self.logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")
 
         except Exception as e:
-            logger.error(f"인터뷰 요청 메시지 전송 실패: {e}")
+            self.logger.error(f"인터뷰 요청 메시지 전송 실패: {e}\n{traceback.format_exc()}")
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Call send_interview_request_message when the bot is ready
+        # This will also ensure persistent views are added correctly by main.py
         await self.send_interview_request_message()
 
     @discord.app_commands.command(
@@ -493,8 +529,9 @@ class InterviewRequestCog(commands.Cog):
     )
     @discord.app_commands.default_permissions(administrator=True)
     async def slash_request_interview(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True) # Defer the interaction
         await self.send_interview_request_message()
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "인터뷰 요청 메시지를 갱신했습니다!",
             ephemeral=True
         )

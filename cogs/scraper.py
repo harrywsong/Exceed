@@ -12,7 +12,6 @@ from utils import config
 class TrackerScraper(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Initialize logger with bot and Discord log channel ID (replace with your channel ID)
         self.logger = get_logger("scraper", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
 
     @app_commands.command(
@@ -44,9 +43,7 @@ class TrackerScraper(commands.Cog):
             stdout = result.stdout or ""
 
             if result.returncode != 0 or not stdout.strip():
-                combined = (stderr + stdout).strip()
-                if not combined:
-                    combined = "(stdout 또는 stderr에 출력 없음)"
+                combined = (stderr + stdout).strip() or "(stdout 또는 stderr에 출력 없음)"
                 self.logger.error(f"스크래핑 실패: {combined}")
                 if os.path.exists(output_path):
                     file = discord.File(output_path, filename="screenshot.png")
@@ -85,7 +82,6 @@ class TrackerScraper(commands.Cog):
                 await interaction.followup.send("❌ 매치 확인 중 데이터베이스 오류가 발생했습니다.", ephemeral=True)
                 return
 
-            # ValorantStats cog의 save_match_and_clan 함수 호출
             valorant_stats_cog = self.bot.get_cog("ValorantStats")
             if valorant_stats_cog:
                 await valorant_stats_cog.save_match_and_clan(data, match_uuid)
@@ -100,8 +96,6 @@ class TrackerScraper(commands.Cog):
 
             players.sort(key=lambda p: p.get("acs", 0), reverse=True)
 
-            medals = ["🥇", "🥈", "🥉"]
-
             embed = discord.Embed(
                 title=f"📊 매치 요약 - {map_name}",
                 description=(
@@ -114,13 +108,6 @@ class TrackerScraper(commands.Cog):
 
             for i, p in enumerate(players, start=1):
                 riot_id = p.get("name", "Unknown#0000")
-                agent = p.get("agent", "알 수 없음")
-                team = p.get("team", "알 수 없음")
-                acs = p.get("acs", 0)
-                acs_bonus = p.get("acs_bonus", 0)
-                round_win_pts = p.get("round_win_points", 0)
-                total_points = p.get("total_points", 0)
-
                 encoded_riot_id = urllib.parse.quote(riot_id, safe='')
                 profile_url = f"https://tracker.gg/valorant/profile/riot/{encoded_riot_id}/overview"
 
@@ -138,21 +125,15 @@ class TrackerScraper(commands.Cog):
 
                 mention_text = f"<@{discord_id}>\n" if discord_id else ""
                 riot_id_display = f"🕹️ [{riot_id}]({profile_url})"
-                agent = p.get("agent", "알 수 없음")
-                team = p.get("team", "알 수 없음")
-                acs = p.get("acs", 0)
-                acs_bonus = p.get("acs_bonus", 0)
-                round_win_pts = p.get("round_win_points", 0)
-                total_points = p.get("total_points", 0)
 
                 field_value = (
                     f"{medal}\n"
                     f"{mention_text}"
                     f"{riot_id_display}\n"
-                    f"🎭 요원: {agent} | 🧬 팀: {team}\n"
-                    f"📈 ACS: {acs} (+{acs_bonus} pts)\n"
-                    f"🔄 라운드 승리: {round_win_pts} pts\n"
-                    f"🎯 총 포인트: {total_points}"
+                    f"🎭 요원: {p.get('agent', '알 수 없음')} | 🧬 팀: {p.get('team', '알 수 없음')}\n"
+                    f"📈 ACS: {p.get('acs', 0)} (+{p.get('acs_bonus', 0)} pts)\n"
+                    f"🔄 라운드 승리: {p.get('round_win_points', 0)} pts\n"
+                    f"🎯 총 포인트: {p.get('total_points', 0)}"
                 )
 
                 embed.add_field(
@@ -173,9 +154,8 @@ class TrackerScraper(commands.Cog):
             self.logger.error("Puppeteer 스크립트 실행 시간 초과")
             await interaction.followup.send("❌ Puppeteer 스크립트 실행 시간 초과")
         except Exception as e:
-            self.logger.error(f"스크래핑 중 예외 발생: {e}")
+            self.logger.error(f"스크래핑 중 예외 발생: {e}", exc_info=True)
             await interaction.followup.send(f"❌ 오류 발생: {str(e)}")
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(TrackerScraper(bot))
