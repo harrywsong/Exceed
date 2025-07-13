@@ -7,7 +7,12 @@ from utils import config  # your config module with LOG_CHANNEL_ID
 class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.log = get_logger("register", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        # Updated: Use the Korean name for the logger
+        self.log = get_logger(
+            "계정 연동", # Account Linkage / Integration
+            bot=bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
 
     @app_commands.command(
         name="연동",

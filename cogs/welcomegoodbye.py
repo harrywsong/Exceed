@@ -7,76 +7,111 @@ from PIL import Image, ImageDraw, ImageFont
 import os
 import asyncio
 import traceback
-import logging  # Import logging for unified logger usage
 
 from utils import config
+from utils.logger import get_logger
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 BG_PATH      = os.path.join(BASE_DIR, "..", "assets", "welcome_bg.png")
 FONT_PATH_KR = os.path.join(BASE_DIR, "..", "assets", "fonts", "NotoSansKR-Bold.ttf")
 FONT_SIZE    = 72
 
-# Load font once at startup (fallback if missing)
+# Load font once at startup
 try:
     FONT = ImageFont.truetype(FONT_PATH_KR, FONT_SIZE)
 except OSError:
     FONT = ImageFont.load_default()
-    print("⚠️ fallback font used; Korean may not render properly")
+    print("⚠️ Fallback font used for welcome card; Korean may not render properly.")
+
 
 class WelcomeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Use unified logger with child namespace "bot.welcome"
-        self.logger = logging.getLogger("bot.welcome")
+        # Updated: Directly get the logger with the desired Korean name
+        self.logger = get_logger(
+            "환영/인사 카드", # Korean for "Welcome Greeting"
+            bot=self.bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
+
+        self.logger.info("WelcomeCog 초기화 완료.")
 
     async def make_welcome_card(self, member: discord.Member) -> BytesIO:
-        bg = Image.open(BG_PATH).convert("RGBA")
-        draw = ImageDraw.Draw(bg)
-
-        # Fetch avatar bytes
-        avatar_asset = member.display_avatar.with_size(128).with_format("png")
         try:
-            avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=5)
+            bg = Image.open(BG_PATH).convert("RGBA")
+            draw = ImageDraw.Draw(bg)
+
+            # Fetch avatar bytes
+            avatar_asset = member.display_avatar.with_size(128).with_format("png")
+            try:
+                avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=10)
+            except asyncio.TimeoutError:
+                self.logger.warning(f"⏳ [welcome] 아바타 가져오기 타임아웃: {member.display_name} ({member.id})")
+                avatar_bytes = None
+            except discord.HTTPException as e:
+                self.logger.error(f"❌ [welcome] 아바타 HTTP 오류: {e} for {member.display_name} ({member.id})")
+                avatar_bytes = None
+            except Exception as e:
+                self.logger.error(f"❌ [welcome] 아바타 가져오기 실패: {e} for {member.display_name} ({member.id})\n{traceback.format_exc()}")
+                avatar_bytes = None
+
+            if avatar_bytes:
+                avatar = Image.open(BytesIO(avatar_bytes)).resize((128, 128)).convert("RGBA")
+                # Create a circular mask for the avatar
+                mask = Image.new('L', (128, 128), 0)
+                draw_mask = ImageDraw.Draw(mask)
+                draw_mask.ellipse((0, 0, 128, 128), fill=255)
+                bg.paste(avatar, (40, bg.height // 2 - 64), mask) # Use mask for circular avatar
+
+            # Draw welcome text
+            font = FONT
+            text = f"환영합니다, {member.display_name}님!"
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            x = 200
+            y = (bg.height // 2) - (text_height // 2)
+            draw.text((x, y), text, font=font, fill="white")
+
+            buf = BytesIO()
+            bg.save(buf, "PNG")
+            buf.seek(0)
+            self.logger.debug(f"🎉 환영 카드 BytesIO 생성 완료: {member.display_name}")
+            return buf
         except Exception as e:
-            self.logger.error(f"❌ [welcome] 아바타 가져오기 실패: {e}")
-            avatar_bytes = None
-
-        if avatar_bytes:
-            avatar = Image.open(BytesIO(avatar_bytes)).resize((128, 128)).convert("RGBA")
-            bg.paste(avatar, (40, bg.height // 2 - 64), avatar)
-
-        # Draw welcome text
-        font = FONT
-        text = f"환영합니다, {member.display_name}님!"
-        bbox = draw.textbbox((0, 0), text, font=font)
-        x = 200
-        y = (bg.height // 2) - ((bbox[3] - bbox[1]) // 2)
-        draw.text((x, y), text, font=font, fill="white")
-
-        buf = BytesIO()
-        bg.save(buf, "PNG")
-        buf.seek(0)
-        return buf
+            self.logger.error(f"❌ [welcome] 환영 카드 생성 중 치명적인 오류 발생: {e}\n{traceback.format_exc()}")
+            raise # Re-raise to be caught by on_member_join's handler
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
-        ch = self.bot.get_channel(config.WELCOME_CHANNEL_ID)
-        self.logger.info(f"⚙️ 신규 회원 감지: {member} (ID: {member.id}); 채널 → {config.WELCOME_CHANNEL_ID}")
-
-        if not ch:
-            self.logger.error("❌ 환영 채널을 찾을 수 없습니다. WELCOME_CHANNEL_ID 확인 필요")
+        if member.bot:
+            self.logger.info(f"🤖 봇 {member.display_name} ({member.id})이(가) 서버에 참여했습니다. 무시합니다.")
             return
 
-        try:
-            self.logger.info("🔧 [welcome] 환영 카드 생성 중…")
-            card_buf = await self.make_welcome_card(member)
-            self.logger.info("✅ [welcome] 환영 카드 생성 완료")
-        except Exception:
-            traceback.print_exc()
-            self.logger.error("❌ [welcome] 환영 카드 생성 실패")
-            return await ch.send(f"⚠️ 환영 카드 생성 실패")
+        ch = self.bot.get_channel(config.WELCOME_CHANNEL_ID)
+        self.logger.info(f"⚙️ 신규 회원 감지: {member.display_name} (ID: {member.id}); 환영 채널 ID: {config.WELCOME_CHANNEL_ID}")
 
-        file = File(card_buf, filename="welcome.png")
+        if not ch:
+            self.logger.error(f"❌ 환영 채널 {config.WELCOME_CHANNEL_ID}을(를) 찾을 수 없습니다. WELCOME_CHANNEL_ID 확인 필요.")
+            return
+
+        card_buf = None
+        try:
+            self.logger.info(f"🔧 [welcome] {member.display_name}님을 위한 환영 카드 생성 중…")
+            card_buf = await self.make_welcome_card(member)
+            self.logger.info(f"✅ [welcome] {member.display_name}님을 위한 환영 카드 생성 완료.")
+        except Exception as e:
+            self.logger.error(f"❌ [welcome] 환영 카드 생성 실패: {e}\n{traceback.format_exc()}")
+            # Attempt to send a plain message if card creation fails
+            try:
+                await ch.send(f"⚠️ {member.mention}님, 환영합니다! 환영 카드 생성에 실패했습니다.")
+            except discord.Forbidden:
+                self.logger.error(f"❌ 환영 메시지를 보낼 권한이 없습니다 (카드 생성 실패 후).")
+            return
+
+        file = None
+        if card_buf:
+            file = File(card_buf, filename="welcome.png")
 
         try:
             embed = discord.Embed(
@@ -88,42 +123,69 @@ class WelcomeCog(commands.Cog):
             embed.add_field(name="1️⃣ 서버 규칙을 꼭 확인해 주세요", value=f"<#{config.RULES_CHANNEL_ID}>", inline=False)
             embed.add_field(name="2️⃣ 클랜에 지원하여 전체 서버에 접근해 보세요!", value=f"<#{config.INTERVIEW_PUBLIC_CHANNEL_ID}>",
                             inline=False)
-            embed.set_image(url="attachment://welcome.png")
+            if file:
+                embed.set_image(url="attachment://welcome.png")
             embed.set_footer(text="Exceed • 환영 메시지", icon_url=self.bot.user.display_avatar.url)
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-        except Exception:
-            traceback.print_exc()
-            self.logger.error("❌ [welcome] 임베드 빌드 실패")
+            self.logger.debug(f"📝 [welcome] {member.display_name}님을 위한 임베드 빌드 완료.")
+        except Exception as e:
+            self.logger.error(f"❌ [welcome] 임베드 빌드 실패: {e}\n{traceback.format_exc()}")
+            if file:
+                file.close()
+            try:
+                await ch.send(f"⚠️ {member.mention}님, 환영합니다! 임베드 메시지 생성에 실패했습니다.")
+            except discord.Forbidden:
+                self.logger.error(f"❌ 환영 메시지를 보낼 권한이 없습니다 (임베드 빌드 실패 후).")
             return
 
         try:
-            self.logger.info("🔧 [welcome] 환영 메시지 전송 중…")
+            self.logger.info(f"🔧 [welcome] {member.display_name}님을 위한 환영 메시지 전송 중…")
             await ch.send(content=member.mention, embed=embed, file=file,
                           allowed_mentions=discord.AllowedMentions(users=True))
-            self.logger.info("✅ [welcome] 환영 메시지 전송 완료")
+            self.logger.info(f"✅ [welcome] {member.display_name}님을 위한 환영 메시지 전송 완료.")
+        except discord.Forbidden:
+            self.logger.error(f"❌ [welcome] 환영 메시지를 보낼 권한이 없습니다 (채널 {ch.id}). 봇 권한을 확인해주세요.")
+        except discord.HTTPException as e:
+            self.logger.error(f"❌ [welcome] 환영 메시지 전송 중 Discord HTTP 오류 발생: {e}\n{traceback.format_exc()}")
         except Exception as e:
-            traceback.print_exc()
-            self.logger.error(f"❌ [welcome] 환영 메시지 전송 실패: {e}")
+            self.logger.error(f"❌ [welcome] 환영 메시지 전송 실패: {e}\n{traceback.format_exc()}")
+        finally:
+            if file:
+                file.close()
+
 
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
-        ch = self.bot.get_channel(config.GOODBYE_CHANNEL_ID)
-
-        if not ch:
-            self.logger.error("❌ 작별 채널을 찾을 수 없습니다. LEAVE_CHANNEL_ID 확인 필요")
+        if member.bot:
+            self.logger.info(f"🤖 봇 {member.display_name} ({member.id})이(가) 서버에서 나갔습니다. 무시합니다.")
             return
 
-        embed = discord.Embed(
-            title="회원 퇴장",
-            description=f"👋 **{member}**님이 클랜을 떠났습니다.",
-            color=discord.Color.dark_grey(),
-            timestamp=datetime.utcnow()
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.set_footer(text="Exceed • 작별 인사", icon_url=self.bot.user.display_avatar.url)
+        ch = self.bot.get_channel(config.GOODBYE_CHANNEL_ID)
+        self.logger.info(f"⚙️ 회원 퇴장 감지: {member.display_name} (ID: {member.id}); 작별 채널 ID: {config.GOODBYE_CHANNEL_ID}")
 
-        self.logger.info(f"👋 {member.display_name}님이 서버를 떠났습니다.")
-        await ch.send(embed=embed)
+        if not ch:
+            self.logger.error(f"❌ 작별 채널 {config.GOODBYE_CHANNEL_ID}을(를) 찾을 수 없습니다. GOODBYE_CHANNEL_ID 확인 필요.")
+            return
+
+        try:
+            embed = discord.Embed(
+                title="회원 퇴장",
+                description=f"👋 **{member.display_name}**님이 클랜을 떠났습니다.",
+                color=discord.Color.dark_grey(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.set_footer(text="Exceed • 작별 인사", icon_url=self.bot.user.display_avatar.url)
+
+            self.logger.info(f"👋 {member.display_name}님이 서버를 떠났습니다. 작별 메시지 전송 중…")
+            await ch.send(embed=embed)
+            self.logger.info(f"✅ {member.display_name}님을 위한 작별 메시지 전송 완료.")
+        except discord.Forbidden:
+            self.logger.error(f"❌ 작별 메시지를 보낼 권한이 없습니다 (채널 {ch.id}). 봇 권한을 확인해주세요.")
+        except discord.HTTPException as e:
+            self.logger.error(f"❌ 작별 메시지 전송 중 Discord HTTP 오류 발생: {e}\n{traceback.format_exc()}")
+        except Exception as e:
+            self.logger.error(f"❌ {member.display_name}님을 위한 작별 메시지 전송 실패: {e}\n{traceback.format_exc()}")
 
 
 async def setup(bot):

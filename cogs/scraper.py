@@ -12,7 +12,7 @@ from utils import config
 class TrackerScraper(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("scraper", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("내전 스크레이퍼", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
 
     @app_commands.command(
         name="내전등록",

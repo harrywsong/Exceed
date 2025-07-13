@@ -120,7 +120,7 @@ def main():
 
     # Create root 'bot' logger ONCE, with Discord log channel integration
     bot.logger = get_logger(
-        "bot",
+        "기본 로그",
         bot=bot,
         discord_log_channel_id=config.LOG_CHANNEL_ID,
     )

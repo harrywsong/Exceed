@@ -5,24 +5,21 @@ import asyncpg
 from typing import Optional
 import traceback  # Import traceback for detailed error logging
 
-# We no longer explicitly import get_logger here for direct use within the cog,
-# as we'll rely on the bot's logger.
-# from utils.logger import get_logger
+from utils.logger import get_logger # Explicitly import get_logger for direct use
 from utils import config  # your config with LOG_CHANNEL_ID
 
 
 class ValorantStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Access the bot's pre-configured logger
-        # This assumes self.bot.logger is set up in your main.py
-        self.logger = self.bot.logger if hasattr(self.bot, 'logger') else None
-        if self.logger is None:
-            # Fallback if for some reason the bot.logger isn't set, though it should be.
-            # This part is mostly for safety/debugging, not ideal for production if setup is correct.
-            from utils.logger import get_logger
-            self.logger = get_logger("valorant_stats_fallback")  # Give it a different name to distinguish
-            self.logger.warning("Bot logger not found on bot instance in ValorantStats cog. Using fallback logger.")
+        # Directly get a named logger for this cog.
+        # This is the recommended approach for consistent logging configuration.
+        self.logger = get_logger(
+            "발로란트 통계",  # Valorant Statistics
+            bot=self.bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
+        self.logger.info("ValorantStats cog initialized.")
 
     async def save_match_and_clan(self, data: dict, match_uuid: Optional[str] = None):
         if not hasattr(self.bot, 'pool') or self.bot.pool is None:
@@ -41,28 +38,21 @@ class ValorantStats(commands.Cog):
                     match_id = await conn.fetchval(
                         """
                         INSERT INTO matches(match_uuid, map, mode, team1_score, team2_score, round_count)
-                        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (match_uuid) DO
-                        UPDATE SET
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                        ON CONFLICT (match_uuid) DO UPDATE SET
                             map = EXCLUDED.map,
                             mode = EXCLUDED.mode,
                             team1_score = EXCLUDED.team1_score,
                             team2_score = EXCLUDED.team2_score,
                             round_count = EXCLUDED.round_count
-                            RETURNING id
+                        RETURNING id
                         """,
                         match_uuid, map_name, mode, team1_score, team2_score, round_count
                     )
-                    # The ON CONFLICT DO UPDATE SET ensures that if a match_uuid already exists,
-                    # it updates the match details. This is generally safer than DO NOTHING
-                    # if match details can change or be re-sent.
-                    # If you truly want DO NOTHING, you'd then need a separate SELECT.
 
-                    if match_id:
-                        self.logger.info(f"매치 데이터 저장/업데이트됨: UUID={match_uuid} -> ID={match_id}")
-                    else:
-                        # This path should ideally not be hit with ON CONFLICT DO UPDATE SET
-                        # as it will always return an ID.
-                        self.logger.warning(f"매치 ID를 가져오지 못했습니다. UUID: {match_uuid}")
+                    # With "RETURNING id" and "ON CONFLICT DO UPDATE", match_id will always be set
+                    # if the query itself is successful.
+                    self.logger.info(f"매치 데이터 저장/업데이트됨: UUID={match_uuid} -> ID={match_id}")
 
                     rows = await conn.fetch("SELECT discord_id, riot_id FROM registrations")
                     riot_to_discord = {row['riot_id']: row['discord_id'] for row in rows}
@@ -71,8 +61,10 @@ class ValorantStats(commands.Cog):
                         riot_id = p.get("name")
                         discord_id = riot_to_discord.get(riot_id)
 
-                        # Handle potential None values for numeric fields gracefully
                         try:
+                            # Safely get values, defaulting to None if not present or suitable type
+                            # Using .get() with a default of None is generally safer than direct access.
+                            # The database schema should handle NULLs correctly for these fields.
                             acs = p.get("acs")
                             score = p.get("score")
                             kills = p.get("kills")
@@ -100,8 +92,8 @@ class ValorantStats(commands.Cog):
                                 VALUES ($1, $2, $3, $4, $5, $6, $7,
                                         $8, $9, $10, $11, $12, $13,
                                         $14, $15, $16, $17, $18, $19, $20, $21,
-                                        $22, $23, $24) ON CONFLICT (match_id, riot_id) DO
-                                UPDATE SET
+                                        $22, $23, $24)
+                                ON CONFLICT (match_id, riot_id) DO UPDATE SET
                                     discord_id = EXCLUDED.discord_id,
                                     agent = EXCLUDED.agent,
                                     team = EXCLUDED.team,
@@ -130,34 +122,40 @@ class ValorantStats(commands.Cog):
                                 fd, mk, acs_bonus, round_win_points, total_points
                             )
                             if discord_id is not None:
-                                self.logger.debug(f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID: {discord_id})")
+                                self.logger.debug(f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID: {discord_id}) for match {match_uuid}")
                             else:
-                                self.logger.debug(f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID 없음)")
+                                self.logger.debug(f"클랜 플레이어 데이터 저장/업데이트됨: {riot_id} (Discord ID 없음) for match {match_uuid}")
                         except Exception as player_e:
                             self.logger.error(
-                                f"Error saving player {riot_id} for match {match_uuid}: {player_e}\n{traceback.format_exc()}")
-                            # Decide if you want to re-raise or continue.
-                            # For batch operations, often you'd log and continue.
+                                f"Error saving player data for {riot_id} in match {match_uuid}: {player_e}\n{traceback.format_exc()}")
+                            # Continue to next player even if one fails
+                            continue
 
         except asyncpg.exceptions.PostgresError as e:
-            self.logger.error(f"Database error saving match {match_uuid}: {e}\n{traceback.format_exc()}")
-            # Depending on your error handling, you might want to raise here
-            # or return a specific error status.
+            self.logger.error(f"Database error during transaction for match {match_uuid}: {e}\n{traceback.format_exc()}")
+            await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
+                f"🚨 **데이터베이스 오류 발생!** 매치 데이터 저장 실패 (UUID: `{match_uuid}`): `{e}`"
+            )
         except Exception as e:
             self.logger.critical(f"Unexpected error saving match {match_uuid}: {e}\n{traceback.format_exc()}")
+            await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
+                f"🚨 **치명적인 오류 발생!** 매치 데이터 저장 중 예상치 못한 문제 (UUID: `{match_uuid}`): `{e}`"
+            )
+
 
     @app_commands.command(name="통계", description="최근 매치 요약 통계를 확인합니다.")
     @app_commands.describe(count="최근 포함할 경기 수 (기본값 10, 최대 50)")
     async def mystats(self, interaction: discord.Interaction, count: Optional[int] = 10):
         await interaction.response.defer(ephemeral=True)
 
+        # Validate count input
         if count is None or count <= 0:
             count = 10
         if count > 50:
             count = 50
 
         discord_id = interaction.user.id
-        self.logger.info(f"{interaction.user.display_name} ({discord_id}) 유저가 /통계 요청 (최근 {count}경기)")
+        self.logger.info(f"{interaction.user.display_name} ({discord_id}) requested /통계 (last {count} matches).")
 
         if not hasattr(self.bot, 'pool') or self.bot.pool is None:
             self.logger.error("Database pool is not initialized on the bot. Cannot retrieve stats.")
@@ -166,21 +164,34 @@ class ValorantStats(commands.Cog):
 
         try:
             async with self.bot.pool.acquire() as conn:
+                # Optimized query to avoid subquery if possible, and ensure proper aggregation
+                # COALESCE ensures 0.0 for averages if no rows, or 0 for matches_played
                 row = await conn.fetchrow(
-                    """
-                    SELECT COALESCE(AVG(acs), 0.0)::float as avg_acs, COALESCE(AVG(kills), 0.0)::float as avg_kills, COALESCE(AVG(deaths), 0.0)::float as avg_deaths, COALESCE(AVG(assists), 0.0)::float as avg_assists, COALESCE(AVG(kd_ratio), 0.0)::float as avg_kd, COALESCE(AVG(adr), 0.0)::float as avg_adr, COALESCE(AVG(hs_pct), 0.0)::float as avg_hs_pct, COALESCE(AVG(total_points), 0.0)::float as avg_points, COUNT(*) as matches_played
-                    FROM (SELECT *
-                          FROM clan
-                          WHERE discord_id = $1
-                          ORDER BY id DESC
-                              LIMIT $2) AS recent_matches
+                    f"""
+                    SELECT
+                        COALESCE(AVG(c.acs), 0.0)::float AS avg_acs,
+                        COALESCE(AVG(c.kills), 0.0)::float AS avg_kills,
+                        COALESCE(AVG(c.deaths), 0.0)::float AS avg_deaths,
+                        COALESCE(AVG(c.assists), 0.0)::float AS avg_assists,
+                        COALESCE(AVG(c.kd_ratio), 0.0)::float AS avg_kd,
+                        COALESCE(AVG(c.adr), 0.0)::float AS avg_adr,
+                        COALESCE(AVG(c.hs_pct), 0.0)::float AS avg_hs_pct,
+                        COALESCE(AVG(c.total_points), 0.0)::float AS avg_points,
+                        COUNT(c.id) AS matches_played
+                    FROM (
+                        SELECT *
+                        FROM clan
+                        WHERE discord_id = $1
+                        ORDER BY id DESC
+                        LIMIT $2
+                    ) AS c
                     """,
                     discord_id, count
                 )
 
                 if not row or row['matches_played'] == 0:
                     await interaction.followup.send("기록된 매치가 없습니다. 먼저 매치를 등록하세요.", ephemeral=True)
-                    self.logger.info(f"{discord_id} 유저는 기록된 매치가 없음.")
+                    self.logger.info(f"{discord_id} has no recorded matches.")
                     return
 
                 embed = discord.Embed(
@@ -198,14 +209,22 @@ class ValorantStats(commands.Cog):
                 embed.add_field(name="평균 점수", value=f"{row['avg_points']:.1f}", inline=True)
 
                 await interaction.followup.send(embed=embed)
-                self.logger.info(f"{interaction.user.display_name}님의 통계 응답 전송 완료.")
+                self.logger.info(f"{interaction.user.display_name}'s stats response sent.")
 
         except asyncpg.exceptions.PostgresError as e:
             self.logger.error(f"Database error fetching stats for {discord_id}: {e}\n{traceback.format_exc()}")
             await interaction.followup.send("❌ 통계를 가져오는 중 데이터베이스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.", ephemeral=True)
+            # Potentially send to Discord log channel as well
+            await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
+                f"🚨 **데이터베이스 오류 발생!** 통계 가져오기 실패 (유저 ID: `{discord_id}`): `{e}`"
+            )
         except Exception as e:
             self.logger.critical(f"Unexpected error fetching stats for {discord_id}: {e}\n{traceback.format_exc()}")
             await interaction.followup.send("❌ 통계를 가져오는 중 알 수 없는 오류가 발생했습니다.", ephemeral=True)
+            # Always send critical errors to Discord log channel
+            await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
+                f"🚨 **치명적인 오류 발생!** 통계 가져오기 중 예상치 못한 문제 (유저 ID: `{discord_id}`): `{e}`"
+            )
 
 
 async def setup(bot: commands.Bot):
