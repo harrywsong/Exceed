@@ -341,7 +341,7 @@ class InterviewRequestCog(commands.Cog):
         try:
             self.CONGRATS_BG_PATH = getattr(config, 'CONGRATS_BG_PATH', os.path.join("assets", "congrats_bg.gif"))
             FONT_PATH_CONFIG = getattr(config, 'FONT_PATH', os.path.join("assets", "fonts", "NotoSansKR-Bold.ttf"))
-            self.FONT = ImageFont.truetype(FONT_PATH_CONFIG, 40)
+            self.FONT = ImageFont.truetype(FONT_PATH_CONFIG, 72)
             self.logger.info(f"폰트 로드 성공: {FONT_PATH_CONFIG}")
         except ImportError:
             self.logger.warning("Pillow ImageFont를 찾을 수 없습니다. 기본 폰트를 사용합니다.")
