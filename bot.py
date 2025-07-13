@@ -1,3 +1,5 @@
+# bot.py (Your main bot file - no changes needed from your last provided version)
+
 import sys
 import os
 import shutil
@@ -8,6 +10,7 @@ import asyncio
 import asyncpg
 from datetime import datetime, timedelta, time
 import pytz
+import logging  # Import logging to access handlers
 
 from utils import config
 from utils.logger import get_logger
@@ -29,6 +32,17 @@ class ExceedBot(commands.Bot):
         """Run the blocking upload_log_to_drive in an executor"""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, upload_log_to_drive, log_path)
+
+    def _flush_log_handlers(self):
+        """Flushes all file handlers associated with the root logger."""
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.FileHandler):
+                try:
+                    handler.flush()
+                    self.logger.debug(f"Flushed file handler: {handler.baseFilename}")
+                except Exception as e:
+                    self.logger.error(f"Error flushing log handler {handler.baseFilename}: {e}")
 
     async def setup_hook(self):
         # Initialize database pool with statement_cache_size=0
@@ -54,6 +68,11 @@ class ExceedBot(commands.Bot):
         # On startup: Upload current log.log if it exists (rename first)
         log_path = os.path.join("logs", "log.log")
         if os.path.exists(log_path):
+            self.logger.info("Flushing log handlers before startup upload...")
+            self._flush_log_handlers()
+
+            await asyncio.sleep(0.5)
+
             timestamped_path = os.path.join("logs", f"log.log.{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
             try:
                 shutil.move(log_path, timestamped_path)
@@ -105,6 +124,11 @@ class ExceedBot(commands.Bot):
             # Rename current log.log to timestamped name before upload
             log_path = os.path.join("logs", "log.log")
             if os.path.exists(log_path):
+                self.logger.info("Flushing log handlers before daily upload.")
+                self._flush_log_handlers()
+
+                await asyncio.sleep(0.5)
+
                 timestamped_path = os.path.join("logs", f"log.log.{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}")
                 try:
                     shutil.move(log_path, timestamped_path)
@@ -115,12 +139,13 @@ class ExceedBot(commands.Bot):
             else:
                 self.logger.info("No current log.log file to upload at daily task.")
 
+
 def main():
     bot = ExceedBot()
 
     # Create root 'bot' logger ONCE, with Discord log channel integration
     bot.logger = get_logger(
-        "기본 로그",
+        "기본 로그", # This call will now also configure the root logger's file handler
         bot=bot,
         discord_log_channel_id=config.LOG_CHANNEL_ID,
     )
@@ -131,6 +156,7 @@ def main():
         ctypes.windll.kernel32.SetConsoleOutputCP(65001)
 
     bot.run(config.DISCORD_TOKEN)
+
 
 if __name__ == "__main__":
     main()
