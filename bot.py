@@ -275,8 +275,9 @@ class MyBot(commands.Bot):
         for ext in initial_extensions:
             try:
                 if ext == 'cogs.autoguest':
-                    # AutoRoleCog requires role_ids during initialization
-                    await self.load_extension(ext, extras={'role_ids': config.AUTO_ROLE_IDS})
+                    # Removed 'extras' argument as it's not supported by load_extension.
+                    # The cogs.autoguest module should import config and use AUTO_ROLE_IDS directly.
+                    await self.load_extension(ext)
                 else:
                     await self.load_extension(ext)
                 self.logger.info(f"✅ Cog 로드됨: {ext}")
@@ -466,4 +467,3 @@ if __name__ == "__main__":
         # Attempt to use bot_instance's logger if it exists
         if 'bot_instance' in locals() and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
             bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생 (재시도): {e}", exc_info=True)
-
