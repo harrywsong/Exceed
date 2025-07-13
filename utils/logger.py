@@ -96,7 +96,8 @@ class DiscordHandler(logging.Handler):
                 messages_to_send = []
                 async with self._buffer_lock:
                     if not self._message_buffer:
-                        # print("DEBUG: Buffer is empty. Skipping send.", file=sys.stderr) # Too verbose
+                        print("DEBUG: DiscordHandler buffer is empty. Skipping send cycle.",
+                              file=sys.stderr)  # Added debug
                         continue  # Nothing to send
 
                     # Take a batch of messages from the buffer
@@ -104,11 +105,16 @@ class DiscordHandler(logging.Handler):
                     self._message_buffer = self._message_buffer[10:]
 
                 if not messages_to_send:
+                    print(
+                        "DEBUG: messages_to_send list is empty after taking from buffer. This should not happen if buffer was not empty.",
+                        file=sys.stderr)  # Added debug
                     continue
 
                 full_message = "```\n" + "\n".join(messages_to_send) + "\n```"
 
-                print(f"DEBUG: Attempting to send {len(messages_to_send)} log messages to Discord.", file=sys.stderr)
+                print(
+                    f"DEBUG: Attempting to send {len(messages_to_send)} log messages to Discord. Message length: {len(full_message)}",
+                    file=sys.stderr)  # Added debug
 
                 try:
                     channel = self.bot.get_channel(self.channel_id)
@@ -123,6 +129,8 @@ class DiscordHandler(logging.Handler):
 
                     if len(full_message) > 2000:
                         # Discord message limit is 2000 characters. Split if necessary.
+                        print(f"DEBUG: Message too long ({len(full_message)} chars). Chunking and sending.",
+                              file=sys.stderr)  # Added debug
                         for i, chunk in enumerate(self._chunk_message(full_message, 1990)):
                             await channel.send(chunk)
                             if i < len(full_message) / 1990 - 1:  # Don't sleep after the last chunk
@@ -188,7 +196,7 @@ class DiscordHandler(logging.Handler):
 
 
 def _configure_root_handlers(bot=None, discord_log_channel_id=None, console_level=logging.INFO, file_level=logging.INFO,
-                             discord_level=logging.INFO):
+                             discord_level=logging.DEBUG):  # Changed discord_level to DEBUG
     """
     Configures the root logger with file, console, and optional Discord handlers.
     This function should be called once after the bot is initialized.
