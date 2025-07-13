@@ -190,14 +190,18 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
         discord_handler.setFormatter(LOGGING_FORMATTER)
         root_logger.addHandler(discord_handler)
 
-def get_logger(name: str, level=logging.INFO) -> logging.Logger:
+# FIXED: get_logger now accepts **kwargs to catch unexpected arguments
+def get_logger(name: str, level=logging.INFO, **kwargs) -> logging.Logger:
     """
     Retrieves a logger with the specified name and level.
     The DiscordHandler is now managed by the root logger configuration.
+    Accepts **kwargs to allow for backward compatibility with old cog calls
+    that might pass 'bot' or 'discord_log_channel_id'. These arguments are
+    ignored by this function as handler configuration is done globally.
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.propagate = True
+    logger.propagate = True # Allow logs to propagate to root handlers (including DiscordHandler)
     return logger
 
 logging.getLogger('discord').setLevel(logging.INFO)
