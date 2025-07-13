@@ -171,9 +171,9 @@ async def main():
             bot.logger.info("시작 시 이름 변경 확인 후 처리할 보류 중인 충돌 로그 파일이 없습니다.")
     # --- End Crash Log Handling ---
 
-    TOKEN = config.DISCORD_BOT_TOKEN # Assuming DISCORD_BOT_TOKEN is in config.py now
+    TOKEN = config.DISCORD_TOKEN # Assuming DISCORD_BOT_TOKEN is in config.py now
     if not TOKEN:
-        bot.logger.critical("DISCORD_BOT_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
+        bot.logger.critical("DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
         sys.exit(1)
 
     try:
