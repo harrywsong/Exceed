@@ -165,7 +165,10 @@ class ReactionRoles(commands.Cog):
         if payload.message_id not in self.reaction_role_map:
             return
 
-        emoji_key = f"<:{payload.emoji.name}:{payload.emoji.id}>" if payload.emoji.id else str(payload.emoji)
+        if payload.emoji.id:
+            emoji_key = payload.emoji.name.lower()
+        else:
+            emoji_key = str(payload.emoji)
         role_id = self.reaction_role_map[payload.message_id].get(emoji_key)
 
         if not role_id:
