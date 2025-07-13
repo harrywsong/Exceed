@@ -150,6 +150,14 @@ class ClanLeaderboard(commands.Cog):
         self.leaderboard_channel = None
         self.current_message = None
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Called when the bot is ready. Reposts the leaderboard."""
+        self.logger.info("Bot is ready. Attempting to post initial leaderboard.")
+        await self.post_leaderboard()
+        self.logger.info("Initial leaderboard post attempt completed.")
+
+
     async def fetch_leaderboard_data(self) -> List[dict]:
         try:
             async with self.bot.pool.acquire() as conn:
@@ -199,17 +207,18 @@ class ClanLeaderboard(commands.Cog):
         try:
             self.logger.info(f"기존 리더보드 메시지 정리 시작 (채널: #{self.leaderboard_channel.name}).")
             deleted_count = 0
-            async for msg in self.leaderboard_channel.history(limit=5):
+            # Limit history to a reasonable number to avoid fetching too many messages
+            async for msg in self.leaderboard_channel.history(limit=20): # Increased limit slightly for robustness
                 if msg.author == self.bot.user and msg.embeds:
                     if any("클랜 리더보드" in embed.title for embed in msg.embeds):
                         await msg.delete()
                         deleted_count += 1
                         self.logger.info(f"기존 리더보드 메시지 삭제됨 (ID: {msg.id})")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(0.5) # Small delay to respect Discord's rate limits
 
             if deleted_count > 0:
                 self.logger.info(f"총 {deleted_count}개의 기존 리더보드 메시지 삭제 완료.")
-                await asyncio.sleep(2)
+                await asyncio.sleep(1) # Wait a bit after deleting multiple messages
             else:
                 self.logger.info("삭제할 기존 리더보드 메시지가 없습니다.")
 
