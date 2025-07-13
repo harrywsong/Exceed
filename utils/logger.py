@@ -40,7 +40,8 @@ class DiscordHandler(logging.Handler):
         self._buffer_lock = asyncio.Lock()
         self.stopped = False # Flag to indicate if the handler is closing
 
-        self.setLevel(logging.WARNING)
+        # The level for this specific handler is set in _configure_root_handlers
+        # self.setLevel(logging.WARNING) # This line is now effectively managed externally
 
     def emit(self, record):
         log_entry = self.format(record)
@@ -186,9 +187,14 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
 
     if bot and discord_log_channel_id:
         discord_handler = DiscordHandler(bot, discord_log_channel_id)
-        discord_handler.setLevel(logging.WARNING) # Set to WARNING by default as per common practice
+        # CHANGED: Set DiscordHandler level to INFO to capture more logs
+        discord_handler.setLevel(logging.INFO)
         discord_handler.setFormatter(LOGGING_FORMATTER)
         root_logger.addHandler(discord_handler)
+        # Start the log sending task for DiscordHandler
+        # This is crucial to ensure the buffered logs are actually sent
+        discord_handler.start_sending_logs()
+
 
 # FIXED: get_logger now accepts **kwargs to catch unexpected arguments
 def get_logger(name: str, level=logging.INFO, **kwargs) -> logging.Logger:
