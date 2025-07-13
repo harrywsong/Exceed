@@ -108,6 +108,14 @@ class MyBot(commands.Bot):
         self.ready_event.set()
         self.logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
 
+        # --- FIX: Start DiscordHandler's log sending task here ---
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, logger_module.DiscordHandler):
+                handler.start_sending_logs() # Call the new method to start the task
+                self.logger.info("Discord log sending task initiated by on_ready event.")
+                break # Assuming you only have one DiscordHandler configured
+        # --- END FIX ---
+
     async def close(self):
         if self.pool: # Ensure pool is closed when bot closes
             await self.pool.close()
@@ -434,9 +442,9 @@ def get_command_stats():
 
 def run_api_server():
     """
-    별도의 스레드에서 Flask API 서버를 실행합니다.
+    Runs the Flask API server in a separate thread.
     """
-    api_app.run(host='127.0.0.1', port=5001, debug=False) # 프로덕션에서는 debug=False로 설정하십시오!
+    api_app.run(host='127.0.0.1', port=5001, debug=False) # Set debug=False in production!
 
 # Global variable to hold the bot instance so Flask routes can access it
 bot_instance = None
@@ -446,6 +454,7 @@ async def main():
     bot_instance = MyBot()
 
     # --- Logger Setup ---
+    # This initializes the DiscordHandler but does NOT start its sending task yet.
     logger_module._configure_root_handlers(bot=bot_instance, discord_log_channel_id=bot_instance.log_channel_id)
     bot_instance.logger = logger_module.get_logger('기본 로그')
 
@@ -547,4 +556,3 @@ if __name__ == "__main__":
             bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
         else:
             logger_module.root_logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
-
