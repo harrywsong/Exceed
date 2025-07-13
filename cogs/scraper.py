@@ -12,6 +12,9 @@ import traceback  # Import traceback for detailed error logging
 from utils.logger import get_logger
 from utils import config
 
+# Import the is_registered check from clanstats.py
+from cogs.clanstats import is_registered # Assuming clanstats.py is in the 'cogs' directory
+
 
 class TrackerScraper(commands.Cog):
     def __init__(self, bot):
@@ -24,6 +27,7 @@ class TrackerScraper(commands.Cog):
         description="Valorant tracker.gg 매치 링크로 선수 점수 및 매치 포인트를 조회합니다."
     )
     @app_commands.describe(url="tracker.gg의 Valorant 매치 링크를 붙여넣으세요.")
+    @app_commands.check(is_registered) # <--- ADDED THIS LINE
     async def trackerscore(self, interaction: discord.Interaction, url: str):
         await interaction.response.defer(thinking=True)
         self.logger.info(f"{interaction.user} 님이 tracker.gg 매치 점수 조회 시도: {url}")
@@ -164,7 +168,7 @@ class TrackerScraper(commands.Cog):
                     f"{mention_text}"
                     f"{riot_id_display}\n"
                     f"🎭 요원: {p.get('agent', '알 수 없음')} | 🧬 팀: {p.get('team', '알 수 없음')}\n"
-                    f"📈 ACS: {p.get('acs', 0)} ({plus_minus_display}) | 📊 KDA: {p.get('kills', 0)} / {p.get('deaths', 0)} / {p.get('assists', 0)}\n"
+                    f"📈 ACS: {p.get('acs', 0)} | 📊 KDA: {p.get('kills', 0)} / {p.get('deaths', 0)} / {p.get('assists', 0)} ({plus_minus_display})\n"
                     f"🔥 FK/FD: {p.get('fk', 0)} / {p.get('fd', 0)} | 🎯 헤드샷률: {p.get('hs_pct', 0)}%\n"
                     f"🌟 총 포인트: {p.get('total_points', 0)}"
                 )
