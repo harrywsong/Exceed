@@ -333,11 +333,24 @@ class MyBot(commands.Bot):
 
 
     async def on_command_completion(self, context):
-        """Event that fires when a command is successfully completed."""
+        """Event that fires when a traditional prefix command is successfully completed."""
         command_name = context.command.name
         self.command_counts[command_name] = self.command_counts.get(command_name, 0) + 1
         self.total_commands_today += 1
         self.logger.info(f"사용자 {context.author}님이 명령어 '{command_name}'을(를) 사용했습니다.")
+
+    @commands.Cog.listener()
+    async def on_app_command_completion(self, interaction: discord.Interaction, command: discord.app_commands.Command):
+        """Event that fires when a slash command is successfully completed."""
+        command_name = command.name
+        # For slash commands, interaction.user is the user who invoked the command
+        user_name = interaction.user.display_name if interaction.user else "Unknown User"
+        user_id = interaction.user.id if interaction.user else "Unknown ID"
+
+        self.command_counts[command_name] = self.command_counts.get(command_name, 0) + 1
+        self.total_commands_today += 1
+        self.logger.info(f"사용자 {user_name} ({user_id})님이 슬래시 명령어 '/{command_name}'을(를) 사용했습니다.")
+
 
     async def on_command_error(self, context, error):
         """Global command error handler."""
