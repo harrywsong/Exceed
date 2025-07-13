@@ -1,7 +1,8 @@
 import os
-import json
 from pathlib import Path
 from dotenv import load_dotenv
+import re
+from collections import defaultdict
 
 load_dotenv()
 
@@ -46,17 +47,32 @@ MEMBER_CHAT_CHANNEL_ID = parse_int("MEMBER_CHAT_CHANNEL_ID")
 
 CLAN_LEADERBOARD_CHANNEL_ID = parse_int("CLAN_LEADERBOARD_CHANNEL_ID")
 
-GUILD_ID=int(os.getenv("GUILD_ID", "0"))
+GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
 AUTO_ROLE_IDS = parse_ids("AUTO_ROLE_IDS")
 
 APPLICANT_ROLE_ID = int(os.getenv("APPLICANT_ROLE_ID", 0))
 GUEST_ROLE_ID = int(os.getenv("GUEST_ROLE_ID", 0))
 
-REACTION_ROLE_MAP_PATH = Path(__file__).parent / "reaction_roles.json"
+# === Build REACTION_ROLE_MAP from env variables ===
+reaction_role_map_raw = {k: v for k, v in os.environ.items() if k.startswith("REACTION_ROLE_")}
 
-try:
-    with REACTION_ROLE_MAP_PATH.open("r", encoding="utf-8") as f:
-        REACTION_ROLE_MAP = json.load(f)
-except Exception as e:
-    raise RuntimeError(f"Failed to load reaction_roles.json: {e}")
+REACTION_ROLE_MAP = defaultdict(dict)
+pattern = re.compile(r"REACTION_ROLE_(\d+)_(.+)")
+
+for env_key, role_id_str in reaction_role_map_raw.items():
+    match = pattern.match(env_key)
+    if not match:
+        continue
+
+    message_id = match.group(1)      # e.g. '1391796467060178984'
+    emoji_key = match.group(2)       # e.g. 'valo_radiant' or '🇼'
+
+    try:
+        role_id = int(role_id_str)
+    except ValueError:
+        continue
+
+    REACTION_ROLE_MAP[message_id][emoji_key] = role_id
+
+REACTION_ROLE_MAP = dict(REACTION_ROLE_MAP)  # convert defaultdict to dict

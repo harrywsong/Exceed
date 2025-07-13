@@ -30,10 +30,23 @@ class ReactionRoles(commands.Cog):
             return
 
         def format_emoji_for_map_key(e):
-            """Formats a discord.Emoji or reaction.emoji into the string key used in reaction_role_map."""
+            """Format the emoji or reaction emoji into the simplified key matching your env vars."""
             if isinstance(e, str):
-                return e
-            return f"<:{e.name}:{e.id}>" if getattr(e, "id", None) else str(e)
+                return e  # raw unicode emoji like '🇼'
+
+            if getattr(e, "id", None):  # Custom emoji
+                # Use a simpler naming consistent with your env vars:
+                # For example, store env keys without <: and > but as 'valo_radiant' or similar,
+                # so you can replace or map them here accordingly.
+
+                # For example, if you keep keys like 'valo_radiant', map here:
+                # return f"{e.name.lower()}"  # or customize based on your env keys
+
+                # If you want to keep them exactly as <:name:id> then you can:
+                return f"{e.name.lower()}"  # assuming env uses lowercase emoji names without <: :>
+            else:
+                # Unicode emoji, return str
+                return str(e)
 
         for message_id, emoji_role_map in self.reaction_role_map.items():
             message = None
@@ -91,7 +104,10 @@ class ReactionRoles(commands.Cog):
         if payload.message_id not in self.reaction_role_map:
             return
 
-        emoji_key = f"<:{payload.emoji.name}:{payload.emoji.id}>" if payload.emoji.id else str(payload.emoji)
+        if payload.emoji.id:
+            emoji_key = payload.emoji.name.lower()  # must match your env key exactly
+        else:
+            emoji_key = str(payload.emoji)
         role_id = self.reaction_role_map[payload.message_id].get(emoji_key)
 
         if not role_id:
