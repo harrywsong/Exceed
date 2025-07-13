@@ -654,7 +654,7 @@ def upload_current_log_on_startup(logger_instance: logging.Logger):
         logger_instance.info("봇 시작 시 현재 log.log 파일 업로드 중...")
         try:
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            drive_file_name = f"startup_log_{timestamp}.log"
+            drive_file_name = f"{timestamp}.log"
 
             upload_to_drive.upload_file(str(log_file_path), drive_file_name)
 
