@@ -7,7 +7,14 @@ from logging.handlers import TimedRotatingFileHandler
 
 BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True, parents=True)
+LOG_DIR.mkdir(exist_ok=True, parents=True)  # Ensure logs directory exists
+
+# Define a global formatter for consistency
+LOGGING_FORMATTER = logging.Formatter(
+    "[%(asctime)s] [%(levelname)-7s] [%(name)s] %(message)s",
+    "%Y-%m-%d %H:%M:%S"
+)
+LOG_FILE_PATH = LOG_DIR / "log.log"  # Use pathlib for path construction
 
 
 class DiscordLogHandler(logging.Handler):
@@ -15,17 +22,17 @@ class DiscordLogHandler(logging.Handler):
         super().__init__()
         self.bot = bot
         self.channel_id = channel_id
-        # Buffer for messages to handle rate limits
         self._message_buffer = []
         self._send_task = None
-        self._buffer_lock = asyncio.Lock()  # Use an asyncio lock for buffer access
+        self._buffer_lock = asyncio.Lock()
 
     def emit(self, record):
+        # Ensure bot is ready before attempting to send logs to Discord
+        if not self.bot or not self.bot.is_ready():
+            return
+
         try:
             msg = self.format(record)
-            # Use asyncio.run_coroutine_threadsafe for thread safety if emit is called from non-async context
-            # Or simply ensure_future if you are sure emit is always called from async loop
-            # For simplicity, sticking to ensure_future as it's common in discord bots
             asyncio.ensure_future(self._add_to_buffer(msg))
         except Exception:
             self.handleError(record)
@@ -42,31 +49,27 @@ class DiscordLogHandler(logging.Handler):
                 return
 
             if self.bot.is_closed() or not self.bot.is_ready():
-                # Bot not ready, keep messages in buffer for next attempt
                 return
 
             channel = self.bot.get_channel(self.channel_id)
             if not channel:
-                # Channel not found, log to console and clear buffer to prevent infinite loop
                 print(
                     f"❌ Discord log channel {self.channel_id} not found. Clearing {len(self._message_buffer)} buffered logs.")
                 self._message_buffer.clear()
                 return
 
-            messages_to_send = self._message_buffer[:]  # Copy buffer
-            self._message_buffer.clear()  # Clear original buffer
+            messages_to_send = self._message_buffer[:]
+            self._message_buffer.clear()
 
             for msg_content in messages_to_send:
                 try:
                     for chunk in self._chunk_message(msg_content, 1900):
                         await channel.send(f"```{chunk}```")
-                        await asyncio.sleep(0.7)  # Small delay to respect Discord rate limits
+                        await asyncio.sleep(0.7)
                 except discord.HTTPException as e:
                     print(f"❌ Discord HTTP error sending log chunk: {e}")
-                    # Optionally re-add to buffer or log to file if Discord fails
                 except Exception as e:
                     print(f"❌ Failed to send log to Discord channel: {e}")
-                    # Optionally re-add to buffer or log to file if Discord fails
 
     def _chunk_message(self, msg, max_length):
         lines = msg.splitlines(keepends=True)
@@ -85,32 +88,28 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    # --- IMPORTANT: Do NOT clear all handlers indiscriminately ---
+    # --- IMPORTANT: Do NOT clear all handlers indiscriminately from named loggers ---
+    # The commented out line below is the source of many issues.
     # if logger.hasHandlers():
     #     logger.handlers.clear()
 
-    formatter = logging.Formatter(
-        "[%(asctime)s] [%(levelname)-7s] [%(name)s] %(message)s",  # Added -7s for consistent spacing
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    # --- Console handler: Add to THIS specific logger if not already present ---
-    # This ensures each named logger (e.g., "기본 로그", "환영-인사") has its own console output
+    # --- Add Console Handler to this specific named logger (if not present) ---
+    # This ensures that messages sent directly to 'logger' (e.g., '기본 로그')
+    # will appear in the console.
     if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
+        console_handler.setFormatter(LOGGING_FORMATTER)
         logger.addHandler(console_handler)
 
-    # --- File handler: Add to the ROOT logger if not already present ---
-    # This ensures ALL logs (including discord.py's) go to log.log
+    # --- Configure the ROOT logger's handlers only ONCE ---
+    # This is crucial for ensuring all logs (including discord.py's) go to the file.
     root_logger = logging.getLogger()
-    file_path = LOG_DIR / "log.log"
 
     # Check if a TimedRotatingFileHandler for this specific file path is already attached to the root logger
-    if not any(
-            isinstance(h, TimedRotatingFileHandler) and h.baseFilename == str(file_path) for h in root_logger.handlers):
+    if not any(isinstance(h, TimedRotatingFileHandler) and h.baseFilename == str(LOG_FILE_PATH) for h in
+               root_logger.handlers):
         file_handler = TimedRotatingFileHandler(
-            filename=str(file_path),
+            filename=str(LOG_FILE_PATH),
             when="midnight",
             interval=1,
             backupCount=30,
@@ -118,19 +117,21 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
             utc=False,
         )
         file_handler.suffix = "%Y-%m-%d"
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)  # <--- Added to ROOT logger
+        file_handler.setFormatter(LOGGING_FORMATTER)
+        root_logger.addHandler(file_handler)  # <--- Add to ROOT logger
 
-    # --- Discord handler: Add to THIS specific logger if not already present ---
-    # If you want all logs to go to Discord, add this to root_logger too
+    # --- Discord handler: Add to the ROOT logger if bot instance is provided and not already present ---
+    # This ensures ALL logs (at the root logger's level or higher) are sent to Discord.
     if bot and discord_log_channel_id:
-        if not any(isinstance(h, DiscordLogHandler) for h in logger.handlers):
+        if not any(isinstance(h, DiscordLogHandler) for h in root_logger.handlers):
             discord_handler = DiscordLogHandler(bot, discord_log_channel_id)
-            discord_handler.setFormatter(formatter)
-            logger.addHandler(discord_handler)
+            # Set a default level for Discord handler to avoid spam, e.g., WARNING or ERROR
+            discord_handler.setLevel(logging.WARNING)
+            discord_handler.setFormatter(LOGGING_FORMATTER)
+            root_logger.addHandler(discord_handler)
 
-    # Ensure this logger propagates messages up to the root logger
-    # This is crucial for the root logger's file handler to capture messages from this logger.
+    # Ensure this named logger propagates messages up to the root logger
+    # This is essential for the root_logger's file handler to capture messages from this logger.
     logger.propagate = True
 
     return logger
