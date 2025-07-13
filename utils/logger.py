@@ -50,7 +50,15 @@ class DiscordHandler(logging.Handler):
         # Format the record immediately
         log_entry = self.format(record)
         # Use asyncio.ensure_future to add to buffer, handling async from sync context
-        asyncio.ensure_future(self._add_to_buffer(log_entry))
+        # This is safe because it schedules the coroutine on the running event loop.
+        # If no loop is running yet, it will be scheduled once the loop starts.
+        try:
+            asyncio.ensure_future(self._add_to_buffer(log_entry))
+        except RuntimeError:
+            # This can happen if emit is called before the event loop starts
+            # or after it has closed. In such cases, log to stderr as a fallback.
+            print(f"DEBUG: No running event loop for DiscordHandler. Buffering for later: {log_entry}", file=sys.stderr)
+            self._message_buffer.append(log_entry) # Manually add to buffer if loop not ready
 
     async def _add_to_buffer(self, msg):
         async with self._buffer_lock:
@@ -103,7 +111,7 @@ class DiscordHandler(logging.Handler):
             yield chunk
 
 
-# --- MODIFIED: _configure_root_handlers to add DiscordHandler ---
+# --- MODIFIED: _configure_root_handlers to accept bot and add DiscordHandler ---
 def _configure_root_handlers(bot=None, discord_log_channel_id=None):
     """
     Configures or re-configures the root logger's file, console, and Discord handlers.
@@ -164,9 +172,10 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
     logger.propagate = True
     return logger
 
-# --- MODIFIED: Initial call to _configure_root_handlers in bot.py ---
-# This initial call is now removed from here, as it needs the bot instance.
+# --- IMPORTANT: This initial call is now removed from here, as it needs the bot instance.
 # It will be called from bot.py's main function after bot initialization.
+# _configure_root_handlers() # REMOVE THIS LINE from here
+
 
 # Explicitly set discord.py's logger level (good practice)
 logging.getLogger('discord').setLevel(logging.INFO)

@@ -43,7 +43,7 @@ class MyBot(commands.Bot):
         ]
         self.session = aiohttp.ClientSession()
         self.ready_event = asyncio.Event()
-        self.log_channel_id = 1389739434110484612  # Your actual log channel ID
+        self.log_channel_id = 1389739434110484612
 
     async def setup_hook(self):
         for ext in self.initial_extensions:
