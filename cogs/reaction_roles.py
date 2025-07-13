@@ -11,17 +11,26 @@ from utils.config import REACTION_ROLE_MAP
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.guild_id = config.GUILD_ID
+        self.reaction_role_map = REACTION_ROLE_MAP
 
         self.logger = get_logger(
             "리액션 역할",
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-
-        self.guild_id = config.GUILD_ID
         self.logger.info("ReactionRoles Cog 초기화 완료.")
 
-        self.reaction_role_map = REACTION_ROLE_MAP
+        # 👇 Schedule population after bot is fully ready
+        self.bot.loop.create_task(self.wait_until_ready_then_populate())
+
+    async def wait_until_ready_then_populate(self):
+        await self.bot.wait_until_ready()
+        try:
+            await self.populate_reactions()
+        except Exception as e:
+            self.logger.error(f"❌ ReactionRoles 초기화 중 오류 발생: {e}\n{traceback.format_exc()}")
+
 
     async def populate_reactions(self):
         guild = self.bot.get_guild(self.guild_id)
@@ -219,11 +228,5 @@ class ReactionRoles(commands.Cog):
 
 
 async def setup(bot):
-    try:
-        cog = ReactionRoles(bot)
-        await bot.add_cog(cog)
-        await cog.populate_reactions()
-    except Exception as e:
-        import traceback
-        print(f"❌ ReactionRoles cog failed to load: {e}")
-        traceback.print_exc()
+    cog = ReactionRoles(bot)
+    await bot.add_cog(cog)
