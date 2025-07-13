@@ -9,6 +9,29 @@ from utils.logger import get_logger
 from utils import config
 
 
+# Define the custom check function
+async def is_registered(interaction: discord.Interaction) -> bool:
+    """Checks if the user interacting with the bot is registered in the database."""
+    bot = interaction.client  # Access the bot instance
+    if not hasattr(bot, 'pool') or bot.pool is None:
+        raise commands.NoPrivateMessage(
+            "Database pool is not initialized. Cannot check registration.")  # Or a more appropriate error
+
+    async with bot.pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT discord_id FROM registrations WHERE discord_id = $1",
+            interaction.user.id
+        )
+        if row:
+            return True
+        else:
+            await interaction.response.send_message(
+                "❌ **오류:** 이 명령어를 사용하려면 먼저 라이엇 ID를 등록해야 합니다. `/연동 <라이엇ID>` 명령어를 사용해주세요. (예: `/연동 Name#Tag`)",
+                ephemeral=True
+            )
+            return False
+
+
 class ValorantStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -20,6 +43,7 @@ class ValorantStats(commands.Cog):
         self.logger.info("ValorantStats cog initialized.")
 
     async def save_match_and_clan(self, data: dict, match_uuid: Optional[str] = None):
+        # ... (rest of your save_match_and_clan function remains the same)
         if not hasattr(self.bot, 'pool') or self.bot.pool is None:
             self.logger.error("Database pool is not initialized on the bot. Cannot save match data.")
             return
@@ -58,16 +82,14 @@ class ValorantStats(commands.Cog):
                         discord_id = riot_to_discord.get(riot_id)
 
                         try:
-                            # Safely convert numeric fields to appropriate types
                             acs = float(p.get("acs", 0))
                             score = int(p.get("score", 0))
                             kills = int(p.get("kills", 0))
                             deaths = int(p.get("deaths", 0))
                             assists = int(p.get("assists", 0))
 
-                            # Special handling for plus_minus: remove '+' before converting to int
                             plus_minus_str = p.get("plus_minus", "0")
-                            plus_minus = int(plus_minus_str.replace('+', ''))  # Remove '+' if present
+                            plus_minus = int(plus_minus_str.replace('+', ''))
 
                             kd_ratio = float(p.get("kd_ratio", 0.0))
                             dda = float(p.get("dda", 0.0))
@@ -115,7 +137,7 @@ class ValorantStats(commands.Cog):
                                     total_points = EXCLUDED.total_points
                                 """,
                                 match_id, discord_id, riot_id, riot_id, p.get("agent"), p.get("team"), p.get("tier"),
-                                acs, score, kills, deaths, assists, plus_minus,  # plus_minus is now an int
+                                acs, score, kills, deaths, assists, plus_minus,
                                 kd_ratio, dda, adr, hs_pct, kast_pct, fk,
                                 fd, mk, acs_bonus, round_win_points, total_points
                             )
@@ -144,6 +166,7 @@ class ValorantStats(commands.Cog):
 
     @app_commands.command(name="통계", description="최근 매치 요약 통계를 확인합니다.")
     @app_commands.describe(count="최근 포함할 경기 수 (기본값 10, 최대 50)")
+    @app_commands.check(is_registered)  # Apply the check here!
     async def mystats(self, interaction: discord.Interaction, count: Optional[int] = 10):
         await interaction.response.defer(ephemeral=True)
 
