@@ -617,7 +617,7 @@ class MyBot(commands.Bot):
 
 # --- Crash Log Handling ---
 CRASH_LOG_DIR = pathlib.Path(__file__).parent.parent / "logs"
-CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"
+CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"  # This captures sys.stderr output
 CRASH_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Store original stderr
@@ -626,21 +626,38 @@ original_stderr = sys.stderr
 
 def check_crash_log_and_handle(logger_instance: logging.Logger):
     """
-    Checks for a crash log file and attempts to upload it to Google Drive.
+    Checks for crash log files (sys.stderr output and main log renamed on crash)
+    and attempts to upload them to Google Drive.
     This runs in a separate thread/executor to avoid blocking the bot's main loop.
     """
-    if CRASH_LOG_FILE.exists():
-        logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
+    # 1. Handle the sys.stderr crash log (crash_log.txt)
+    if CRASH_LOG_FILE.exists() and CRASH_LOG_FILE.stat().st_size > 0:  # Check if it's not empty
+        logger_instance.warning("⚠️ 이전 봇 충돌 (stderr) 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
         try:
-            # Call upload_file with the new signature
+            # Use datetime.datetime.now()
             upload_to_drive.upload_file(str(CRASH_LOG_FILE),
-                                        f"crash_log_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
-            # The upload_file function already handles deletion upon successful upload
-            logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
+                                        f"stderr_crash_log_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
+            logger_instance.info("✅ stderr 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
         except Exception as e:
-            logger_instance.error(f"❌ 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
+            logger_instance.error(f"❌ stderr 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
     else:
-        logger_instance.info("변경 확인 후 처리할 보류 중인 충돌 로그 파일이 없습니다.")
+        logger_instance.info("처리할 보류 중인 stderr 충돌 로그 파일이 없습니다.")
+
+    # 2. Handle main log files renamed on crash (log.log.CRASH-YYYY-MM-DD_HH-MM-SS)
+    log_dir = logger_module.LOG_FILE_PATH.parent
+    for filename in os.listdir(log_dir):
+        if filename.startswith("log.log.CRASH-") and filename.endswith(".log"):
+            crash_log_path = log_dir / filename
+            if crash_log_path.exists() and crash_log_path.stat().st_size > 0:  # Check if it's not empty
+                logger_instance.warning(f"⚠️ 이전 메인 로그 충돌 파일 '{filename}'이(가) 감지되었습니다. Google Drive에 업로드 중...")
+                try:
+                    # Upload with its original crash-specific name
+                    upload_to_drive.upload_file(str(crash_log_path), filename)
+                    logger_instance.info(f"✅ 메인 로그 충돌 파일 '{filename}'이(가) Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
+                except Exception as e:
+                    logger_instance.error(f"❌ 메인 로그 충돌 파일 '{filename}' 업로드 또는 삭제 실패: {e}", exc_info=True)
+            else:
+                logger_instance.info(f"비어 있거나 유효하지 않은 메인 로그 충돌 파일 '{filename}'을(를) 건너뜁니다.")
 
 
 # --- End Crash Log Handling ---
@@ -655,6 +672,10 @@ def upload_daily_logs_on_startup(logger_instance: logging.Logger):
 
     logger_instance.info("시작 시 이전 일일 로그 파일 확인 및 업로드 중...")
     for filename in os.listdir(log_dir):
+        # Exclude current log.log, crash_log.txt, and any log.log.CRASH-* files (as they are handled separately)
+        if filename == "log.log" or filename == "crash_log.txt" or filename.startswith("log.log.CRASH-"):
+            continue
+
         if filename.startswith("log.log.") and filename.endswith(".log"):
             # Extract date from filename (e.g., "log.log.2023-10-26")
             file_date_str = filename.replace("log.log.", "").replace(".log", "")
