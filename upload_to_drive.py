@@ -6,9 +6,15 @@ from google.auth.transport.requests import Request
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_PICKLE = 'token.pickle'
+FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # ✅ your target folder
 
 def upload_log_to_drive(file_path):
     try:
+        if not os.path.exists(file_path):
+            print(f"❌ Log file not found: {file_path}")
+            return None
+
+        # Load credentials
         creds = None
         if os.path.exists(TOKEN_PICKLE):
             with open(TOKEN_PICKLE, 'rb') as token:
@@ -18,16 +24,17 @@ def upload_log_to_drive(file_path):
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                raise Exception("Credentials are invalid or missing. Run get_token.py again.")
+                raise Exception("Invalid or missing credentials. Run get_token.py again.")
 
+        # Build Drive API service
         service = build('drive', 'v3', credentials=creds)
 
-        if not os.path.exists(file_path):
-            print(f"❌ Log file {file_path} does not exist.")
-            return
-
+        # File metadata with folder
         file_name = os.path.basename(file_path)
-        file_metadata = {'name': file_name}
+        file_metadata = {
+            'name': file_name,
+            'parents': [FOLDER_ID]
+        }
 
         media = MediaFileUpload(file_path, mimetype='text/plain')
 
@@ -37,8 +44,11 @@ def upload_log_to_drive(file_path):
             fields='id'
         ).execute()
 
-        print(f"✅ Uploaded {file_path} to Google Drive with ID: {uploaded_file.get('id')}")
+        file_id = uploaded_file.get('id')
+        print(f"✅ Uploaded {file_path} to Google Drive with ID: {file_id}")
+        print(f"🔗 File link: https://drive.google.com/file/d/{file_id}/view")
+        return file_id
 
     except Exception as e:
         print(f"❌ Failed to upload log to Google Drive: {e}")
-        raise
+        return None
