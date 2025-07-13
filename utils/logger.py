@@ -4,7 +4,7 @@ import sys
 import pathlib
 import asyncio
 from logging.handlers import TimedRotatingFileHandler
-import discord # Add this import here for DiscordLogHandler's HTTPException
+import discord # Make sure discord is imported for HTTPException handling
 
 BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()
 LOG_DIR = BASE_DIR / "logs"
@@ -67,7 +67,7 @@ class DiscordLogHandler(logging.Handler):
                     for chunk in self._chunk_message(msg_content, 1900):
                         await channel.send(f"```{chunk}```")
                         await asyncio.sleep(0.7)
-                except discord.HTTPException as e: # discord is now imported globally
+                except discord.HTTPException as e:
                     print(f"❌ Discord HTTP error sending log chunk: {e}")
                 except Exception as e:
                     print(f"❌ Failed to send log to Discord channel: {e}")
@@ -84,62 +84,52 @@ class DiscordLogHandler(logging.Handler):
         if chunk:
             yield chunk
 
-# New function to remove and re-add the file handler
-def reconfigure_file_handler():
-    root_logger = logging.getLogger()
-    # Remove existing TimedRotatingFileHandler instance if it exists
-    for handler in root_logger.handlers[:]: # Iterate over a copy to safely modify the list
-        if isinstance(handler, TimedRotatingFileHandler) and handler.baseFilename == str(LOG_FILE_PATH):
-            root_logger.removeHandler(handler)
-            handler.close() # Crucial: Close the file handle
-            break # Assuming only one such handler
-
-    # Add a new TimedRotatingFileHandler
-    file_handler = TimedRotatingFileHandler(
-        filename=str(LOG_FILE_PATH),
-        when="midnight",
-        interval=1,
-        backupCount=30,
-        encoding='utf-8',
-        utc=False,
-        delay=False # Try to open the file immediately, not on first emit
-    )
-    file_handler.suffix = "%Y-%m-%d"
-    file_handler.setFormatter(LOGGING_FORMATTER)
-    root_logger.addHandler(file_handler)
-
 
 def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=None) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO) # Ensure root logger's level is set
+    root_logger.setLevel(logging.INFO)
 
-    # Add Console Handler to the ROOT logger (if not present)
+    # --- Add Console Handler to the ROOT logger (if not present) ---
     if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(LOGGING_FORMATTER)
         root_logger.addHandler(console_handler)
 
-    # Configure the ROOT logger's TimedRotatingFileHandler only ONCE during initial setup
-    if not any(isinstance(h, TimedRotatingFileHandler) for h in root_logger.handlers):
-        reconfigure_file_handler() # Use the new function for initial file handler setup
+    # --- Configure the ROOT logger's TimedRotatingFileHandler only ONCE ---
+    if not any(isinstance(h, TimedRotatingFileHandler) and h.baseFilename == str(LOG_FILE_PATH) for h in
+               root_logger.handlers):
+        file_handler = TimedRotatingFileHandler(
+            filename=str(LOG_FILE_PATH),
+            when="midnight",
+            interval=1,
+            backupCount=30,
+            encoding='utf-8',
+            utc=False,
+            delay=False,
+            # ✨ NEW: Force line buffering for more immediate writes
+            # buffering=1 means flush after every newline.
+            # buffering=0 would mean unbuffered, which can be very slow.
+            buffering=1
+        )
+        file_handler.suffix = "%Y-%m-%d"
+        file_handler.setFormatter(LOGGING_FORMATTER)
+        root_logger.addHandler(file_handler)
 
-    # Discord handler: Add to the ROOT logger if bot instance is provided and not already present
+    # --- Discord handler: Add to the ROOT logger if bot instance is provided and not already present ---
     if bot and discord_log_channel_id:
         if not any(isinstance(h, DiscordLogHandler) for h in root_logger.handlers):
             discord_handler = DiscordLogHandler(bot, discord_log_channel_id)
-            # ⭐ CHANGE THIS LINE FOR TESTING ⭐
-            discord_handler.setLevel(logging.INFO) # Temporarily changed from logging.WARNING to INFO
+            discord_handler.setLevel(logging.WARNING)
             discord_handler.setFormatter(LOGGING_FORMATTER)
             root_logger.addHandler(discord_handler)
 
-    # Ensure this named logger propagates messages up to the root logger
     logger.propagate = True
 
     return logger
 
-# Global Logging Configuration (Applies to all loggers, including discord.py's)
+# --- Global Logging Configuration ---
 logging.getLogger().setLevel(logging.INFO)
 logging.getLogger('discord').setLevel(logging.INFO)
