@@ -1,4 +1,4 @@
-# /home/hws/Exceed/bot.py
+# /home/hws/Exceed/bot.py (relevant section in main function)
 
 import discord
 from discord.ext import commands, tasks
@@ -17,8 +17,7 @@ import sys
 import pathlib
 
 # Import your custom logger module
-import utils.logger as logger_module
-
+import utils.logger as logger_module # Keep this import
 
 # --- Discord Bot Setup ---
 class MyBot(commands.Bot):
@@ -43,7 +42,7 @@ class MyBot(commands.Bot):
         ]
         self.session = aiohttp.ClientSession()
         self.ready_event = asyncio.Event()
-        self.log_channel_id = 1389739434110484612
+        self.log_channel_id = 1389739434110484612 # Your Discord log channel ID
 
     async def setup_hook(self):
         for ext in self.initial_extensions:
@@ -59,63 +58,9 @@ class MyBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"Failed to sync slash commands: {e}", exc_info=True)
 
-        # Ensure these views are imported if they are not already.
-        # Assuming HelpView and CloseTicketView are defined below or imported from elsewhere.
-        # If they are in a cog that is loaded, the cog's on_ready will add them.
-        # If they are only defined globally in bot.py, they need to be added here for persistence.
-        # Based on your previous logs, these were handled by the TicketSystem cog's on_ready.
-        # If you removed those lines from the cog, you might need to add them here.
-        # However, your provided ticket.py already handles them in its on_ready.
-        # So, the following lines might be redundant if the cog correctly adds them.
-        # For safety, if you confirmed the cog adds them, these could be removed.
-        # If they're generic views not tied to a specific cog, keep them here.
-
-        # Checking your ticket.py, it appears to add HelpView and CloseTicketView
-        # within its own on_ready. If that's the case, these lines below are
-        # likely redundant and can be removed to avoid duplicate registrations.
-        # For now, I'll keep them as they don't cause harm if views are unique.
-        # But consider removing if the cog truly handles their full persistent setup.
-        # This setup_hook handles views that are *not* tied to a specific cog's lifecycle.
-
-        # If HelpView and CloseTicketView are meant to be tied to the TicketSystem cog,
-        # they should ideally be added as persistent views within the TicketSystem cog's
-        # own `on_ready` or `setup_hook` method.
-        # Based on your `ticket.py` this is already happening:
-        # `self.bot.add_view(HelpView(self.bot, self.logger))`
-        # `self.bot.add_view(CloseTicketView(self.bot, self.logger))`
-        # Therefore, these lines below in bot.py's setup_hook are redundant for these specific views
-        # and can be removed to rely solely on the cog's setup for its views.
-
-        # For simplicity and to avoid confusion, I'm going to assume HelpView and CloseTicketView
-        # are indeed handled by the `TicketSystem` cog and remove these lines from `bot.py`'s `setup_hook`.
-        # If you have other generic persistent views that don't belong to any cog, they would go here.
-        # self.add_view(HelpView(self))
-        # self.add_view(CloseTicketView(self))
-        # self.logger.info("Persistent view 등록 완료") # This log is now handled by the cog.
-
     async def on_ready(self):
         self.ready_event.set()
         self.logger.info(f"{self.user} (ID: {self.user.id}) 로 로그인 성공")
-
-        # The setup of persistent views for TicketSystem and InterviewRequestCog
-        # happens within their respective cogs' on_ready methods.
-        # Therefore, these explicit calls in bot.py are no longer needed
-        # and were causing AttributeError due to method name mismatches.
-
-        # ticket_cog = self.get_cog('TicketSystem')
-        # if ticket_cog:
-        #     # The log below will now correctly appear from the cog itself,
-        #     # so this line can also be removed if it's a duplicate.
-        #     self.logger.info("[티켓 시스템] Persistent views (HelpView, CloseTicketView) 등록 완료.")
-
-        # interview_cog = self.get_cog('InterviewRequestCog')
-        # if interview_cog:
-        #    # This method 'post_interview_message' does not exist in InterviewRequestCog.
-        #    # The correct method for posting the message is 'send_interview_request_message'
-        #    # and it is already called within InterviewRequestCog's own on_ready.
-        #    # So, this line is removed.
-        #    # await interview_cog.post_interview_message()
-        #    self.logger.info("[클랜 인터뷰] 인터뷰 요청 메시지 및 영구 뷰 설정 완료.") # This log is also redundant
 
     async def close(self):
         await self.session.close()
@@ -132,33 +77,24 @@ class MyBot(commands.Bot):
         self.logger.error(f"Error in command {ctx.command}: {error}", exc_info=True)
         await ctx.send(f"An error occurred: {error}")
 
-
-# --- Views (If not part of a cog and needed globally) ---
-# If these views are only used by the TicketSystem cog and are added by the cog,
-# you don't need them defined globally here.
-# Assuming they might be used elsewhere or need global registration if not handled by cog.
-# Based on your ticket.py, these classes are imported and passed to the cog,
-# and the cog handles `bot.add_view`. So, these global definitions are likely not needed
-# unless you intend to add them directly from bot.py's setup_hook as well (which would be redundant).
-# For now, I'll keep them as placeholders, but be aware they might be removable if fully cog-managed.
-
-# from views.help_view import HelpView # assuming path 'views/help_view.py'
-# from views.ticket_views import CloseTicketView # assuming path 'views/ticket_views.py'
-
-# If HelpView and CloseTicketView are *only* defined in a separate file like views/ticket_views.py
-# and are handled by the TicketSystem cog's on_ready, then their class definitions
-# do *not* need to be here. I'm removing the placeholder `pass` definitions.
-# Ensure they are properly imported in relevant files if they're not global.
-
-
 async def main():
     bot = MyBot()
-    bot.logger = logger_module.get_logger('기본 로그', bot=bot, discord_log_channel_id=bot.log_channel_id)
+
+    # --- THIS IS THE CRUCIAL PART ---
+    # Call _configure_root_handlers to set up all loggers, including DiscordHandler,
+    # passing the bot instance and channel ID. This needs to happen BEFORE any cogs are loaded
+    # or the bot tries to log to Discord.
+    logger_module._configure_root_handlers(bot=bot, discord_log_channel_id=bot.log_channel_id)
+    bot.logger = logger_module.get_logger('기본 로그') # Get the named logger AFTER root handlers are set
 
     log_file_path = pathlib.Path(__file__).parent / "logs" / "log.log"
     if log_file_path.exists() and log_file_path.stat().st_size > 0:
         bot.logger.info("Found a log.log file from previous session (likely a crash or abrupt exit).")
 
+        # The flushing logic here is good for ensuring data is written before renaming.
+        # However, _configure_root_handlers now handles closing/removing existing handlers,
+        # so explicit `handler.flush()` for all might be redundant if _configure_root_handlers is robust.
+        # But for crash recovery, it's safer to leave this explicit flush.
         for handler in logging.getLogger().handlers:
             if hasattr(handler, 'flush'):
                 handler.flush()
@@ -171,15 +107,17 @@ async def main():
             os.rename(log_file_path, crash_log_path)
             bot.logger.info(f"Renamed crashed log to {crash_log_path} for processing.")
 
-            logger_module._configure_root_handlers()
+            # --- Re-configure handlers *after* renaming the old log file ---
+            # IMPORTANT: Pass bot and discord_log_channel_id again here!
+            logger_module._configure_root_handlers(bot=bot, discord_log_channel_id=bot.log_channel_id)
             bot.logger.info("Re-initialized log handlers after crash log rename.")
 
         except OSError as e:
             bot.logger.error(f"Error renaming crashed log file '{log_file_path}': {e}")
-            logger_module._configure_root_handlers()
+            logger_module._configure_root_handlers(bot=bot, discord_log_channel_id=bot.log_channel_id) # Also here!
         except Exception as e:
             bot.logger.error(f"An unexpected error occurred during crash log handling: {e}", exc_info=True)
-            logger_module._configure_root_handlers()
+            logger_module._configure_root_handlers(bot=bot, discord_log_channel_id=bot.log_channel_id) # And here!
 
         old_log_files_after_rename = sorted(list(log_file_path.parent.glob('log.log.CRASH-*')))
 
