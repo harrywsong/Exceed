@@ -19,7 +19,7 @@ import subprocess # For git pull command
 # --- End Flask API Imports ---
 
 import utils.config as config
-import utils.logger as logger_module # This module contains get_logger
+import utils.logger as logger_module # This module contains get_logger and _configure_root_handlers
 from utils import upload_to_drive
 
 # --- Database Functions (Moved from utils/database.py) ---
@@ -233,18 +233,15 @@ class MyBot(commands.Bot):
         # Configure the main logger using get_logger from utils.logger
         # This runs after the bot is ready and has access to self (the bot instance)
         try:
-            # Ensure get_logger is accessible and correctly configured
-            if hasattr(logger_module, 'get_logger'):
-                # Re-assign self.logger to the one configured by logger_module,
-                # which will now include the DiscordHandler as the bot's loop is active.
-                self.logger = logger_module.get_logger(
-                    '기본 로그',
-                    bot=self, # Pass the bot instance here as its loop is now available
-                    discord_log_channel_id=config.LOG_CHANNEL_ID
-                )
-                self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
-            else:
-                self.logger.warning("⚠️ 'get_logger' 함수가 'utils.logger' 모듈에 없습니다. 기본 로거를 사용합니다.")
+            # Call _configure_root_handlers to set up all handlers, including DiscordHandler
+            # Pass the bot instance here as its loop is now available for DiscordHandler
+            logger_module._configure_root_handlers(
+                bot=self,
+                discord_log_channel_id=config.LOG_CHANNEL_ID
+            )
+            # Re-assign self.logger to the root logger which now has all handlers
+            self.logger = logging.getLogger('기본 로그') # Get the root logger instance
+            self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
         except Exception as e:
             self.logger.critical(f"❌ 로거 설정 중 심각한 오류 발생: {e}", exc_info=True)
             # Continue with basic logger if configuration fails, but log it.
@@ -383,8 +380,9 @@ async def main():
     global bot_instance # Declare global to assign to it
     bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents)
 
-    # For very early startup, before setup_hook runs, use a basic logger.
+    # For very early startup, before setup_hook runs, configure a basic console logger.
     # The full logger configuration with DiscordHandler will happen in setup_hook.
+    # This ensures logging is available for critical errors even before the bot is ready.
     logging.basicConfig(level=logging.INFO,
                         format='[%(asctime)s] [%(levelname)s] [%(name)s] {message}',
                         datefmt='%Y-%m-%d %H:%M:%S',
