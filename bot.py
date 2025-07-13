@@ -262,11 +262,7 @@ class MyBot(commands.Bot):
         ]
         for ext in initial_extensions:
             try:
-                if ext == 'cogs.autoguest':
-                    # AutoRoleCog requires role_ids during initialization
-                    await self.load_extension(ext, extras={'role_ids': config.AUTO_ROLE_IDS})
-                else:
-                    await self.load_extension(ext)
+                await self.load_extension(ext)
                 self.logger.info(f"✅ Cog 로드됨: {ext}")
             except commands.ExtensionAlreadyLoaded:
                 self.logger.warning(f"⚠️ Cog '{ext}'는 이미 로드되어 있습니다. 건너_.")
