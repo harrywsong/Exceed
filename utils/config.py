@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -52,8 +53,10 @@ AUTO_ROLE_IDS = parse_ids("AUTO_ROLE_IDS")
 APPLICANT_ROLE_ID = int(os.getenv("APPLICANT_ROLE_ID", 0))
 GUEST_ROLE_ID = int(os.getenv("GUEST_ROLE_ID", 0))
 
+REACTION_ROLE_MAP_PATH = Path(__file__).parent / "reaction_roles.json"
+
 try:
-    raw_map = json.loads(os.getenv("REACTION_ROLE_MAP_JSON"))
-    REACTION_ROLE_MAP = {int(k): {emj: int(rid) for emj, rid in v.items()} for k, v in raw_map.items()}
+    with REACTION_ROLE_MAP_PATH.open("r", encoding="utf-8") as f:
+        REACTION_ROLE_MAP = json.load(f)
 except Exception as e:
-    raise RuntimeError(f"Failed to parse REACTION_ROLE_MAP_JSON: {e}")
+    raise RuntimeError(f"Failed to load reaction_roles.json: {e}")
