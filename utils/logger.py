@@ -4,7 +4,7 @@ import logging
 import sys
 import pathlib
 import asyncio
-from logging.handlers import TimedRotatingFileHandler  # Reverted to TimedRotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 import discord  # Ensure discord is imported
 
 LOG_FILE_PATH = pathlib.Path(__file__).parent.parent / "logs" / "log.log"
@@ -34,7 +34,7 @@ class DiscordHandler(logging.Handler):
     buffering messages until the bot is ready.
     """
 
-    def __init__(self, bot, channel_id, level=logging.INFO):  # Added level parameter
+    def __init__(self, bot, channel_id):
         super().__init__()
         self.bot = bot
         self.channel_id = channel_id
@@ -43,9 +43,8 @@ class DiscordHandler(logging.Handler):
         self._buffer_lock = asyncio.Lock()
         self.stopped = False  # Flag to indicate if the handler is closing
 
-        self.setLevel(level)  # Set level based on parameter, default INFO
-        print(f"DEBUG: DiscordHandler initialized for channel {channel_id} with level {logging.getLevelName(level)}.",
-              file=sys.stderr)
+        # The level for this specific handler is set in _configure_root_handlers
+        # self.setLevel(logging.WARNING) # This line is now effectively managed externally
 
     def emit(self, record):
         log_entry = self.format(record)
@@ -54,9 +53,9 @@ class DiscordHandler(logging.Handler):
             return
         try:
             # If bot loop is running, use run_coroutine_threadsafe for thread safety
+            # This ensures logs from other threads (like Flask API) are handled
             if self.bot and self.bot.loop and not self.bot.loop.is_closed():
                 asyncio.run_coroutine_threadsafe(self._add_to_buffer(log_entry), self.bot.loop)
-                # print(f"DEBUG: Log scheduled to buffer: {log_entry}", file=sys.stderr) # Too verbose for normal use
             else:
                 # Fallback for very early startup before bot.loop is active
                 self._message_buffer.append(log_entry)
@@ -123,7 +122,7 @@ class DiscordHandler(logging.Handler):
                             f"ERROR: DiscordHandler: 로그 채널 ID {self.channel_id}을(를) 찾을 수 없습니다. 버퍼링된 로그 {len(messages_to_send)}개 지움.",
                             file=sys.stderr)
                         # Clear buffer if we can't find channel, to prevent endless loop of unsent messages
-                        async with self._buffer_lock:
+                        async with self._buffer_lock:  # Re-acquire lock to clear the buffer safely
                             self._message_buffer.clear()
                         break  # Exit the loop if channel is permanently unavailable
 
@@ -144,7 +143,7 @@ class DiscordHandler(logging.Handler):
                         f"ERROR: DiscordHandler: 채널 {self.channel_id}에 메시지를 보낼 권한이 없습니다. 버퍼링된 로그 {len(messages_to_send)}개 지움.",
                         file=sys.stderr)
                     # Clear buffer if we can't send, to prevent endless loop of unsent messages
-                    async with self._buffer_lock:
+                    async with self._buffer_lock:  # Re-acquire lock to clear the buffer safely
                         self._message_buffer.clear()
                     break  # Exit the loop if permissions are an issue
                 except discord.HTTPException as e:
@@ -176,10 +175,10 @@ class DiscordHandler(logging.Handler):
     def start_sending_logs(self):
         """
         Starts the asynchronous task to send buffered logs to Discord.
-        This should be called once the bot is ready and its loop is running.
+        This should be called once the bot is ready.
         """
         if self._send_task is None or self._send_task.done():
-            self._send_task = self.bot.loop.create_task(self._send_buffered_logs())
+            self._send_task = asyncio.create_task(self._send_buffered_logs())
             print("DEBUG: DiscordHandler: 로그 전송 작업이 생성되고 시작되었습니다.")  # Debug print
 
     def close(self):
@@ -196,7 +195,7 @@ class DiscordHandler(logging.Handler):
 
 
 def _configure_root_handlers(bot=None, discord_log_channel_id=None, console_level=logging.INFO, file_level=logging.INFO,
-                             discord_level=logging.DEBUG):  # Changed discord_level to DEBUG
+                             discord_level=logging.INFO):  # Changed discord_level to INFO
     """
     Configures the root logger with file, console, and optional Discord handlers.
     This function should be called once after the bot is initialized.
@@ -242,10 +241,12 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None, console_leve
 
     # Discord Handler (only if bot and channel_id are provided)
     if bot and discord_log_channel_id:
-        discord_handler = DiscordHandler(bot, discord_log_channel_id, level=discord_level)  # Pass level
+        discord_handler = DiscordHandler(bot, discord_log_channel_id)
         discord_handler.setFormatter(LOGGING_FORMATTER)
+        discord_handler.setLevel(discord_level)  # Set level for discord handler
         root_logger.addHandler(discord_handler)
-        # The start_sending_logs() call is moved to bot.py's on_ready event.
+        # Removed discord_handler.start_sending_logs() from here.
+        # It will now be explicitly called from bot.py's on_ready event.
 
 
 def get_logger(name: str, level=logging.INFO, **kwargs) -> logging.Logger:
