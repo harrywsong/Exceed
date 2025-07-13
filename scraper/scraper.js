@@ -14,7 +14,7 @@ if (!url || !url.startsWith("http")) {
   const browser = await puppeteer.launch({
     headless: true,
     // executablePath: '/usr/bin/google-chrome',
-    executablePath: 'usr/bin/chromium-browser',
+    executablePath: '/usr/bin/chromium-browser',
     defaultViewport: null,
     args: ["--no-sandbox", "--disable-setuid-sandbox"]
   });
