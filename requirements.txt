@@ -6,4 +6,5 @@ google-api-python-client~=2.176.0
 google~=3.0.0
 protobuf~=6.31.1
 aiohttp~=3.12.13
+Flask~=3.1.1
 google-auth-oauthlib~=1.2.2
