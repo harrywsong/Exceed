@@ -275,7 +275,7 @@ def get_bot_config():
 
 
 @api_app.route('/api/reaction_roles', methods=['GET'])
-def get_reaction_roles(): # Changed to sync function
+async def get_reaction_roles():
     """
     Fetches all reaction role entries from the database.
     """
@@ -288,9 +288,11 @@ def get_reaction_roles(): # Changed to sync function
             return jsonify({"status": "error", "error": "ReactionRoles Cog가 로드되지 않았습니다."}), 500
 
         # Run the async database fetch in the bot's event loop
-        entries = asyncio.run_coroutine_threadsafe(
-            reaction_roles_cog.get_all_reaction_role_entries_db(), bot_instance.loop
-        ).result() # .result() will block until the future is done and return its result
+        entries = await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                reaction_roles_cog.get_all_reaction_role_entries_db(), bot_instance.loop
+            )
+        )
         bot_instance.logger.info("API 요청: 리액션 역할 조회 완료.")
         return jsonify({"status": "success", "reaction_roles": entries})
     except Exception as e:
@@ -299,7 +301,7 @@ def get_reaction_roles(): # Changed to sync function
 
 
 @api_app.route('/api/reaction_roles/add', methods=['POST'])
-def add_reaction_role(): # Changed to sync function
+async def add_reaction_role():
     """
     Adds a new reaction role entry to the database.
     Requires message_id, channel_id, emoji, and role_id in the request body.
@@ -321,11 +323,13 @@ def add_reaction_role(): # Changed to sync function
         if not reaction_roles_cog:
             return jsonify({"status": "error", "error": "ReactionRoles Cog가 로드되지 않았습니다."}), 500
 
-        asyncio.run_coroutine_threadsafe(
-            reaction_roles_cog.add_reaction_role_entry_db(
-                int(message_id), int(channel_id), emoji, int(role_id)
-            ), bot_instance.loop
-        ).result() # .result() will block until the future is done
+        await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                reaction_roles_cog.add_reaction_role_entry_db(
+                    int(message_id), int(channel_id), emoji, int(role_id)
+                ), bot_instance.loop
+            )
+        )
         bot_instance.logger.info(f"API 요청: 리액션 역할 추가 완료 (메시지: {message_id}, 이모지: {emoji}, 역할: {role_id}).")
         return jsonify({"status": "success", "message": "리액션 역할이 성공적으로 추가되었습니다."})
     except ValueError:
@@ -338,7 +342,7 @@ def add_reaction_role(): # Changed to sync function
 
 
 @api_app.route('/api/reaction_roles/remove', methods=['POST'])
-def remove_reaction_role(): # Changed to sync function
+async def remove_reaction_role():
     """
     Removes a reaction role entry from the database.
     Requires message_id and emoji in the request body.
@@ -358,11 +362,13 @@ def remove_reaction_role(): # Changed to sync function
         if not reaction_roles_cog:
             return jsonify({"status": "error", "error": "ReactionRoles Cog가 로드되지 않았습니다."}), 500
 
-        success = asyncio.run_coroutine_threadsafe(
-            reaction_roles_cog.remove_reaction_role_entry_db(
-                int(message_id), emoji
-            ), bot_instance.loop
-        ).result() # .result() will block until the future is done
+        success = await asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(
+                reaction_roles_cog.remove_reaction_role_entry_db(
+                    int(message_id), emoji
+                ), bot_instance.loop
+            )
+        )
         if success:
             bot_instance.logger.info(f"API 요청: 리액션 역할 제거 완료 (메시지: {message_id}, 이모지: {emoji}).")
             return jsonify({"status": "success", "message": "리액션 역할이 성공적으로 제거되었습니다."})
