@@ -634,7 +634,7 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
         try:
             # Call upload_file with the new signature
             upload_to_drive.upload_file(str(CRASH_LOG_FILE),
-                                        f"crash_log_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
+                                        f"crash_log_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.log")
             # The upload_file function already handles deletion upon successful upload
             logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
         except Exception as e:
