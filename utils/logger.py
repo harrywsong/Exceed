@@ -45,8 +45,10 @@ class DiscordHandler(logging.Handler):
         self.stopped = False  # Flag to indicate if the handler is closing
 
         self.setLevel(level)  # Set level based on parameter, default INFO
-        print(f"DEBUG: DiscordHandler initialized for channel {channel_id} with level {logging.getLevelName(level)}.",
+        # --- CRITICAL DEBUG PRINT ---
+        print(f"DEBUG: DiscordHandler initialized with channel_id={self.channel_id} and level={logging.getLevelName(level)}.",
               file=sys.stderr)
+        # --- END CRITICAL DEBUG PRINT ---
 
     def emit(self, record):
         # DEBUG: This print statement confirms if emit is being called at all
@@ -265,9 +267,4 @@ def get_logger(name: str, level=logging.INFO, **kwargs) -> logging.Logger:
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.propagate = True  # Allow logs to propagate to root handlers (including DiscordHandler)
-    return logger
-
-
-# Set discord.py's internal logger level
-logging.getLogger('discord').setLevel(logging.INFO)
+    logger.propagate = True  # Allow logs to propagate to root handlers (including Discord
