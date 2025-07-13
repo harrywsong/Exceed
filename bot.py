@@ -469,13 +469,12 @@ class MyBot(commands.Bot):
             self.logger = logging.getLogger('기본 로그')  # Get the root logger instance
             self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
 
-            # Find the DiscordHandler instance and start its sending task
-            # This loop is necessary because _configure_root_handlers doesn't return the handler instance
-            for handler in self.logger.handlers:
-                if isinstance(handler, logger_module.DiscordHandler):
-                    handler.start_sending_logs()
-                    self.logger.info("✅ DiscordHandler의 로그 전송 작업을 시작했습니다.")
-                    break # Assuming only one DiscordHandler is added to the root logger
+            # Moved DiscordHandler.start_sending_logs() to on_ready
+            # for handler in self.logger.handlers:
+            #     if isinstance(handler, logger_module.DiscordHandler):
+            #         handler.start_sending_logs()
+            #         self.logger.info("✅ DiscordHandler의 로그 전송 작업을 시작했습니다.")
+            #         break # Assuming only one DiscordHandler is added to the root logger
 
         except Exception as e:
             self.logger.critical(f"❌ 로거 설정 중 심각한 오류 발생: {e}", exc_info=True)
@@ -552,11 +551,18 @@ class MyBot(commands.Bot):
         # Ensure crash log handling runs after logger is fully set up
         await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
 
-        # --- NEW: Upload current log.log on startup ---
-        await self.loop.run_in_executor(None, upload_current_log_on_startup, self.logger)
-        # --- END NEW ---
+        # --- Moved DiscordHandler.start_sending_logs() here ---
+        for handler in self.logger.handlers:
+            if isinstance(handler, logger_module.DiscordHandler):
+                handler.start_sending_logs()
+                self.logger.info("✅ DiscordHandler의 로그 전송 작업을 시작했습니다.")
+                break  # Assuming only one DiscordHandler is added to the root logger
+        # --- End Move ---
 
-        # Start the daily log upload task
+        # Upload any un-uploaded rotated logs from previous days on startup
+        await self.loop.run_in_executor(None, upload_daily_logs_on_startup, self.logger)
+
+        # Start the daily log upload task (for current log.log rotation)
         self.daily_log_upload.start()
         self.logger.info("일일 로그 업로드 작업을 시작했습니다.")
 
@@ -600,26 +606,29 @@ class MyBot(commands.Bot):
     @tasks.loop(time=datetime.time(0, 0, 0, tzinfo=EASTERN_TZ))  # 12 AM Eastern Time
     async def daily_log_upload(self):
         """
-        Uploads the current log.log file to Google Drive at 12 AM Eastern, then clears it.
+        Uploads the previous day's rotated log file to Google Drive at 12 AM Eastern.
         """
         await self.bot.wait_until_ready()  # Ensure bot is ready before performing operations
 
+        # Get yesterday's date in Eastern Time
         now_eastern = datetime.datetime.now(EASTERN_TZ)
-        # For daily upload, we want to name it based on the day that just ended (yesterday's date)
-        previous_day_eastern = now_eastern - datetime.timedelta(days=1)
-        log_date_str = previous_day_eastern.strftime("%Y-%m-%d")
+        yesterday_eastern = now_eastern - datetime.timedelta(days=1)
+        yesterday_date_str = yesterday_eastern.strftime("%Y-%m-%d")
 
-        self.logger.info(f"일일 로그 업로드 시작: log.log (날짜: {log_date_str})")
-        try:
-            # Upload the current log.log file
-            upload_to_drive.upload_file(str(logger_module.LOG_FILE_PATH), f"daily_log_{log_date_str}.log")
+        # Construct the path to yesterday's rotated log file
+        # TimedRotatingFileHandler renames log.log to log.log.YYYY-MM-DD at midnight
+        log_file_to_upload = logger_module.LOG_FILE_PATH.parent / f"log.log.{yesterday_date_str}"
 
-            # Clear the log.log file after successful upload
-            with open(logger_module.LOG_FILE_PATH, 'w', encoding='utf-8') as f:
-                f.truncate(0)  # Truncate to 0 bytes to clear content
-            self.logger.info(f"✅ 일일 로그 'log.log' Google Drive에 '{log_date_str}.log'로 성공적으로 업로드 및 로컬 파일이 지워졌습니다.")
-        except Exception as e:
-            self.logger.error(f"❌ 일일 로그 'log.log' 업로드 실패: {e}", exc_info=True)
+        if log_file_to_upload.exists():
+            self.logger.info(f"일일 로그 업로드 시작: {log_file_to_upload.name}")
+            try:
+                # Use the updated upload_file function
+                upload_to_drive.upload_file(str(log_file_to_upload), f"daily_log_{log_file_to_upload.name}")
+                self.logger.info(f"✅ 일일 로그 '{log_file_to_upload.name}' Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
+            except Exception as e:
+                self.logger.error(f"❌ 일일 로그 '{log_file_to_upload.name}' 업로드 실패: {e}", exc_info=True)
+        else:
+            self.logger.info(f"일일 로그 파일 '{log_file_to_upload.name}'을(를) 찾을 수 없습니다. (어제 로그 없음 또는 이미 처리됨)")
 
 
 # --- Crash Log Handling ---
@@ -652,29 +661,35 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
 
 # --- End Crash Log Handling ---
 
-def upload_current_log_on_startup(logger_instance: logging.Logger):
+def upload_daily_logs_on_startup(logger_instance: logging.Logger):
     """
-    Uploads the current log.log file to Google Drive when the bot starts, then clears it.
-    This replaces the old logic of uploading rotated files on startup.
+    Checks for and uploads any rotated log files from previous days that might not have been uploaded.
+    This runs on bot startup.
     """
-    log_file_path = logger_module.LOG_FILE_PATH
+    log_dir = logger_module.LOG_FILE_PATH.parent
+    today_date_str = datetime.datetime.now(EASTERN_TZ).strftime("%Y-%m-%d")
 
-    if log_file_path.exists() and os.path.getsize(log_file_path) > 0:  # Only upload if file exists and has content
-        logger_instance.info("봇 시작 시 현재 log.log 파일 업로드 중...")
-        try:
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            drive_file_name = f"{timestamp}.log"
+    logger_instance.info("시작 시 이전 일일 로그 파일 확인 및 업로드 중...")
+    for filename in os.listdir(log_dir):
+        if filename.startswith("log.log.") and filename.endswith(".log"):
+            # Extract date from filename (e.g., "log.log.2023-10-26")
+            file_date_str = filename.replace("log.log.", "").replace(".log", "")
 
-            upload_to_drive.upload_file(str(log_file_path), drive_file_name)
-
-            # Clear the log.log file after successful upload
-            with open(log_file_path, 'w', encoding='utf-8') as f:
-                f.truncate(0)  # Truncate to 0 bytes to clear content
-            logger_instance.info(f"✅ 시작 시 'log.log' Google Drive에 '{drive_file_name}'으로 성공적으로 업로드 및 로컬 파일이 지워졌습니다.")
-        except Exception as e:
-            logger_instance.error(f"❌ 시작 시 'log.log' 업로드 실패: {e}", exc_info=True)
-    else:
-        logger_instance.info("시작 시 업로드할 'log.log' 파일이 없거나 비어 있습니다.")
+            # Only process if it's a valid date string and not today's log
+            try:
+                file_date = datetime.datetime.strptime(file_date_str, "%Y-%m-%d").date()
+                if file_date < datetime.datetime.now(EASTERN_TZ).date():  # Only upload logs older than today
+                    local_file_path = log_dir / filename
+                    drive_file_name = f"daily_log_{filename}"
+                    logger_instance.info(f"시작 시 이전 일일 로그 파일 업로드: {filename}")
+                    try:
+                        upload_to_drive.upload_file(str(local_file_path), drive_file_name)
+                        logger_instance.info(f"✅ 시작 시 '{filename}' Google Drive에 성공적으로 업로드 및 삭제되었습니다.")
+                    except Exception as e:
+                        logger_instance.error(f"❌ 시작 시 '{filename}' 업로드 실패: {e}", exc_info=True)
+            except ValueError:
+                # Ignore files that don't match the date format
+                logger_instance.debug(f"로그 파일 '{filename}'이(가) 예상 날짜 형식과 일치하지 않아 건너뜁니다.")
 
 
 async def main():
@@ -711,12 +726,11 @@ async def main():
     # Redirect sys.stderr to the crash log file before starting the bot
     # This ensures any unhandled exceptions are written to the crash log
     try:
-        sys.stderr = open(logger_module.CRASH_LOG_FILE, 'a', encoding='utf-8') # Use CRASH_LOG_FILE from logger_module
+        sys.stderr = open(logger_module.CRASH_LOG_FILE, 'a', encoding='utf-8')  # Use CRASH_LOG_FILE from logger_module
     except Exception as e:
         print(f"❌ 충돌 로그 파일로 stderr 리디렉션 실패: {e}", file=original_stderr)
         # Revert to original stderr if redirection fails
         sys.stderr = original_stderr
-
 
     try:
         # Start the bot
@@ -752,7 +766,7 @@ if __name__ == "__main__":
     # Start the Flask API in a separate thread
     # This ensures the API runs concurrently with the Discord bot.
     api_thread = Thread(target=run_api_server)
-    api_thread.daemon = True # Allow main program to exit even if thread is running
+    api_thread.daemon = True  # Allow main program to exit even if thread is running
     api_thread.start()
     print(f"Existing Bot API running on http://127.0.0.1:5001")
 
