@@ -7,7 +7,7 @@ from google.auth.transport.requests import Request
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_PICKLE = 'token.pickle'
-FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # Your target folder
+FOLDER_ID = "1QL24lQBS-rtJTieNrgoltTPTukD8XxaL"  # Your Google Drive folder ID
 
 def upload_log_to_drive(file_path):
     try:
@@ -30,11 +30,14 @@ def upload_log_to_drive(file_path):
         # Build Drive API service
         service = build('drive', 'v3', credentials=creds)
 
-        # Generate timestamped filename
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         original_name = os.path.basename(file_path)
         name_part, ext_part = os.path.splitext(original_name)
-        drive_filename = f"{name_part}_{timestamp}{ext_part}"
+
+        # Timestamp for upload time
+        upload_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        # Compose filename with timestamp
+        drive_filename = f"{name_part}_{upload_timestamp}{ext_part}"
 
         file_metadata = {
             'name': drive_filename,
@@ -52,6 +55,14 @@ def upload_log_to_drive(file_path):
         file_id = uploaded_file.get('id')
         print(f"✅ Uploaded {file_path} to Google Drive as {drive_filename}")
         print(f"🔗 File link: https://drive.google.com/file/d/{file_id}/view")
+
+        # Delete the local log file after successful upload
+        try:
+            os.remove(file_path)
+            print(f"🗑️ Deleted local log file: {file_path}")
+        except Exception as e:
+            print(f"⚠️ Failed to delete local log file: {e}")
+
         return file_id
 
     except Exception as e:

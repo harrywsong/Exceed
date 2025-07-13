@@ -11,9 +11,9 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()  # Adjust if utils is nested deeper
+BASE_DIR = pathlib.Path(__file__).parent.parent.resolve()  # Adjust if needed
 LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(exist_ok=True, parents=True)  # Ensure all parents exist
 
 class DiscordLogHandler(logging.Handler):
     def __init__(self, bot, channel_id):
@@ -24,19 +24,37 @@ class DiscordLogHandler(logging.Handler):
     def emit(self, record):
         try:
             msg = self.format(record)
-            asyncio.create_task(self.send_log(msg))  # async send
+            # Use asyncio.ensure_future for compatibility and safety
+            asyncio.ensure_future(self.send_log(msg))
         except Exception:
             self.handleError(record)
 
     async def send_log(self, msg):
+        if self.bot.is_closed():
+            # Bot is shutting down or closed, avoid sending
+            return
         channel = self.bot.get_channel(self.channel_id)
         if channel:
             try:
-                await channel.send(f"```{msg}```")
+                # Discord message length limit is 2000 characters
+                for chunk in self._chunk_message(msg, 1900):
+                    await channel.send(f"```{chunk}```")
             except Exception as e:
                 print(f"Failed to send log to Discord channel: {e}")
 
-# Custom FileHandler that flushes after each log write
+    def _chunk_message(self, msg, max_length):
+        # Splits the message into chunks smaller than max_length
+        lines = msg.splitlines(keepends=True)
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) > max_length:
+                yield chunk
+                chunk = line
+            else:
+                chunk += line
+        if chunk:
+            yield chunk
+
 class FlushFileHandler(logging.FileHandler):
     def emit(self, record):
         super().emit(record)
