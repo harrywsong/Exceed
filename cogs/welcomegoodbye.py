@@ -27,9 +27,8 @@ except OSError:
 class WelcomeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Updated: Directly get the logger with the desired Korean name
         self.logger = get_logger(
-            "환영/인사 카드", # Korean for "Welcome Greeting"
+            "환영/인사 카드",
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
@@ -41,7 +40,6 @@ class WelcomeCog(commands.Cog):
             bg = Image.open(BG_PATH).convert("RGBA")
             draw = ImageDraw.Draw(bg)
 
-            # Fetch avatar bytes
             avatar_asset = member.display_avatar.with_size(128).with_format("png")
             try:
                 avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=10)
@@ -57,13 +55,11 @@ class WelcomeCog(commands.Cog):
 
             if avatar_bytes:
                 avatar = Image.open(BytesIO(avatar_bytes)).resize((128, 128)).convert("RGBA")
-                # Create a circular mask for the avatar
                 mask = Image.new('L', (128, 128), 0)
                 draw_mask = ImageDraw.Draw(mask)
                 draw_mask.ellipse((0, 0, 128, 128), fill=255)
-                bg.paste(avatar, (40, bg.height // 2 - 64), mask) # Use mask for circular avatar
+                bg.paste(avatar, (40, bg.height // 2 - 64), mask)
 
-            # Draw welcome text
             font = FONT
             text = f"환영합니다, {member.display_name}님!"
             bbox = draw.textbbox((0, 0), text, font=font)
@@ -80,7 +76,7 @@ class WelcomeCog(commands.Cog):
             return buf
         except Exception as e:
             self.logger.error(f"❌ [welcome] 환영 카드 생성 중 치명적인 오류 발생: {e}\n{traceback.format_exc()}")
-            raise # Re-raise to be caught by on_member_join's handler
+            raise
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
@@ -102,7 +98,6 @@ class WelcomeCog(commands.Cog):
             self.logger.info(f"✅ [welcome] {member.display_name}님을 위한 환영 카드 생성 완료.")
         except Exception as e:
             self.logger.error(f"❌ [welcome] 환영 카드 생성 실패: {e}\n{traceback.format_exc()}")
-            # Attempt to send a plain message if card creation fails
             try:
                 await ch.send(f"⚠️ {member.mention}님, 환영합니다! 환영 카드 생성에 실패했습니다.")
             except discord.Forbidden:

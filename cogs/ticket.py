@@ -273,9 +273,6 @@ class CloseTicketView(View):
                 for att in m.attachments:
                     try:
                         if att.content_type and att.content_type.startswith("image/"):
-                            # This part can still be problematic for many/large images.
-                            # For better rate limit and memory management, consider linking to att.url directly
-                            # instead of base64 embedding for larger files or if many attachments are expected.
                             b64 = base64.b64encode(await att.read()).decode("ascii")
                             ctype = att.content_type
                             messages_html += f"""
@@ -359,49 +356,27 @@ class CloseTicketView(View):
 class TicketSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Use get_logger for direct initialization, passing bot and config for consistency.
         self.logger = get_logger(
-            "티켓 시스템", # Specific logger name for this cog
+            "티켓 시스템",
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("TicketSystem Cog 초기화 완료.")
 
-    # Modified send_ticket_request_message to be more efficient with API calls
     async def send_ticket_request_message(self):
         channel = self.bot.get_channel(config.TICKET_CHANNEL_ID)
         if channel is None:
             self.logger.error(f"❌ 티켓 요청 메시지를 보낼 채널 (ID: {config.TICKET_CHANNEL_ID})을(를) 찾을 수 없습니다!")
             return
 
-        # Attempt to find and delete the *specific* previous message if its ID is stored
-        # or if it's the very last message by the bot.
-        # This is more efficient than fetching a history of messages.
-        # If you store the message ID of the welcome message in a database or file,
-        # you can directly fetch and delete it using:
-        # try:
-        #     old_message = await channel.fetch_message(STORED_MESSAGE_ID)
-        #     await old_message.delete()
-        #     self.logger.info(f"이전 티켓 요청 메시지 삭제됨 (ID: {STORED_MESSAGE_ID})")
-        # except discord.NotFound:
-        #     self.logger.info(f"이전 티켓 요청 메시지 (ID: {STORED_MESSAGE_ID})를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.")
-        # except Exception as e:
-        #     self.logger.error(f"이전 티켓 요청 메시지 삭제 실패: {e}\n{traceback.format_exc()}")
-
-        # For simplicity and to avoid adding a database dependency for just this,
-        # let's modify the existing history check to be more targeted,
-        # checking if the *last message* by the bot is the ticket message.
-        # This reduces API calls compared to iterating through a `limit` if it's always the last one.
         try:
-            # Fetch just the latest messages to find our bot's previous embed.
-            # Using 5 as a small buffer in case other messages were sent.
             async for msg in channel.history(limit=5):
                 if msg.author == self.bot.user and msg.embeds:
                     if any("✨ 티켓 생성하기 ✨" in embed.title for embed in msg.embeds):
                         await msg.delete()
                         self.logger.info(f"이전 티켓 요청 메시지 삭제됨 (ID: {msg.id})")
-                        break # Found and deleted the message, no need to check further
-            else: # This block runs if the loop completes without 'break'
+                        break
+            else:
                 self.logger.debug(f"채널 {channel.name}에 기존 티켓 요청 메시지가 없습니다.")
 
         except discord.Forbidden:
@@ -444,9 +419,7 @@ class TicketSystem(commands.Cog):
 
         self.logger.info("Persistent views (HelpView, CloseTicketView) 등록 완료.")
 
-        # Introduce a small delay before calling send_ticket_request_message
-        # to potentially alleviate startup rate limits if multiple cogs are doing similar operations.
-        await asyncio.sleep(2) # Give a 2-second buffer
+        await asyncio.sleep(2)
         await self.send_ticket_request_message()
 
     @app_commands.command(name="help", description="운영진에게 문의할 수 있는 티켓을 엽니다.")

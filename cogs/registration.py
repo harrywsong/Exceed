@@ -2,14 +2,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.logger import get_logger
-from utils import config  # your config module with LOG_CHANNEL_ID
+from utils import config
 
 class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Updated: Use the Korean name for the logger
         self.log = get_logger(
-            "계정 연동", # Account Linkage / Integration
+            "계정 연동",
             bot=bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
@@ -19,7 +18,7 @@ class Registration(commands.Cog):
         description="디스코드 계정을 라이엇 ID와 연결합니다 (예: Name#Tag)."
     )
     @app_commands.describe(
-        riot_id="라이엇 ID (예: winter#겨울밤밤)"
+        riot_id="라이엇 ID (예: winter#겨울밤)"
     )
     async def register(self, interaction: discord.Interaction, riot_id: str):
         await interaction.response.defer(ephemeral=True)

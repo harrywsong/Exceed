@@ -15,7 +15,6 @@ def upload_log_to_drive(file_path: str) -> str | None:
             print(f"❌ Log file not found: {file_path}")
             return None
 
-        # Load creds
         creds = None
         if os.path.exists(TOKEN_PICKLE):
             with open(TOKEN_PICKLE, 'rb') as token_file:
@@ -28,7 +27,6 @@ def upload_log_to_drive(file_path: str) -> str | None:
 
         service = build('drive', 'v3', credentials=creds)
 
-        # Upload with timestamped .log extension
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         drive_filename = f"{timestamp}.log"
 
@@ -48,7 +46,6 @@ def upload_log_to_drive(file_path: str) -> str | None:
         print(f"✅ Uploaded {file_path} to Google Drive as {drive_filename}")
         print(f"🔗 File link: https://drive.google.com/file/d/{file_id}/view")
 
-        # Delete local copy after upload
         try:
             os.remove(file_path)
             print(f"🗑️ Deleted local log file: {file_path}")

@@ -67,7 +67,6 @@ class TrackerScraper(commands.Cog):
             match_uuid = data.get("match_id") or data.get("match_uuid") or str(uuid.uuid4())
             self.logger.debug(f"매치 UUID: {match_uuid}")
 
-            # DB에서 이미 등록된 매치인지 확인
             try:
                 async with self.bot.pool.acquire() as conn:
                     exists = await conn.fetchval(

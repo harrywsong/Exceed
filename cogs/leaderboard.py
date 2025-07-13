@@ -1,5 +1,3 @@
-# cogs/leaderboard.py (or wherever your ClanLeaderboard cog is)
-
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -8,7 +6,7 @@ import traceback
 
 from utils import config
 from utils.logger import get_logger
-from datetime import datetime, time, timedelta
+from datetime import time
 import pytz
 import asyncio
 import urllib.parse
@@ -18,7 +16,6 @@ EASTERN_TZ = pytz.timezone("US/Eastern")
 
 
 class LeaderboardView(discord.ui.View):
-    # ... (rest of your LeaderboardView class - no changes needed here)
     def __init__(self, cog, interaction: Optional[discord.Interaction], entries: List[dict]):
         super().__init__(timeout=120)
         self.cog = cog
@@ -153,24 +150,6 @@ class ClanLeaderboard(commands.Cog):
         self.leaderboard_channel = None
         self.current_message = None
 
-        # REMOVE this line: We will call post_leaderboard from the main bot.py's on_ready
-        # self.bot.loop.create_task(self.wait_until_ready())
-
-    # REMOVE this entire method: Its logic will be handled by main bot.py's on_ready
-    # async def wait_until_ready(self):
-    #     await self.bot.wait_until_ready()
-    #     self.leaderboard_channel = self.bot.get_channel(config.CLAN_LEADERBOARD_CHANNEL_ID)
-    #     if not self.leaderboard_channel:
-    #         self.logger.error(
-    #             f"CLAN_LEADERBOARD_CHANNEL_ID {config.CLAN_LEADERBOARD_CHANNEL_ID} 채널을 찾을 수 없습니다. 리더보드 기능을 사용할 수 없습니다."
-    #         )
-    #         return
-
-    #     await self.post_leaderboard()
-    #     self.logger.info("봇 시작 시 리더보드 게시 완료.")
-
-    #     self.daily_leaderboard_update.start()
-
     async def fetch_leaderboard_data(self) -> List[dict]:
         try:
             async with self.bot.pool.acquire() as conn:
@@ -200,7 +179,6 @@ class ClanLeaderboard(commands.Cog):
             return []
 
     async def post_leaderboard(self, interaction: Optional[discord.Interaction] = None):
-        # Ensure channel is fetched here if not already set by coordinated startup
         if not self.leaderboard_channel:
             self.leaderboard_channel = self.bot.get_channel(config.CLAN_LEADERBOARD_CHANNEL_ID)
             if not self.leaderboard_channel:
@@ -221,18 +199,16 @@ class ClanLeaderboard(commands.Cog):
         try:
             self.logger.info(f"기존 리더보드 메시지 정리 시작 (채널: #{self.leaderboard_channel.name}).")
             deleted_count = 0
-            # Fetch history to find and delete previous bot messages with leaderboards
             async for msg in self.leaderboard_channel.history(limit=5):
                 if msg.author == self.bot.user and msg.embeds:
                     if any("클랜 리더보드" in embed.title for embed in msg.embeds):
                         await msg.delete()
                         deleted_count += 1
                         self.logger.info(f"기존 리더보드 메시지 삭제됨 (ID: {msg.id})")
-                        await asyncio.sleep(1)  # Add a small delay between deletions to mitigate rate limits
+                        await asyncio.sleep(1)
 
             if deleted_count > 0:
                 self.logger.info(f"총 {deleted_count}개의 기존 리더보드 메시지 삭제 완료.")
-                # ⭐ CRITICAL DELAY: Wait after deletions before sending the new message
                 await asyncio.sleep(2)
             else:
                 self.logger.info("삭제할 기존 리더보드 메시지가 없습니다.")
@@ -285,8 +261,6 @@ class ClanLeaderboard(commands.Cog):
     async def before_daily_leaderboard_update(self):
         await self.bot.wait_until_ready()
         self.logger.info("일일 리더보드 업데이트 루프 시작 대기 중...")
-        # No initial post here, it's done in coordinated on_ready
-
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ClanLeaderboard(bot))

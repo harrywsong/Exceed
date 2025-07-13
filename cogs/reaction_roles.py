@@ -1,22 +1,18 @@
-# cogs/reaction_roles.py
-
 import discord
 from discord.ext import commands
-import logging
 import traceback
 import asyncio
 
 from utils import config
-from utils.logger import get_logger # Make sure this is correctly imported and functions as expected
+from utils.logger import get_logger
 
 
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-        # Directly get the logger with the desired Korean name
         self.logger = get_logger(
-            "리액션 역할", # This will be the name displayed in logs, e.g., [리액션-역할]
+            "리액션 역할",
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )

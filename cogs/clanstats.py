@@ -3,19 +3,17 @@ from discord import app_commands
 from discord.ext import commands
 import asyncpg
 from typing import Optional
-import traceback  # Import traceback for detailed error logging
+import traceback
 
-from utils.logger import get_logger # Explicitly import get_logger for direct use
-from utils import config  # your config with LOG_CHANNEL_ID
+from utils.logger import get_logger
+from utils import config
 
 
 class ValorantStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Directly get a named logger for this cog.
-        # This is the recommended approach for consistent logging configuration.
         self.logger = get_logger(
-            "발로란트 통계",  # Valorant Statistics
+            "발로란트 통계",
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
@@ -50,8 +48,6 @@ class ValorantStats(commands.Cog):
                         match_uuid, map_name, mode, team1_score, team2_score, round_count
                     )
 
-                    # With "RETURNING id" and "ON CONFLICT DO UPDATE", match_id will always be set
-                    # if the query itself is successful.
                     self.logger.info(f"매치 데이터 저장/업데이트됨: UUID={match_uuid} -> ID={match_id}")
 
                     rows = await conn.fetch("SELECT discord_id, riot_id FROM registrations")
@@ -62,9 +58,6 @@ class ValorantStats(commands.Cog):
                         discord_id = riot_to_discord.get(riot_id)
 
                         try:
-                            # Safely get values, defaulting to None if not present or suitable type
-                            # Using .get() with a default of None is generally safer than direct access.
-                            # The database schema should handle NULLs correctly for these fields.
                             acs = p.get("acs")
                             score = p.get("score")
                             kills = p.get("kills")
@@ -128,7 +121,6 @@ class ValorantStats(commands.Cog):
                         except Exception as player_e:
                             self.logger.error(
                                 f"Error saving player data for {riot_id} in match {match_uuid}: {player_e}\n{traceback.format_exc()}")
-                            # Continue to next player even if one fails
                             continue
 
         except asyncpg.exceptions.PostgresError as e:
@@ -148,7 +140,6 @@ class ValorantStats(commands.Cog):
     async def mystats(self, interaction: discord.Interaction, count: Optional[int] = 10):
         await interaction.response.defer(ephemeral=True)
 
-        # Validate count input
         if count is None or count <= 0:
             count = 10
         if count > 50:
@@ -164,8 +155,6 @@ class ValorantStats(commands.Cog):
 
         try:
             async with self.bot.pool.acquire() as conn:
-                # Optimized query to avoid subquery if possible, and ensure proper aggregation
-                # COALESCE ensures 0.0 for averages if no rows, or 0 for matches_played
                 row = await conn.fetchrow(
                     f"""
                     SELECT
@@ -214,14 +203,12 @@ class ValorantStats(commands.Cog):
         except asyncpg.exceptions.PostgresError as e:
             self.logger.error(f"Database error fetching stats for {discord_id}: {e}\n{traceback.format_exc()}")
             await interaction.followup.send("❌ 통계를 가져오는 중 데이터베이스 오류가 발생했습니다. 잠시 후 다시 시도해주세요.", ephemeral=True)
-            # Potentially send to Discord log channel as well
             await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
                 f"🚨 **데이터베이스 오류 발생!** 통계 가져오기 실패 (유저 ID: `{discord_id}`): `{e}`"
             )
         except Exception as e:
             self.logger.critical(f"Unexpected error fetching stats for {discord_id}: {e}\n{traceback.format_exc()}")
             await interaction.followup.send("❌ 통계를 가져오는 중 알 수 없는 오류가 발생했습니다.", ephemeral=True)
-            # Always send critical errors to Discord log channel
             await self.bot.get_channel(config.LOG_CHANNEL_ID).send(
                 f"🚨 **치명적인 오류 발생!** 통계 가져오기 중 예상치 못한 문제 (유저 ID: `{discord_id}`): `{e}`"
             )
