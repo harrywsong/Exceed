@@ -1,31 +1,33 @@
 import os
-from datetime import datetime
+import pickle
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google.oauth2 import service_account
+from google.auth.transport.requests import Request
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
-SERVICE_ACCOUNT_FILE = 'exceed-465801-9a237edcd3b1.json'
-FOLDER_ID = '1QL24lQBS-rtJTieNrgoltTPTukD8XxaL'
+TOKEN_PICKLE = 'token.pickle'
 
 def upload_log_to_drive(file_path):
     try:
-        creds = service_account.Credentials.from_service_account_file(
-            SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+        creds = None
+        if os.path.exists(TOKEN_PICKLE):
+            with open(TOKEN_PICKLE, 'rb') as token:
+                creds = pickle.load(token)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                raise Exception("Credentials are invalid or missing. Run get_token.py again.")
+
         service = build('drive', 'v3', credentials=creds)
 
         if not os.path.exists(file_path):
             print(f"❌ Log file {file_path} does not exist.")
             return
 
-        base_name = os.path.basename(file_path).replace(".log", "")
-        timestamp = datetime.now().strftime("%H-%M-%S")
-        unique_file_name = f"{base_name}_{timestamp}.log"
-
-        file_metadata = {
-            'name': unique_file_name,
-            'parents': [FOLDER_ID]
-        }
+        file_name = os.path.basename(file_path)
+        file_metadata = {'name': file_name}
 
         media = MediaFileUpload(file_path, mimetype='text/plain')
 
@@ -35,7 +37,7 @@ def upload_log_to_drive(file_path):
             fields='id'
         ).execute()
 
-        print(f"✅ Uploaded {file_path} as {unique_file_name} to Google Drive with ID: {uploaded_file.get('id')}")
+        print(f"✅ Uploaded {file_path} to Google Drive with ID: {uploaded_file.get('id')}")
 
     except Exception as e:
         print(f"❌ Failed to upload log to Google Drive: {e}")
