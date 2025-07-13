@@ -37,7 +37,7 @@ def upload_log_to_drive(file_path):
         upload_timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
         # Compose filename with timestamp
-        drive_filename = f"{name_part}_{upload_timestamp}{ext_part}"
+        drive_filename = original_name
 
         file_metadata = {
             'name': drive_filename,
