@@ -90,5 +90,5 @@ def get_logger(name: str, level=logging.INFO, bot=None, discord_log_channel_id=N
         discord_handler.setFormatter(formatter)
         logger.addHandler(discord_handler)
 
-    logger.propagate = False
+    logger.propagate = True
     return logger
