@@ -245,6 +245,10 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None, console_leve
         discord_handler.setFormatter(LOGGING_FORMATTER)
         discord_handler.setLevel(discord_level)  # Set level for discord handler
         root_logger.addHandler(discord_handler)
+        # --- ADDED DEBUG PRINT HERE ---
+        print(
+            f"DEBUG: DiscordHandler added to root logger. Channel ID: {discord_log_channel_id}, Level: {logging.getLevelName(discord_level)}",
+            file=sys.stderr)
         # Removed discord_handler.start_sending_logs() from here.
         # It will now be explicitly called from bot.py's on_ready event.
 
