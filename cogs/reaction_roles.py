@@ -114,9 +114,10 @@ class ReactionRoles(commands.Cog):
             return
 
         if payload.emoji.id:
-            emoji_key = payload.emoji.name.lower()  # must match your env key exactly
+            emoji_key = f"<:{payload.emoji.name}:{payload.emoji.id}>"
         else:
             emoji_key = str(payload.emoji)
+
         role_id = self.reaction_role_map[payload.message_id].get(emoji_key)
 
         if not role_id:
@@ -175,9 +176,10 @@ class ReactionRoles(commands.Cog):
             return
 
         if payload.emoji.id:
-            emoji_key = payload.emoji.name.lower()
+            emoji_key = f"<:{payload.emoji.name}:{payload.emoji.id}>"
         else:
             emoji_key = str(payload.emoji)
+
         role_id = self.reaction_role_map[payload.message_id].get(emoji_key)
 
         if not role_id:
