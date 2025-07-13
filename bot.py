@@ -73,7 +73,6 @@ class ExceedBot(commands.Bot):
     @tasks.loop(count=1)
     async def daily_log_upload_task(self):
         """Runs once on startup to start the forever loop"""
-        # Just call the forever loop below
         self.logger.info("Starting daily log upload scheduler...")
         self.loop.create_task(self._daily_log_upload_forever())
 
