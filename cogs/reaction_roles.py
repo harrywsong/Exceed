@@ -2,10 +2,12 @@ import discord
 from discord.ext import commands
 import traceback
 import asyncio
-import re # Import re for custom emoji parsing
+import re  # Import re for custom emoji parsing
 
 from utils import config
 from utils.logger import get_logger
+
+
 # from utils.config import REACTION_ROLE_MAP # REMOVED: No longer using static map
 
 class ReactionRoles(commands.Cog):
@@ -33,7 +35,9 @@ class ReactionRoles(commands.Cog):
     async def populate_reactions(self):
         """
         Fetches reaction role entries from the database and ensures reactions are added to messages.
+        This function is crucial for initial setup and re-syncing reactions on messages.
         """
+        self.logger.info("리액션 역할 동기화 시작 (데이터베이스에서 가져오기).")
         guild = self.bot.get_guild(self.guild_id)
         if not guild:
             self.logger.error(f"❌ 길드 ID {self.guild_id}을(를) 찾을 수 없습니다. ReactionRoles 기능이 작동하지 않습니다.")
@@ -71,12 +75,12 @@ class ReactionRoles(commands.Cog):
                 # Get existing reactions by the bot
                 bot_reacted_emojis = set()
                 for reaction in message.reactions:
-                    if reaction.me: # Check if the bot itself reacted
-                        if isinstance(reaction.emoji, str): # Unicode emoji
+                    if reaction.me:  # Check if the bot itself reacted
+                        if isinstance(reaction.emoji, str):  # Unicode emoji
                             bot_reacted_emojis.add(reaction.emoji)
-                        elif reaction.emoji.id: # Custom emoji
+                        elif reaction.emoji.id:  # Custom emoji
+                            # Format custom emoji as <:name:id> for consistent comparison
                             bot_reacted_emojis.add(f"<:{reaction.emoji.name}:{reaction.emoji.id}>")
-
 
                 # Add reactions if they are not already present by the bot
                 for emoji_str in emoji_role_map.keys():
@@ -88,7 +92,7 @@ class ReactionRoles(commands.Cog):
                         # Discord.py handles unicode and custom emoji strings directly
                         await message.add_reaction(emoji_str)
                         self.logger.info(f"➕ 이모지 {emoji_str}을(를) 메시지 {message_id}에 추가했습니다.")
-                        await asyncio.sleep(0.7) # Delay to respect Discord's rate limits
+                        await asyncio.sleep(0.7)  # Delay to respect Discord's rate limits
                     except discord.Forbidden:
                         self.logger.error(f"❌ 메시지 {message_id}에 이모지 {emoji_str}을(를) 추가할 권한이 없습니다.")
                     except discord.HTTPException as e:
@@ -105,8 +109,8 @@ class ReactionRoles(commands.Cog):
             except Exception as e:
                 self.logger.error(f"❌ 메시지 {message_id}의 리액션 역할 설정 중 오류 발생: {e}\n{traceback.format_exc()}")
 
-            await asyncio.sleep(1) # Delay between processing messages
-
+            await asyncio.sleep(1)  # Delay between processing messages
+        self.logger.info("리액션 역할 동기화 완료.")
 
     async def get_all_reaction_role_entries_db(self):
         """Fetches all reaction role entries from the database."""
@@ -118,20 +122,21 @@ class ReactionRoles(commands.Cog):
             return [dict(r) for r in records]
 
     async def add_reaction_role_entry_db(self, message_id: int, channel_id: int, emoji: str, role_id: int):
-        """Adds a new reaction role entry to the database."""
+        """Adds a new reaction role entry to the database and attempts to add the reaction to the message."""
         if not self.bot.pool:
             raise RuntimeError("데이터베이스 풀이 초기화되지 않았습니다.")
         async with self.bot.pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO reaction_role_entries (message_id, channel_id, emoji, role_id)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (message_id, emoji) DO UPDATE SET role_id = EXCLUDED.role_id, channel_id = EXCLUDED.channel_id
+                VALUES ($1, $2, $3, $4) ON CONFLICT (message_id, emoji) DO
+                UPDATE SET role_id = EXCLUDED.role_id, channel_id = EXCLUDED.channel_id
                 """,
                 message_id, channel_id, emoji, role_id
             )
             self.logger.info(f"데이터베이스에 리액션 역할 추가/업데이트됨: 메시지={message_id}, 이모지={emoji}, 역할={role_id}")
-            # After adding/updating, try to add the reaction to the message
+
+            # Attempt to add the reaction to the Discord message immediately
             guild = self.bot.get_guild(self.guild_id)
             if guild:
                 channel = guild.get_channel(channel_id)
@@ -146,36 +151,37 @@ class ReactionRoles(commands.Cog):
                         self.logger.error(f"메시지 {message_id}에 이모지 {emoji}를 추가할 권한이 없습니다.")
                     except Exception as e:
                         self.logger.error(f"메시지 {message_id}에 이모지 {emoji}를 추가 중 오류 발생: {e}")
-
+            # Re-run populate_reactions to ensure consistency across all messages
+            await self.populate_reactions()
 
     async def remove_reaction_role_entry_db(self, message_id: int, emoji: str):
-        """Removes a reaction role entry from the database."""
+        """Removes a reaction role entry from the database and attempts to remove the reaction from the message."""
         if not self.bot.pool:
             raise RuntimeError("데이터베이스 풀이 초기화되지 않았습니다.")
         async with self.bot.pool.acquire() as conn:
+            # First, fetch channel_id before deleting the entry
+            channel_id_row = await conn.fetchrow(
+                "SELECT channel_id FROM reaction_role_entries WHERE message_id = $1 AND emoji = $2",
+                message_id, emoji
+            )
+
             result = await conn.execute(
                 "DELETE FROM reaction_role_entries WHERE message_id = $1 AND emoji = $2",
                 message_id, emoji
             )
             if result == "DELETE 1":
                 self.logger.info(f"데이터베이스에서 리액션 역할 제거됨: 메시지={message_id}, 이모지={emoji}")
-                # After removing, try to remove the reaction from the message
-                guild = self.bot.get_guild(self.guild_id)
-                if guild:
-                    # We need the channel_id to fetch the message.
-                    # A more robust solution would store channel_id in the DB for removal too,
-                    # or fetch it from the message itself before deleting the DB entry.
-                    # For now, we'll try to find the message in any text channel.
-                    channel_id_row = await conn.fetchrow(
-                        "SELECT channel_id FROM reaction_role_entries WHERE message_id = $1 LIMIT 1",
-                        message_id
-                    )
-                    if channel_id_row:
+
+                # Attempt to remove the reaction from the Discord message immediately
+                if channel_id_row:
+                    guild = self.bot.get_guild(self.guild_id)
+                    if guild:
                         channel = guild.get_channel(channel_id_row['channel_id'])
                         if channel:
                             try:
                                 message = await channel.fetch_message(message_id)
-                                await message.remove_reaction(emoji, self.bot.user) # Remove only bot's reaction
+                                # Remove only bot's reaction
+                                await message.remove_reaction(emoji, self.bot.user)
                                 self.logger.info(f"메시지 {message_id}에서 이모지 {emoji} 제거됨.")
                             except discord.NotFound:
                                 self.logger.warning(f"메시지 {message_id}를 찾을 수 없어 이모지 {emoji}를 제거할 수 없습니다.")
@@ -183,6 +189,8 @@ class ReactionRoles(commands.Cog):
                                 self.logger.error(f"메시지 {message_id}에서 이모지 {emoji}를 제거할 권한이 없습니다.")
                             except Exception as e:
                                 self.logger.error(f"메시지 {message_id}에서 이모지 {emoji}를 제거 중 오류 발생: {e}")
+                # Re-run populate_reactions to ensure consistency across all messages
+                await self.populate_reactions()
                 return True
             else:
                 self.logger.warning(f"데이터베이스에서 리액션 역할 제거 실패 (찾을 수 없음): 메시지={message_id}, 이모지={emoji}")
@@ -191,10 +199,10 @@ class ReactionRoles(commands.Cog):
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         if payload.guild_id is None or payload.guild_id != self.guild_id:
-            return # Ignore DMs or other guilds
+            return  # Ignore DMs or other guilds
 
         if payload.user_id == self.bot.user.id:
-            return # Ignore bot's own reactions
+            return  # Ignore bot's own reactions
 
         guild = self.bot.get_guild(payload.guild_id)
         if not guild:
@@ -202,7 +210,7 @@ class ReactionRoles(commands.Cog):
             return
 
         # Format emoji string for database lookup (custom emoji or unicode)
-        emoji_key = str(payload.emoji) # Discord.py's str(emoji) handles both unicode and custom <:name:id>
+        emoji_key = str(payload.emoji)  # Discord.py's str(emoji) handles both unicode and custom <:name:id>
 
         # Fetch the reaction role mapping from the database
         async with self.bot.pool.acquire() as conn:
@@ -219,7 +227,7 @@ class ReactionRoles(commands.Cog):
         try:
             member = guild.get_member(payload.user_id)
             if member is None:
-                member = await guild.fetch_member(payload.user_id) # Try fetching if not in cache
+                member = await guild.fetch_member(payload.user_id)  # Try fetching if not in cache
         except discord.NotFound:
             self.logger.warning(f"사용자 {payload.user_id}을(를) 길드 {guild.name}에서 찾을 수 없어 역할 추가 실패 (아마도 서버를 떠났을 수 있음).")
             return
@@ -260,7 +268,7 @@ class ReactionRoles(commands.Cog):
             return
 
         if payload.guild_id is None or payload.guild_id != self.guild_id:
-            return # Ignore DMs or other guilds
+            return  # Ignore DMs or other guilds
 
         guild = self.bot.get_guild(payload.guild_id)
         if not guild:
@@ -285,7 +293,7 @@ class ReactionRoles(commands.Cog):
         try:
             member = guild.get_member(payload.user_id)
             if member is None:
-                member = await guild.fetch_member(payload.user_id) # Try fetching if not in cache
+                member = await guild.fetch_member(payload.user_id)  # Try fetching if not in cache
         except discord.NotFound:
             self.logger.warning(f"사용자 ID {payload.user_id}을(를) 찾을 수 없어 역할 제거 실패 (아마도 서버를 떠났을 수 있음).")
             return
