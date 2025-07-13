@@ -1,8 +1,6 @@
 import os
-from pathlib import Path
+import json
 from dotenv import load_dotenv
-import re
-from collections import defaultdict
 
 load_dotenv()
 
@@ -54,25 +52,17 @@ AUTO_ROLE_IDS = parse_ids("AUTO_ROLE_IDS")
 APPLICANT_ROLE_ID = int(os.getenv("APPLICANT_ROLE_ID", 0))
 GUEST_ROLE_ID = int(os.getenv("GUEST_ROLE_ID", 0))
 
-# === Build REACTION_ROLE_MAP from env variables ===
-reaction_role_map_raw = {k: v for k, v in os.environ.items() if k.startswith("REACTION_ROLE_")}
+# Load reaction_role_map from JSON in .env
+reaction_role_json = os.getenv("REACTION_ROLE_MAP_JSON", "{}")
 
-REACTION_ROLE_MAP = defaultdict(dict)
-pattern = re.compile(r"REACTION_ROLE_(\d+)_(.+)")
-
-for env_key, role_id_str in reaction_role_map_raw.items():
-    match = pattern.match(env_key)
-    if not match:
-        continue
-
-    message_id = match.group(1)      # e.g. '1391796467060178984'
-    emoji_key = match.group(2)       # e.g. 'valo_radiant' or '🇼'
-
-    try:
-        role_id = int(role_id_str)
-    except ValueError:
-        continue
-
-    REACTION_ROLE_MAP[message_id][emoji_key] = role_id
-
-REACTION_ROLE_MAP = dict(REACTION_ROLE_MAP)  # convert defaultdict to dict
+try:
+    REACTION_ROLE_MAP = json.loads(reaction_role_json)
+    # Optional: Convert message IDs to int for consistency
+    REACTION_ROLE_MAP = {
+        int(msg_id): {
+            emoji: int(role_id) for emoji, role_id in emoji_map.items()
+        } for msg_id, emoji_map in REACTION_ROLE_MAP.items()
+    }
+except json.JSONDecodeError as e:
+    print(f"Failed to parse REACTION_ROLE_MAP_JSON: {e}")
+    REACTION_ROLE_MAP = {}
