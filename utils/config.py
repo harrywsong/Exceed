@@ -16,6 +16,7 @@ def parse_ids(env_var):
     return [int(x) for x in raw.split(",") if x.strip().isdigit()]
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!") # Added COMMAND_PREFIX
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
