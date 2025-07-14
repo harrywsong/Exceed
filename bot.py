@@ -213,6 +213,52 @@ def send_announcement_api():
         bot_instance.logger.error(f"공지 전송 실패: {e}")
         return jsonify({"status": "error", "error": f"Failed to send announcement: {e}"}), 500
 
+@api_app.route('/api/reaction_roles', methods=['GET'])
+def get_reaction_roles_api():
+    """
+    API endpoint to retrieve reaction role data.
+    This will fetch actual reaction role data from your bot's
+    internal state, database, or a dedicated cog.
+    """
+    if bot_instance and bot_instance.pool: # Ensure bot and database pool are ready
+        try:
+            # You need to implement the actual logic to fetch reaction roles here.
+            # Example using your PostgreSQL database pool:
+            # Note: Flask routes are synchronous. You need to run asyncpg operations
+            # in the bot's event loop.
+
+            # Option 1: Using asyncio.run_coroutine_threadsafe (requires proper setup of bot_instance.loop)
+            # This is generally safer for calling async functions from sync Flask routes.
+            loop = bot_instance.loop # Get the bot's event loop
+            future = asyncio.run_coroutine_threadsafe(
+                fetch_reaction_roles_from_db(bot_instance.pool), # Call your async function
+                loop
+            )
+            reaction_roles_data = future.result(timeout=10) # Wait for result with a timeout
+
+            return jsonify(reaction_roles_data), 200
+
+        except Exception as e:
+            bot_instance.logger.error(f"Error in /api/reaction_roles: {e}", exc_info=True)
+            return jsonify({"error": "Failed to fetch reaction roles from bot's internal state."}), 500
+    else:
+        return jsonify({"error": "Bot instance or database not fully initialized."}), 503 # Service Unavailable
+
+# --- You will also need this async function in bot.py (e.g., above Flask routes) ---
+async def fetch_reaction_roles_from_db(pool):
+    """Fetches reaction roles from the database."""
+    async with pool.acquire() as conn:
+        # Replace 'reaction_roles_table' with your actual table name
+        # And select the columns you need for your web UI
+        records = await conn.fetch("""
+            SELECT message_id, channel_id, emoji, role_id
+            FROM reaction_roles_table
+            -- ORDER BY message_id, emoji; (Optional: add ordering)
+        """)
+        # Convert records to a list of dictionaries for JSON serialization
+        reaction_roles = [dict(r) for r in records]
+        return reaction_roles
+# --- END NEW ROUTE ---
 
 def run_api_server():
     """Runs the Flask API server for the bot in a separate thread."""
