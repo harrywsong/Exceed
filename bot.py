@@ -25,9 +25,6 @@ import utils.config as config
 import utils.logger as logger_module # This module contains get_logger and _configure_root_handlers
 from utils import upload_to_drive # Ensure this import is correct and points to upload_to_drive.py
 
-# Define Eastern Timezone (Added from original snippet to ensure consistency)
-EASTERN_TZ = pytz.timezone("US/Eastern")
-
 # --- Database Functions (Moved from utils/database.py) ---
 async def create_db_pool_in_bot():
     """Creates and returns a PostgreSQL connection pool using DATABASE_URL from environment variables."""
@@ -50,8 +47,7 @@ async def create_db_pool_in_bot():
 
 
 async def add_reaction_role_to_db(pool, guild_id: int, message_id: int, channel_id: int, emoji: str, role_id: int):
-    # Use the root logger for database operations for consistency
-    current_logger = logging.getLogger()
+    current_logger = logging.getLogger('discord') # Or your appropriate logger
     current_logger.debug(f"DB: Attempting to add reaction role for G:{guild_id}, M:{message_id}, C:{channel_id}, E:{emoji}, R:{role_id}") # New debug log
 
     async with pool.acquire() as conn:
@@ -67,23 +63,19 @@ async def add_reaction_role_to_db(pool, guild_id: int, message_id: int, channel_
             current_logger.error(f"DB: Error inserting reaction role into DB: {db_e}", exc_info=True) # New error log
             return False
 
-async def fetch_reaction_roles_from_db(pool):
-    """Fetches reaction roles from the database."""
-    async with pool.acquire() as conn:
-        records = await conn.fetch("""
-            SELECT message_id, channel_id, emoji, role_id
-            FROM reaction_roles_table
-        """)
-        reaction_roles = [dict(r) for r in records]
-        return reaction_roles
-
 # --- Flask API Setup ---
 api_app = Flask(__name__)
 
 # Suppress werkzeug INFO level messages for this Flask API app
 # This needs to be done early to prevent werkzeug from adding its default handlers
-# A simpler way is to just set its level, handlers will be added by Flask
-logging.getLogger('werkzeug').setLevel(logging.ERROR)
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.ERROR) # Set level to ERROR to suppress INFO and WARNING
+# Remove existing handlers from werkzeug logger to ensure no default output
+if not werkzeug_logger.handlers: # Only add if no handlers are present to avoid duplicates on reload
+    for handler in list(werkzeug_logger.handlers):
+        werkzeug_logger.removeHandler(handler)
+    # You can optionally add a NullHandler if you want to completely silence it
+    # werkzeug_logger.addHandler(logging.NullHandler())
 
 
 # Store bot_instance globally or pass it, so API can access it
@@ -126,13 +118,10 @@ def bot_status():
 def command_stats():
     """Returns command usage statistics."""
     if bot_instance:
-        # Convert command_counts dictionary to a list of objects for JSON
         stats_list = []
         for cmd, count in bot_instance.command_counts.items():
             stats_list.append({"command_name": cmd, "usage_count": count})
-        # Sort by usage_count descending
         stats_list.sort(key=lambda x: x['usage_count'], reverse=True)
-
         return jsonify({
             "status": "success",
             "command_stats": stats_list,
@@ -147,26 +136,20 @@ def command_stats():
 @api_app.route('/logs')
 def get_logs():
     """Returns the last 500 lines of the bot's log file."""
-    log_file_path = logger_module.LOG_FILE_PATH # Use the path from logger_module
+    log_file_path = logger_module.LOG_FILE_PATH
     try:
         if not os.path.exists(log_file_path):
             return jsonify({"status": "error", "error": "Log file not found."}), 404
-
         with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            # Read all lines and get the last 500
             lines = f.readlines()
-            last_500_lines = lines[-500:] # Get the last 500 lines
-
-        # Filter out specific Werkzeug access logs if they are still being written to the file
-        # The logger setup in logger.py aims to prevent this, but as a fallback for the API.
+            last_500_lines = lines[-500:]
         filtered_logs = [
             line.strip() for line in last_500_lines
             if "GET /status HTTP/1.1" not in line and
                "GET /logs HTTP/1.1" not in line and
                "GET /command_stats HTTP/1.1" not in line and
-               "INFO....] [werkzeug]" not in line # General werkzeug info logs
+               "INFO....] [werkzeug]" not in line
         ]
-
         return jsonify({"status": "success", "logs": filtered_logs})
     except Exception as e:
         print(f"Error reading log file: {e}", file=sys.stderr)
@@ -178,10 +161,9 @@ def control_bot_api(action):
     """Handles bot control actions like restart, reload cogs, update git."""
     if not bot_instance:
         return jsonify({"status": "error", "error": "Bot instance not available."}), 500
-
+    # ... (your existing control_bot_api logic) ...
     if action == 'restart':
         bot_instance.logger.info("API 요청: 봇 재시작 중...")
-        # This will stop the current bot and trigger systemd to restart it
         asyncio.run_coroutine_threadsafe(bot_instance.close(), bot_instance.loop)
         return jsonify({"status": "success", "message": "Bot restart initiated."})
     elif action == 'reload_cogs':
@@ -195,12 +177,9 @@ def control_bot_api(action):
     elif action == 'update_git':
         bot_instance.logger.info("API 요청: Git 업데이트 및 재시작 준비 중...")
         try:
-            # Execute git pull in a non-blocking way if possible, or in a separate thread
-            # For simplicity, using subprocess.run which is blocking, but in a separate thread.
             result = subprocess.run(['git', 'pull'], capture_output=True, text=True, cwd=os.getcwd())
             if result.returncode == 0:
                 bot_instance.logger.info(f"Git pull 성공: {result.stdout.strip()}")
-                # After successful pull, restart the bot to apply changes
                 asyncio.run_coroutine_threadsafe(bot_instance.close(), bot_instance.loop)
                 return jsonify({"status": "success", "message": "Git pull successful. Bot restarting to apply updates."})
             else:
@@ -230,7 +209,6 @@ def send_announcement_api():
         if not channel:
             return jsonify({"status": "error", "error": "Channel not found or bot does not have access."}), 404
 
-        # Run the Discord send operation in the bot's event loop
         asyncio.run_coroutine_threadsafe(channel.send(message), bot_instance.loop)
         bot_instance.logger.info(f"API 요청: 채널 {channel_id}에 공지 전송 완료.")
         return jsonify({"status": "success", "message": "Announcement sent successfully."})
@@ -240,43 +218,34 @@ def send_announcement_api():
         bot_instance.logger.error(f"공지 전송 실패: {e}")
         return jsonify({"status": "error", "error": f"Failed to send announcement: {e}"}), 500
 
+
 @api_app.route('/api/reaction_roles', methods=['GET'])
 def get_reaction_roles_api():
     """
     API endpoint to retrieve reaction role data.
-    This will fetch actual reaction role data from your bot's
-    internal state, database, or a dedicated cog.
     """
-    if bot_instance and bot_instance.pool: # Ensure bot and database pool are ready
+    if bot_instance and bot_instance.pool:
         try:
-            # Note: Flask routes are synchronous. You need to run asyncpg operations
-            # in the bot's event loop.
-            loop = bot_instance.loop # Get the bot's event loop
+            loop = bot_instance.loop
             future = asyncio.run_coroutine_threadsafe(
-                fetch_reaction_roles_from_db(bot_instance.pool), # Call your async function
+                fetch_reaction_roles_from_db(bot_instance.pool),
                 loop
             )
-            reaction_roles_data = future.result(timeout=10) # Wait for result with a timeout
-
+            reaction_roles_data = future.result(timeout=10)
             return jsonify(reaction_roles_data), 200
-
-        except asyncio.TimeoutError:
-            bot_instance.logger.error("API: Timeout while fetching reaction roles from DB via API request.", exc_info=True)
-            return jsonify({"error": "Database operation timed out"}), 504
         except Exception as e:
             bot_instance.logger.error(f"Error in /api/reaction_roles: {e}", exc_info=True)
             return jsonify({"error": "Failed to fetch reaction roles from bot's internal state."}), 500
     else:
-        return jsonify({"error": "Bot instance or database not fully initialized."}), 503 # Service Unavailable
+        return jsonify({"error": "Bot instance or database not fully initialized."}), 503
 
 @api_app.route('/api/reaction_roles/add', methods=['POST'])
 def add_reaction_role_api():
-    # Use the root logger which is configured by logger_module
-    current_logger = logging.getLogger()
+    current_logger = bot_instance.logger
 
     try:
         data = request.get_json()
-        current_logger.debug(f"API: Received raw JSON for reaction_roles/add: {data}") # New debug log
+        current_logger.debug(f"API: Received raw JSON for reaction_roles/add: {data}")
 
         if not data:
             current_logger.warning("API: No JSON data provided for reaction roles add.")
@@ -288,15 +257,14 @@ def add_reaction_role_api():
             current_logger.warning(f"API: Missing required fields for reaction role add: {missing_fields}. Data received: {data}")
             return jsonify({"error": f"Missing required fields. Expected: {', '.join(required_fields)}"}), 400
 
-        # Type conversion and validation
         try:
             guild_id = int(data['guild_id'])
             message_id = int(data['message_id'])
             channel_id = int(data['channel_id'])
             role_id = int(data['role_id'])
             emoji = data['emoji']
-            current_logger.debug(f"API: Parsed data - Guild:{guild_id}, Msg:{message_id}, Chan:{channel_id}, Emoji:{emoji}, Role:{role_id}") # New debug log
-        except (ValueError, TypeError) as conv_e: # Added TypeError for robustness
+            current_logger.debug(f"API: Parsed data - Guild:{guild_id}, Msg:{message_id}, Chan:{channel_id}, Emoji:{emoji}, Role:{role_id}")
+        except (ValueError, TypeError) as conv_e:
             current_logger.error(f"API: Data conversion error in reaction roles add: {conv_e}. Input data: {data}", exc_info=True)
             return jsonify({"error": f"Invalid data type for one or more fields: {conv_e}. Ensure IDs are integers and emoji is a string."}), 400
         except KeyError as ke:
@@ -308,14 +276,14 @@ def add_reaction_role_api():
             current_logger.critical("API: Bot instance or database pool not available BEFORE DB operation.")
             return jsonify({"status": "error", "error": "Bot instance or database not available for operation."}), 503
 
-        loop = bot_instance.loop # Get the bot's event loop
-        current_logger.debug("API: Attempting to run add_reaction_role_to_db in bot's event loop.") # New debug log
+        loop = bot_instance.loop
+        current_logger.debug("API: Attempting to run add_reaction_role_to_db in bot's event loop.")
         future = asyncio.run_coroutine_threadsafe(
             add_reaction_role_to_db(bot_instance.pool, guild_id, message_id, channel_id, emoji, role_id),
             loop
         )
-        result = future.result(timeout=10) # 10-second timeout
-        current_logger.debug(f"API: Result from add_reaction_role_to_db: {result}") # New debug log
+        result = future.result(timeout=10)
+        current_logger.debug(f"API: Result from add_reaction_role_to_db: {result}")
 
         if result:
             current_logger.info(f"API: Reaction role added successfully for message {message_id} with emoji {emoji}.")
@@ -328,28 +296,23 @@ def add_reaction_role_api():
         current_logger.error("API: Timeout while adding reaction role to DB via API request.", exc_info=True)
         return jsonify({"error": "Database operation timed out"}), 504
     except Exception as e:
-        # This is the crucial catch-all for any UNEXPECTED errors.
-        # Use critical level and exc_info=True to ensure full traceback is logged.
         current_logger.critical(f"API: Unhandled CRITICAL exception in /api/reaction_roles/add: {e}", exc_info=True)
         return jsonify({"error": "An unexpected server error occurred.", "details": str(e)}), 500
-
-# Removed duplicate @api_app.route('/config', methods=['GET']) and kept this one for consistency
-@api_app.route('/api/config', methods=['GET'])
+@api_app.route('/config', methods=['GET'])
 def get_bot_config():
     """
     API endpoint to retrieve non-sensitive configuration data from utils.config.
     """
-    if not bot_instance:
-        return jsonify({"status": "error", "error": "Bot instance not available."}), 503
+    if not bot_instance or not hasattr(bot_instance, 'logger') or bot_instance.logger is None:
+        current_logger = logging.getLogger(__name__)
+    else:
+        current_logger = bot_instance.logger
 
     try:
-        # Use the root logger
-        current_logger = logging.getLogger()
         sensitive_keywords = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'DATABASE_URL', 'API', 'WEBHOOK']
         safe_config = {}
         for name, value in inspect.getmembers(config):
-            if name.startswith('__') or inspect.ismodule(value) or inspect.isfunction(value) or inspect.isclass(
-                    value):
+            if name.startswith('__') or inspect.ismodule(value) or inspect.isfunction(value) or inspect.isclass(value):
                 continue
             if any(keyword in name.upper() for keyword in sensitive_keywords):
                 continue
@@ -359,16 +322,22 @@ def get_bot_config():
         return jsonify({"status": "success", "config": safe_config}), 200
 
     except Exception as e:
-        # Use the root logger for error reporting
-        logging.getLogger().error(f"API Error: Failed to retrieve bot configuration from utils.config. Error: {e}", exc_info=True)
+        current_logger.error(f"API Error: Failed to retrieve bot configuration from utils.config. Error: {e}",
+                             exc_info=True)
         return jsonify({"status": "error", "error": f"Failed to retrieve bot configuration: {e}"}), 500
 
-
+async def fetch_reaction_roles_from_db(pool):
+    """Fetches reaction roles from the database."""
+    async with pool.acquire() as conn:
+        records = await conn.fetch("""
+            SELECT message_id, channel_id, emoji, role_id
+            FROM reaction_roles_table
+        """)
+        reaction_roles = [dict(r) for r in records]
+        return reaction_roles
 def run_api_server():
     os.environ['FLASK_APP'] = __name__
-
     try:
-        # It's crucial that this Flask app runs on port 5001
         api_app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False)
     except Exception as e:
         logging.getLogger().critical(f"봇 API 서버 시작 중 치명적인 오류 발생: {e}", exc_info=True)
@@ -385,9 +354,8 @@ class MyBot(commands.Bot):
         self.session = aiohttp.ClientSession() # For HTTP requests
         self.command_counts = {} # For command usage stats
         self.total_commands_today = 0 # Track total commands for the day
-        # Initially, self.logger points to the root logger.
-        # It will be fully configured in setup_hook.
-        self.logger = logging.getLogger()
+        # Initialize a basic logger immediately to ensure it always exists
+        self.logger = logging.getLogger('discord') # This is a standard Python logger
 
 
     async def setup_hook(self):
@@ -409,9 +377,9 @@ class MyBot(commands.Bot):
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 startup_log_filename = f"startup_log_{timestamp}.log"
                 startup_log_path = logger_module.LOG_FILE_PATH.parent / startup_log_filename
-                os.rename(logger_module.LOG_FILE_PATH, str(startup_log_path)) # Ensure path is string for os.rename
+                os.rename(logger_module.LOG_FILE_PATH, startup_log_path)
 
-                # Upload the renamed log file. upload_to_drive deletes the file locally on success.
+                # Upload the renamed log file. upload_log_to_drive deletes the file locally on success.
                 upload_to_drive.upload_log_to_drive(str(startup_log_path))
                 self.logger.info(f"✅ 'startup_log_{timestamp}.log' 파일이 성공적으로 업로드 및 삭제되었습니다.")
             except Exception as e:
@@ -420,19 +388,17 @@ class MyBot(commands.Bot):
             self.logger.info("시작 시 처리할 보류 중인 'log.log' 파일이 없습니다.")
         # --- END NEW ---
 
-        # Configure the main logger using _configure_root_handlers from utils.logger
+        # Configure the main logger using get_logger from utils.logger
         # This runs after the bot is ready and has access to self (the bot instance)
         try:
             # Call _configure_root_handlers to set up all handlers, including DiscordHandler
             # Pass the bot instance here as its loop is now available for DiscordHandler
             logger_module._configure_root_handlers(
                 bot=self,
-                file_level=logging.INFO, # Example: Set file log level to INFO
-                console_level=logging.INFO, # Example: Set console log level to INFO
-                discord_level=logging.INFO, # Example: Set Discord log level to INFO
                 discord_log_channel_id=config.LOG_CHANNEL_ID
             )
-            # self.logger already points to the root logger, which is now fully configured
+            # Re-assign self.logger to the root logger which now has all handlers
+            self.logger = logging.getLogger('기본 로그') # Get the root logger instance
             self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
         except Exception as e:
             self.logger.critical(f"❌ 로거 설정 중 심각한 오류 발생: {e}", exc_info=True)
@@ -454,12 +420,15 @@ class MyBot(commands.Bot):
         ]
         for ext in initial_extensions:
             try:
-                # The 'extras' argument for autoguest should be handled within the cog itself,
-                # as load_extension does not support arbitrary kwargs.
-                await self.load_extension(ext)
+                if ext == 'cogs.autoguest':
+                    # Removed 'extras' argument as it's not supported by load_extension.
+                    # The cogs.autoguest module should import config and use AUTO_ROLE_IDS directly.
+                    await self.load_extension(ext)
+                else:
+                    await self.load_extension(ext)
                 self.logger.info(f"✅ Cog 로드됨: {ext}")
             except commands.ExtensionAlreadyLoaded:
-                self.logger.warning(f"⚠️ Cog '{ext}'는 이미 로드되어 있습니다. 건너뜁니다.")
+                self.logger.warning(f"⚠️ Cog '{ext}'는 이미 로드되어 있습니다. 건너_.")
             except commands.ExtensionFailed as e:
                 self.logger.error(f"❌ Cog '{ext}' 로드 실패 (설정 오류 또는 내부 오류): {e}", exc_info=True)
             except commands.ExtensionNotFound:
@@ -509,9 +478,7 @@ class MyBot(commands.Bot):
         await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
 
         # --- NEW: Start the daily log upload task ---
-        # Ensure the task is not already running if on_ready is called multiple times (e.g., reconnects)
-        if not self.daily_log_uploader.is_running():
-            self.daily_log_uploader.start()
+        self.daily_log_uploader.start()
         # --- END NEW ---
 
 
@@ -595,6 +562,7 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
         logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
         try:
             # Assuming upload_to_drive is synchronous or handles its own async
+            # Note: Changed to upload_log_to_drive for consistency, assuming it's the intended function
             upload_to_drive.upload_log_to_drive(str(CRASH_LOG_FILE))
             # The upload_log_to_drive function already handles os.remove on success.
             logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
@@ -623,36 +591,44 @@ async def main():
                         format='[%(asctime)s] [%(levelname)s] [%(name)s] {message}',
                         datefmt='%Y-%m-%d %H:%M:%S',
                         style='{')
-    # No need to re-assign bot_instance.logger here, as it defaults to the root logger
-    # and the basicConfig applies to the root logger.
+    # Assign this basic logger to bot_instance.logger for early use
+    bot_instance.logger = logging.getLogger('초기 로거')
+
 
     # Check for Discord Token
     TOKEN = config.DISCORD_TOKEN
     if not TOKEN:
-        logging.getLogger().critical("❌ DISCORD_TOKEN 환경 변수가 설정되지 않았습니다. 봇을 시작할 수 없습니다.")
+        # Use the bot's logger if available, otherwise print
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical("DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.")
+        else:
+            print("CRITICAL: DISCORD_TOKEN이 config.py에 설정되지 않았습니다. 종료합니다.", file=sys.stderr)
         sys.exit(1)
 
     try:
+        # Start the bot
         await bot_instance.start(TOKEN)
-    except discord.LoginFailure:
-        logging.getLogger().critical("❌ 잘못된 토큰이 제공되었습니다. config.DISCORD_TOKEN을 확인하세요.")
-        sys.exit(1)
     except discord.HTTPException as e:
-        logging.getLogger().critical(f"❌ Discord API에 연결할 수 없습니다: {e}", exc_info=True)
-        sys.exit(1)
+        # Use the bot's logger
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"HTTP 예외: {e} - 봇 토큰이 올바르고 인텐트가 활성화되었는지 확인하세요.", exc_info=True)
+        else:
+            print(f"CRITICAL: HTTP 예외: {e} - 봇 토큰이 올바르고 인텐트가 활성화되었는지 확인하세요.", file=sys.stderr)
     except Exception as e:
-        # Catch any unhandled exceptions during the bot's main run
-        logging.getLogger().critical(f"봇의 메인 실행 중 치명적인 오류 발생: {e}", exc_info=True)
-        # Attempt to upload crash log before exiting
-        check_crash_log_and_handle(logging.getLogger())
-        sys.exit(1)
+        # Use the bot's logger
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"봇 런타임 중 처리되지 않은 오류 발생: {e}", exc_info=True)
+        else:
+            print(f"CRITICAL: 봇 런타임 중 처리되지 않은 오류 발생: {e}", file=sys.stderr)
     finally:
-        # Ensure session and pool are closed on shutdown
+        # Ensure bot_instance.logger is checked before use in finally block
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.info("봇이 중지되었습니다.")
+        else:
+            print("INFO: 봇이 중지되었습니다 (로거 초기화 실패).", file=sys.stderr)
+        # Ensure bot_instance is not None before calling close
         if bot_instance:
-            if bot_instance.session:
-                await bot_instance.session.close()
-            if bot_instance.pool:
-                await bot_instance.pool.close()
+            await bot_instance.close()
 
 
 if __name__ == "__main__":
@@ -679,9 +655,6 @@ if __name__ == "__main__":
         # Catch any unhandled exceptions during the bot's main run
         # Use a basic logger or print, as bot_instance.logger might not be fully initialized
         logging.getLogger().critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
-        # Attempt to use bot_instance's logger if available for crash log, otherwise fall back
-        if bot_instance and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
-            check_crash_log_and_handle(bot_instance.logger)
-        else:
-            check_crash_log_and_handle(logging.getLogger()) # Fallback to root logger
-        sys.exit(1)
+        # Attempt to use bot_instance's logger if it exists
+        if 'bot_instance' in locals() and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생 (재시도): {e}", exc_info=True)
