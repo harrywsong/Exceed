@@ -87,6 +87,7 @@ bot_instance = None
 # NEW: Regex and Level Map for Log Parsing
 # Matches log lines like: [2024-01-01 12:00:00] [INFO    ] [discord] Your log message here
 LOG_LINE_REGEX = re.compile(r"^\[(.*?)\] \[([A-Z]+)\s*\.?\] \[(.*?)\] (.*)$")
+SIMPLE_LOG_REGEX = re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL|WARN):\s*(.*)$", re.IGNORECASE)
 
 # Mapping from log level strings in the log file to logging module's level integers
 # This allows filtering by level severity
@@ -95,9 +96,9 @@ LEVEL_MAP = {
     'INFO': logging.INFO,
     'WARNING': logging.WARNING,
     'ERROR': logging.ERROR,
-    'CRITICAL': logging.CRITICAL
+    'CRITICAL': logging.CRITICAL,
+    'WARN': logging.WARNING
 }
-# END NEW
 
 
 @api_app.route('/status')
@@ -157,8 +158,8 @@ def get_logs():
     Accepts 'level' query parameter (e.g., ?level=INFO, ?level=ERROR).
     """
     log_file_path = logger_module.LOG_FILE_PATH
-    requested_level_str = request.args.get('level', '').upper() # NEW: Get level from query param
-    requested_level_int = LEVEL_MAP.get(requested_level_str, None) # NEW: Map to int level
+    requested_level_str = request.args.get('level', '').upper()
+    requested_level_int = LEVEL_MAP.get(requested_level_str, None)
 
     try:
         if not os.path.exists(log_file_path):
@@ -167,48 +168,56 @@ def get_logs():
             lines = f.readlines()
             last_500_lines = lines[-500:]
 
-        parsed_and_filtered_logs = [] # NEW: List for structured logs
+        parsed_and_filtered_logs = []
         for line in last_500_lines:
-            # Filter out known API access logs and Werkzeug info messages directly
-            if "GET /status HTTP/1.1" in line or \
-               "GET /logs HTTP/1.1" in line or \
-               "GET /command_stats HTTP/1.1" in line or \
-               "INFO....] [werkzeug]" in line:
+            stripped_line = line.strip()
+
+            if "GET /status HTTP/1.1" in stripped_line or \
+               "GET /logs HTTP/1.1" in stripped_line or \
+               "GET /command_stats HTTP/1.1" in stripped_line or \
+               "INFO....] [werkzeug]" in stripped_line:
                 continue
 
-            match = LOG_LINE_REGEX.match(line.strip()) # NEW: Attempt to parse line
-            if match:
-                timestamp_str, level_raw, logger_name, message = match.groups()
-                log_level_int = LEVEL_MAP.get(level_raw, logging.INFO) # Default to INFO if level not found
+            parsed_entry = None
 
-                # NEW: Apply level filtering
-                if requested_level_int is None or log_level_int >= requested_level_int:
-                    # Append structured log if it meets the filter criteria
-                    parsed_and_filtered_logs.append({
-                        "timestamp": timestamp_str,
-                        "level": level_raw, # Keep raw level string for frontend display
-                        "logger_name": logger_name,
-                        "message": message.strip()
-                    })
+# NEW_LINE_START
+            match_structured = LOG_LINE_REGEX.match(stripped_line)
+            if match_structured:
+                timestamp_str, level_raw, logger_name, message = match_structured.groups()
+                log_level_int = LEVEL_MAP.get(level_raw, logging.INFO)
+                parsed_entry = {
+                    "timestamp": timestamp_str,
+                    "level": level_raw,
+                    "logger_name": logger_name,
+                    "message": message.strip()
+                }
             else:
-                # If a line doesn't match the regex, include it as a raw message,
-                # possibly with a default level, or skip it.
-                # For simplicity, we'll include it as a raw message if no specific level filter is active.
-                if requested_level_int is None: # Only include raw lines if no filter is active
-                     parsed_and_filtered_logs.append({
-                        "timestamp": "N/A", # Indicate unparsed
+                match_simple = SIMPLE_LOG_REGEX.match(stripped_line)
+                if match_simple:
+                    level_raw, message = match_simple.groups()
+                    log_level_int = LEVEL_MAP.get(level_raw.upper(), logging.INFO)
+                    parsed_entry = {
+                        "timestamp": "N/A",
+                        "level": level_raw.upper(),
+                        "logger_name": "ROOT",
+                        "message": message.strip()
+                    }
+                else:
+                    log_level_int = logging.INFO
+                    parsed_entry = {
+                        "timestamp": "N/A",
                         "level": "RAW",
                         "logger_name": "N/A",
-                        "message": line.strip()
-                    })
+                        "message": stripped_line
+                    }
 
-        # Return structured logs
+            if parsed_entry and (requested_level_int is None or log_level_int >= requested_level_int):
+                parsed_and_filtered_logs.append(parsed_entry)
+# NEW_LINE_END
         return jsonify({"status": "success", "logs": parsed_and_filtered_logs})
     except Exception as e:
         print(f"Error reading or parsing log file: {e}", file=sys.stderr)
         return jsonify({"status": "error", "error": f"Failed to read or parse log file: {e}"}), 500
-
-# ... rest of your bot.py code ...
 
 @api_app.route('/control/<action>', methods=['POST'])
 def control_bot_api(action):
