@@ -361,7 +361,7 @@ async def fetch_reaction_roles_from_db(pool):
 def run_api_server():
     """Runs the Flask API server for the bot in a separate thread."""
     # Use a different port than the UI Flask app (5000)
-    api_app.run(host='127.0.0.1', port=5001, debug=False) # Set debug=False for this API server
+    api_app.run(host='127.0.0.1', port=5000, debug=False) # Set debug=False for this API server
 
 # --- End Flask API Setup ---
 
@@ -657,7 +657,7 @@ if __name__ == "__main__":
     api_thread = Thread(target=run_api_server)
     api_thread.daemon = True # Allow main program to exit even if thread is running
     api_thread.start()
-    print(f"Existing Bot API running on http://127.0.0.1:5001")
+    print(f"Existing Bot API running on http://127.0.0.1:5000")
 
     try:
         # Run the main Discord bot asynchronous loop
