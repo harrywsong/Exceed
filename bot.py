@@ -343,6 +343,41 @@ async def get_bot_guilds():
         })
     return jsonify({"status": "success", "guilds": guilds_data})
 
+@api_app.route('/api/guilds', methods=['GET'])
+async def get_guilds():
+    """
+    Returns a list of guilds the bot is currently in, with relevant details.
+    """
+    if bot_instance and bot_instance.is_ready():
+        guild_data = []
+        for guild in bot_instance.guilds:
+            # Ensure owner is fetched if not cached
+            owner_name = '알 수 없음'
+            if guild.owner:
+                owner_name = guild.owner.name
+            else:
+                # Attempt to fetch owner if not in cache (requires privileged intents if members not cached)
+                try:
+                    fetched_owner = await bot_instance.fetch_user(guild.owner_id)
+                    owner_name = fetched_owner.name
+                except discord.NotFound:
+                    owner_name = f"알 수 없음 (ID: {guild.owner_id})"
+                except discord.HTTPException:
+                    owner_name = "가져오기 실패"
+
+
+            guild_data.append({
+                'id': str(guild.id), # Convert ID to string for JSON serialization
+                'name': guild.name,
+                'member_count': guild.member_count,
+                'channel_count': len(guild.channels),
+                'owner_id': str(guild.owner_id) if guild.owner_id else 'N/A', # Convert to string
+                'owner_name': owner_name,
+                'icon_url': str(guild.icon.url) if guild.icon else None # Get guild icon URL
+            })
+        return jsonify(guild_data), 200
+    return jsonify({"status": "error", "message": "Bot instance not ready."}), 503
+
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
