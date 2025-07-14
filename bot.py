@@ -45,6 +45,21 @@ async def create_db_pool_in_bot():
         print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}", file=sys.stderr)
         raise # Re-raise to ensure bot doesn't start without DB
 
+
+async def add_reaction_role_to_db(pool, guild_id: int, message_id: int, channel_id: int, emoji: str, role_id: int):
+    """Adds a reaction role to the database."""
+    async with pool.acquire() as conn:
+        try:
+            await conn.execute("""
+                INSERT INTO reaction_roles_table (guild_id, message_id, channel_id, emoji, role_id)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (message_id, emoji, role_id) DO NOTHING;
+            """, guild_id, message_id, channel_id, emoji, role_id)
+            return True # Indicate success
+        except Exception as e:
+            logging.getLogger().error(f"Error inserting reaction role into DB: {e}", exc_info=True)
+            return False
+
 # --- Flask API Setup ---
 api_app = Flask(__name__)
 
@@ -245,6 +260,53 @@ def get_reaction_roles_api():
     else:
         return jsonify({"error": "Bot instance or database not fully initialized."}), 503 # Service Unavailable
 
+@api_app.route('/api/reaction_roles/add', methods=['POST'])
+def add_reaction_role_api():
+    """
+    API endpoint to add a new reaction role to the database.
+    Expects JSON payload with 'guild_id', 'message_id', 'channel_id', 'emoji', 'role_id'.
+    """
+    if not bot_instance or not bot_instance.pool:
+        return jsonify({"status": "error", "error": "Bot instance or database not available."}), 503
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        # Validate required fields
+        required_fields = ['guild_id', 'message_id', 'channel_id', 'emoji', 'role_id']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": f"Missing required fields. Expected: {', '.join(required_fields)}"}), 400
+
+        guild_id = int(data['guild_id'])
+        message_id = int(data['message_id'])
+        channel_id = int(data['channel_id'])
+        emoji = data['emoji']
+        role_id = int(data['role_id'])
+
+        loop = bot_instance.loop # Get the bot's event loop
+        future = asyncio.run_coroutine_threadsafe(
+            add_reaction_role_to_db(bot_instance.pool, guild_id, message_id, channel_id, emoji, role_id),
+            loop
+        )
+        result = future.result(timeout=10) # 10-second timeout
+
+        if result:
+            bot_instance.logger.info(f"API Request: Reaction role added for message {message_id} with emoji {emoji}.")
+            return jsonify({"success": True, "message": "Reaction role added successfully"}), 201
+        else:
+            bot_instance.logger.warning(f"API Request: Failed to add reaction role for message {message_id} with emoji {emoji}.")
+            return jsonify({"success": False, "message": "Failed to add reaction role to database"}), 500
+
+    except ValueError as e:
+        return jsonify({"error": f"Invalid data type for one or more IDs: {e}. Ensure IDs are integers."}), 400
+    except asyncio.TimeoutError:
+        bot_instance.logger.error("Timeout while adding reaction role to DB.")
+        return jsonify({"error": "Database operation timed out"}), 504
+    except Exception as e:
+        bot_instance.logger.error(f"Error adding reaction role via API: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error adding reaction role", "details": str(e)}), 500
 
 @api_app.route('/api/config', methods=['GET'])
 def get_bot_config():
@@ -277,6 +339,7 @@ def get_bot_config():
     except Exception as e:
         bot_instance.logger.error(f"API Error: Could not read configuration. Error: {e}")
         return jsonify({"status": "error", "error": "Could not read configuration."}), 500
+
 
 
 # --- You will also need this async function in bot.py (e.g., above Flask routes) ---
