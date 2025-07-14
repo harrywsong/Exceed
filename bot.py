@@ -68,7 +68,7 @@ bot_instance = None
 def bot_status():
     """Returns the current status of the bot."""
     if bot_instance and bot_instance.is_ready():
-        uptime = datetime.now(datetime.timezone.utc) - bot_instance.start_time
+        uptime = datetime.now(pytz.utc) - bot_instance.start_time
         hours, remainder = divmod(int(uptime.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
         uptime_str = f"{hours}h {minutes}m {seconds}s"
