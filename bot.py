@@ -10,6 +10,7 @@ import logging
 import sys
 import pathlib
 import asyncpg # Import for PostgreSQL async operations
+from datetime import datetime, time as dt_time, timedelta # Import time and timedelta
 
 # --- Flask API Imports ---
 from flask import Flask, jsonify, request
@@ -20,7 +21,7 @@ import subprocess # For git pull command
 
 import utils.config as config
 import utils.logger as logger_module # This module contains get_logger and _configure_root_handlers
-from utils import upload_to_drive
+from utils import upload_to_drive # Ensure this import is correct and points to upload_to_drive.py
 
 # --- Database Functions (Moved from utils/database.py) ---
 async def create_db_pool_in_bot():
@@ -66,7 +67,7 @@ bot_instance = None
 def bot_status():
     """Returns the current status of the bot."""
     if bot_instance and bot_instance.is_ready():
-        uptime = datetime.datetime.now(datetime.timezone.utc) - bot_instance.start_time
+        uptime = datetime.now(datetime.timezone.utc) - bot_instance.start_time
         hours, remainder = divmod(int(uptime.total_seconds()), 3600)
         minutes, seconds = divmod(remainder, 60)
         uptime_str = f"{hours}h {minutes}m {seconds}s"
@@ -89,7 +90,7 @@ def bot_status():
             "latency_ms": "N/A",
             "guild_count": 0,
             "user_count": 0,
-            "commands_used_today": 0,
+            "commands_today": 0,
             "error": "Bot is not ready or offline."
         })
 
@@ -223,7 +224,7 @@ def run_api_server():
 class MyBot(commands.Bot):
     def __init__(self, command_prefix, intents):
         super().__init__(command_prefix=command_prefix, intents=intents)
-        self.start_time = datetime.datetime.now(datetime.timezone.utc)
+        self.start_time = datetime.now(datetime.timezone.utc)
         self.pool = None # Database connection pool
         self.session = aiohttp.ClientSession() # For HTTP requests
         self.command_counts = {} # For command usage stats
@@ -241,6 +242,26 @@ class MyBot(commands.Bot):
             self.logger.critical(f"❌ 데이터베이스 풀 생성 실패: {e}", exc_info=True)
             # Exit if DB connection fails, as bot won't function correctly
             sys.exit(1)
+
+        # --- NEW: Handle `log.log` upload on startup ---
+        # Before configuring the full logger, check for existing log.log
+        if os.path.exists(logger_module.LOG_FILE_PATH) and os.path.getsize(logger_module.LOG_FILE_PATH) > 0:
+            self.logger.info("⚠️ 이전 'log.log' 파일이 감지되었습니다. Google Drive에 업로드 중...")
+            try:
+                # Rename the current log.log to a startup log format
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                startup_log_filename = f"startup_log_{timestamp}.log"
+                startup_log_path = logger_module.LOG_FILE_PATH.parent / startup_log_filename
+                os.rename(logger_module.LOG_FILE_PATH, startup_log_path)
+
+                # Upload the renamed log file. upload_log_to_drive deletes the file locally on success.
+                upload_to_drive.upload_log_to_drive(str(startup_log_path))
+                self.logger.info(f"✅ 'startup_log_{timestamp}.log' 파일이 성공적으로 업로드 및 삭제되었습니다.")
+            except Exception as e:
+                self.logger.error(f"❌ 시작 시 'log.log' 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
+        else:
+            self.logger.info("시작 시 처리할 보류 중인 'log.log' 파일이 없습니다.")
+        # --- END NEW ---
 
         # Configure the main logger using get_logger from utils.logger
         # This runs after the bot is ready and has access to self (the bot instance)
@@ -331,6 +352,10 @@ class MyBot(commands.Bot):
         # Ensure crash log handling runs after logger is fully set up
         await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
 
+        # --- NEW: Start the daily log upload task ---
+        self.daily_log_uploader.start()
+        # --- END NEW ---
+
 
     async def on_command_completion(self, context):
         """Event that fires when a traditional prefix command is successfully completed."""
@@ -370,6 +395,33 @@ class MyBot(commands.Bot):
             self.logger.error(f"명령어 '{context.command}' 실행 중 예상치 못한 오류 발생: {error}", exc_info=True)
             await context.send("❌ 명령어 실행 중 예상치 못한 오류가 발생했습니다. 관리자에게 문의해주세요.", ephemeral=True)
 
+    # --- NEW: Daily Log Uploader Task ---
+    @tasks.loop(time=dt_time(hour=0, minute=5)) # Run daily at 00:05 (12:05 AM) local time
+    async def daily_log_uploader(self):
+        log_dir = logger_module.LOG_FILE_PATH.parent
+        self.logger.info("일일 로그 업로드 작업을 시작합니다.")
+        # Calculate yesterday's date for potential log file name
+        yesterday_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        expected_rotated_log_name = f"log.log.{yesterday_date}"
+        rotated_log_path = log_dir / expected_rotated_log_name
+
+        if os.path.exists(rotated_log_path) and os.path.getsize(rotated_log_path) > 0:
+            self.logger.info(f"⚠️ 감지된 어제 날짜의 회전된 로그 파일: '{expected_rotated_log_name}'. Google Drive에 업로드 중...")
+            try:
+                # upload_log_to_drive handles the upload and local deletion
+                upload_to_drive.upload_log_to_drive(str(rotated_log_path))
+                self.logger.info(f"✅ '{expected_rotated_log_name}' 파일이 성공적으로 업로드 및 삭제되었습니다.")
+            except Exception as e:
+                self.logger.error(f"❌ '{expected_rotated_log_name}' 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
+        else:
+            self.logger.info(f"어제 ({yesterday_date}) 날짜의 회전된 로그 파일이 없거나 비어 있습니다.")
+
+    @daily_log_uploader.before_loop
+    async def before_daily_log_uploader(self):
+        await self.wait_until_ready()
+        self.logger.info("일일 로그 업로더가 준비될 때까지 기다리는 중...")
+    # --- END NEW ---
+
 
 # --- Crash Log Handling ---
 CRASH_LOG_DIR = pathlib.Path(__file__).parent.parent / "logs"
@@ -385,8 +437,9 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
         logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
         try:
             # Assuming upload_to_drive is synchronous or handles its own async
-            upload_to_drive.upload_file(str(CRASH_LOG_FILE), "bot_crash_logs")
-            os.remove(CRASH_LOG_FILE)
+            # Note: Changed to upload_log_to_drive for consistency, assuming it's the intended function
+            upload_to_drive.upload_log_to_drive(str(CRASH_LOG_FILE))
+            # The upload_log_to_drive function already handles os.remove on success.
             logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
         except Exception as e:
             logger_instance.error(f"❌ 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
