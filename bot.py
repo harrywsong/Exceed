@@ -509,6 +509,71 @@ def simulate_log_api():
                                       exc_info=True)
         return jsonify({"status": "error", "error": f"Internal server error: {e}"}), 500
 
+@api_app.route('/logs', methods=['GET'])
+def get_recent_logs():
+    try:
+        # Construct the path to the log file.
+        # Assumes log.log is in a 'logs' directory sibling to bot.py
+        log_file_path = pathlib.Path(__file__).parent / "logs" / "log.log"
+        if not log_file_path.exists():
+            bot_instance.error(f"Log file not found at: {log_file_path}")
+            return jsonify({"status": "error", "message": "Log file not found."}), 404
+
+        with open(log_file_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            # Get the last N lines (e.g., 200), parse them into structured objects
+            recent_logs = []
+            # Regex to match log format: [YYYY-MM-DD HH:MM:SS] [LEVEL....] [LOGGER_NAME] Message
+            # Example from crash_log.txt: [2025-07-13 19:34:18] [INFO....] [기본 로그] ✅ 봇 로거가 성공적으로 설정되었습니다.
+            # Captures timestamp, raw level (e.g., "INFO...."), optional thread ID, logger name, and message.
+            log_pattern = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(.*?)(?:\.<(\d+))?\] \[(.*?)\] (.*)$')
+
+
+            for line in reversed(lines[-200:]): # Read the last 200 lines for efficiency
+                match = log_pattern.match(line.strip())
+                if match:
+                    timestamp, level_raw, thread_id_part, logger_name, message = match.groups()
+                    # Clean up level_raw (e.g., "INFO...." -> "INFO")
+                    level = level_raw.split('.')[0]
+                    recent_logs.append({
+                        "timestamp": timestamp,
+                        "level": level.upper(), # Ensure level is uppercase
+                        "logger_name": logger_name,
+                        "message": message
+                    })
+                else:
+                    # Fallback for lines that don't match the pattern (e.g., partial logs, or different formats)
+                    # Try to extract level and message if possible
+                    level = "UNKNOWN"
+                    if "DEBUG" in line.upper():
+                        level = "DEBUG"
+                    elif "INFO" in line.upper():
+                        level = "INFO"
+                    elif "WARNING" in line.upper():
+                        level = "WARNING"
+                    elif "ERROR" in line.upper():
+                        level = "ERROR"
+                    elif "CRITICAL" in line.upper():
+                        level = "CRITICAL"
+
+                    # Simple split to get message if no full match, limit length
+                    message_part = line.strip()
+                    if len(message_part) > 200: # Limit long unparsed messages for display
+                        message_part = message_part[:200] + "..."
+
+                    recent_logs.append({
+                        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # Use current time for unparsed logs
+                        "level": level,
+                        "logger_name": "Unparsed",
+                        "message": message_part
+                    })
+
+        # Reverse again to have the newest logs at the bottom (chronological order)
+        return jsonify({"status": "success", "logs": recent_logs[::-1]}), 200
+    except Exception as e:
+        bot_instance.error(f"Error retrieving logs: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": f"Failed to retrieve logs: {e}"}), 500
+
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
