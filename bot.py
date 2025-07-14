@@ -86,7 +86,7 @@ bot_instance = None
 
 # NEW: Regex and Level Map for Log Parsing
 # Matches log lines like: [2024-01-01 12:00:00] [INFO    ] [discord] Your log message here
-LOG_LINE_REGEX = re.compile(r"^\[(.*?)\] \[([A-Z]+)\s*\.?\] \[(.*?)\] (.*)$")
+LOG_LINE_REGEX = re.compile(r"^\[(.*?)\] \[([A-Z]+)\s*\.*\] \[(.*?)\] (.*)$")
 SIMPLE_LOG_REGEX = re.compile(r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL|WARN):\s*(.*)$", re.IGNORECASE)
 
 # Mapping from log level strings in the log file to logging module's level integers
