@@ -92,7 +92,7 @@ class ReactionRoles(commands.Cog):
                     continue
                 try:
                     await message.add_reaction(emoji_key_in_map)
-                    self.logger.info(f"➕ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가했습니다.")
+                    self.logger.debug(f"➕ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가했습니다.")
                     await asyncio.sleep(0.5)
                 except discord.HTTPException as e:
                     self.logger.error(
