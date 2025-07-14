@@ -13,6 +13,7 @@ import pathlib
 import asyncpg # Import for PostgreSQL async operations
 import inspect
 from datetime import datetime, time as dt_time, timedelta # Import time and timedelta
+import re # <-- NEW: Import re for regex parsing
 
 # --- Flask API Imports ---
 from flask import Flask, jsonify, request
@@ -83,6 +84,22 @@ if not werkzeug_logger.handlers: # Only add if no handlers are present to avoid 
 global bot_instance
 bot_instance = None
 
+# NEW: Regex and Level Map for Log Parsing
+# Matches log lines like: [2024-01-01 12:00:00] [INFO    ] [discord] Your log message here
+LOG_LINE_REGEX = re.compile(r"^\[(.*?)\] \[([A-Z]+)\s*\.?\] \[(.*?)\] (.*)$")
+
+# Mapping from log level strings in the log file to logging module's level integers
+# This allows filtering by level severity
+LEVEL_MAP = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+# END NEW
+
+
 @api_app.route('/status')
 def bot_status():
     """Returns the current status of the bot."""
@@ -135,26 +152,63 @@ def command_stats():
 
 @api_app.route('/logs')
 def get_logs():
-    """Returns the last 500 lines of the bot's log file."""
+    """
+    Returns the last 500 lines of the bot's log file, with optional filtering by log level.
+    Accepts 'level' query parameter (e.g., ?level=INFO, ?level=ERROR).
+    """
     log_file_path = logger_module.LOG_FILE_PATH
+    requested_level_str = request.args.get('level', '').upper() # NEW: Get level from query param
+    requested_level_int = LEVEL_MAP.get(requested_level_str, None) # NEW: Map to int level
+
     try:
         if not os.path.exists(log_file_path):
             return jsonify({"status": "error", "error": "Log file not found."}), 404
         with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
             last_500_lines = lines[-500:]
-        filtered_logs = [
-            line.strip() for line in last_500_lines
-            if "GET /status HTTP/1.1" not in line and
-               "GET /logs HTTP/1.1" not in line and
-               "GET /command_stats HTTP/1.1" not in line and
-               "INFO....] [werkzeug]" not in line
-        ]
-        return jsonify({"status": "success", "logs": filtered_logs})
-    except Exception as e:
-        print(f"Error reading log file: {e}", file=sys.stderr)
-        return jsonify({"status": "error", "error": f"Failed to read log file: {e}"}), 500
 
+        parsed_and_filtered_logs = [] # NEW: List for structured logs
+        for line in last_500_lines:
+            # Filter out known API access logs and Werkzeug info messages directly
+            if "GET /status HTTP/1.1" in line or \
+               "GET /logs HTTP/1.1" in line or \
+               "GET /command_stats HTTP/1.1" in line or \
+               "INFO....] [werkzeug]" in line:
+                continue
+
+            match = LOG_LINE_REGEX.match(line.strip()) # NEW: Attempt to parse line
+            if match:
+                timestamp_str, level_raw, logger_name, message = match.groups()
+                log_level_int = LEVEL_MAP.get(level_raw, logging.INFO) # Default to INFO if level not found
+
+                # NEW: Apply level filtering
+                if requested_level_int is None or log_level_int >= requested_level_int:
+                    # Append structured log if it meets the filter criteria
+                    parsed_and_filtered_logs.append({
+                        "timestamp": timestamp_str,
+                        "level": level_raw, # Keep raw level string for frontend display
+                        "logger_name": logger_name,
+                        "message": message.strip()
+                    })
+            else:
+                # If a line doesn't match the regex, include it as a raw message,
+                # possibly with a default level, or skip it.
+                # For simplicity, we'll include it as a raw message if no specific level filter is active.
+                if requested_level_int is None: # Only include raw lines if no filter is active
+                     parsed_and_filtered_logs.append({
+                        "timestamp": "N/A", # Indicate unparsed
+                        "level": "RAW",
+                        "logger_name": "N/A",
+                        "message": line.strip()
+                    })
+
+        # Return structured logs
+        return jsonify({"status": "success", "logs": parsed_and_filtered_logs})
+    except Exception as e:
+        print(f"Error reading or parsing log file: {e}", file=sys.stderr)
+        return jsonify({"status": "error", "error": f"Failed to read or parse log file: {e}"}), 500
+
+# ... rest of your bot.py code ...
 
 @api_app.route('/control/<action>', methods=['POST'])
 def control_bot_api(action):
@@ -670,43 +724,3 @@ async def main():
         # Use the bot's logger
         if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
             bot_instance.logger.critical(f"봇 런타임 중 처리되지 않은 오류 발생: {e}", exc_info=True)
-        else:
-            print(f"CRITICAL: 봇 런타임 중 처리되지 않은 오류 발생: {e}", file=sys.stderr)
-    finally:
-        # Ensure bot_instance.logger is checked before use in finally block
-        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
-            bot_instance.logger.info("봇이 중지되었습니다.")
-        else:
-            print("INFO: 봇이 중지되었습니다 (로거 초기화 실패).", file=sys.stderr)
-        # Ensure bot_instance is not None before calling close
-        if bot_instance:
-            await bot_instance.close()
-
-
-if __name__ == "__main__":
-    # Start the Flask API in a separate thread
-    # This ensures the API runs concurrently with the Discord bot.
-    api_thread = Thread(target=run_api_server)
-    api_thread.daemon = True # Allow main program to exit even if thread is running
-    api_thread.start()
-    print(f"Existing Bot API running on http://127.0.0.1:5001")
-
-    try:
-        # Run the main Discord bot asynchronous loop
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        # Handle graceful shutdown on Ctrl+C
-        if bot_instance:
-            if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
-                bot_instance.logger.info("봇이 수동으로 중지되었습니다 (KeyboardInterrupt).")
-            else:
-                print("INFO: 봇이 수동으로 중지되었습니다 (로거 초기화 실패, KeyboardInterrupt).", file=sys.stderr)
-        else:
-            print("INFO: 봇이 수동으로 중지되었습니다 (KeyboardInterrupt).", file=sys.stderr)
-    except Exception as e:
-        # Catch any unhandled exceptions during the bot's main run
-        # Use a basic logger or print, as bot_instance.logger might not be fully initialized
-        logging.getLogger().critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
-        # Attempt to use bot_instance's logger if it exists
-        if 'bot_instance' in locals() and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
-            bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생 (재시도): {e}", exc_info=True)
