@@ -11,6 +11,7 @@ import logging
 import sys
 import pathlib
 import asyncpg # Import for PostgreSQL async operations
+import inspect
 from datetime import datetime, time as dt_time, timedelta # Import time and timedelta
 
 # --- Flask API Imports ---
@@ -243,6 +244,40 @@ def get_reaction_roles_api():
             return jsonify({"error": "Failed to fetch reaction roles from bot's internal state."}), 500
     else:
         return jsonify({"error": "Bot instance or database not fully initialized."}), 503 # Service Unavailable
+
+
+@api_app.route('/api/config', methods=['GET'])
+def get_bot_config():
+    """
+    API endpoint to retrieve non-sensitive configuration data from utils.config.
+    """
+    if not bot_instance:
+        return jsonify({"status": "error", "error": "Bot instance not available."}), 503
+
+    try:
+        # Keywords to identify sensitive data that should NOT be exposed via the API
+        sensitive_keywords = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'DATABASE_URL', 'API', 'WEBHOOK']
+
+        safe_config = {}
+        # Inspect the imported config module to get its variables
+        for name, value in inspect.getmembers(config):
+            # Ignore private/dunder members and modules
+            if name.startswith('__') or inspect.ismodule(value):
+                continue
+
+            # Check if any part of the variable name is in our sensitive list
+            if any(keyword in name.upper() for keyword in sensitive_keywords):
+                continue
+
+            # If it's safe, add it to our dictionary
+            safe_config[name] = str(value)  # Convert value to string for JSON
+
+        return jsonify({"status": "success", "config": safe_config})
+
+    except Exception as e:
+        bot_instance.logger.error(f"API Error: Could not read configuration. Error: {e}")
+        return jsonify({"status": "error", "error": "Could not read configuration."}), 500
+
 
 # --- You will also need this async function in bot.py (e.g., above Flask routes) ---
 async def fetch_reaction_roles_from_db(pool):
