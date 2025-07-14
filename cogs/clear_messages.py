@@ -9,11 +9,8 @@ from utils import config
 class ClearMessages(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "메시지 정리",
-        )
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("ClearMessages cog initialized with logger 'clearmessages'.")
-
 
     @app_commands.command(name="삭제", description="이 채널에서 최근 메시지를 삭제합니다.")
     @app_commands.describe(amount="삭제할 메시지 수 (최대 100개)")

@@ -13,9 +13,7 @@ class TempVoice(commands.Cog):
         self.category_id = config.TEMP_VOICE_CATEGORY_ID
         self.temp_channels = {}
 
-        self.logger = get_logger(
-            "임시 음성",
-        )
+        self.logger = get_logger(self.__class__.__name__)
 
         self.cleanup_empty_channels.start()
         self.logger.info("TempVoice Cog 초기화 완료.")

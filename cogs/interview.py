@@ -329,9 +329,7 @@ class InterviewRequestCog(commands.Cog):
         self.public_channel_id = INTERVIEW_PUBLIC_CHANNEL_ID
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
 
-        self.logger = get_logger(
-            "클랜 인터뷰",
-        )
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("InterviewRequestCog 초기화 완료.")
 
         self.FONT = None

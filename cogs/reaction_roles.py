@@ -14,13 +14,9 @@ class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.guild_id = config.GUILD_ID
-        # self.reaction_role_map is no longer needed as data comes from DB
-        self.logger = get_logger(
-            "리액션 역할",
-        )
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("ReactionRoles Cog 초기화 완료.")
 
-        # Schedule population after bot is fully ready
         self.bot.loop.create_task(self.wait_until_ready_then_populate())
 
     async def wait_until_ready_then_populate(self):

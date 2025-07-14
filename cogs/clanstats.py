@@ -35,9 +35,7 @@ async def is_registered(interaction: discord.Interaction) -> bool:
 class ValorantStats(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.logger = get_logger(
-            "발로란트 통계",
-        )
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("ValorantStats cog initialized.")
 
     async def save_match_and_clan(self, data: dict, match_uuid: Optional[str] = None):

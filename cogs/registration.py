@@ -7,9 +7,7 @@ from utils import config
 class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.log = get_logger(
-            "계정 연동",
-        )
+        self.log = get_logger(self.__class__.__name__)
 
     @app_commands.command(
         name="연동",

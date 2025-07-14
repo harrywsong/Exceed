@@ -356,9 +356,7 @@ class CloseTicketView(View):
 class TicketSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "티켓 시스템",
-        )
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("TicketSystem Cog 초기화 완료.")
 
     async def send_ticket_request_message(self):

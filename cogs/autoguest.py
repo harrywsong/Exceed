@@ -8,15 +8,11 @@ from utils.logger import get_logger
 from utils import config
 
 class AutoRoleCog(commands.Cog):
-    def __init__(self, bot, role_ids: list[int]):
+    def __init__(self, bot, auto_role_ids):
         self.bot = bot
-        self.role_ids = role_ids
-        self.logger = get_logger(
-            "자동 역할 (게스트)",
-        )
-        # ADD THIS DEBUGGING LINE:
-        print(f"DEBUG: self.logger in AutoRoleCog __init__ is: {self.logger}")
-        self.logger.info("AutoRoleCog initialized.") # This is the line that errors out
+        self.auto_role_ids = auto_role_ids
+        self.logger = get_logger(self.__class__.__name__)
+        self.logger.info("AutoRoleCog initialized.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):

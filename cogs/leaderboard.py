@@ -140,9 +140,7 @@ class ClanLeaderboard(commands.Cog):
         self.bot = bot
         self.leaderboard_messages = {}
 
-        self.logger = get_logger(
-            "클랜 리더보드",
-        )
+        self.logger = get_logger(self.__class__.__name__)
         self.logger.info("ClanLeaderboard cog initialized.")
 
         self.leaderboard_channel = None

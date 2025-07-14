@@ -27,9 +27,7 @@ except OSError:
 class WelcomeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "환영/인사 카드",
-        )
+        self.logger = get_logger(self.__class__.__name__)
 
         self.logger.info("WelcomeCog 초기화 완료.")
 
