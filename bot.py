@@ -441,27 +441,43 @@ async def get_guilds():
         return jsonify(guild_data), 200
     return jsonify({"status": "error", "message": "Bot instance not ready."}), 503
 
+
 @api_app.route('/simulate_log', methods=['POST'])
-def simulate_log():
+def simulate_log_api():
     """
-    Simulates a log message at a specific level for testing.
-    Expects JSON: {"level": "INFO", "message": "Test log message"}
+    API endpoint to receive simulated log messages and log them.
+    Expects JSON payload with 'level' (e.g., 'INFO', 'WARNING', 'ERROR') and 'message'.
     """
-    data = request.get_json()
-    log_level_str = data.get('level', 'INFO').upper()
-    log_message = data.get('message', 'This is a simulated log message.')
+    try:
+        data = request.get_json()
+        if not data or 'level' not in data or 'message' not in data:
+            return jsonify(
+                {"status": "error", "error": "Invalid request body. 'level' and 'message' are required."}), 400
 
-    # Map string level to logging module's level
-    log_level = getattr(logging, log_level_str, logging.INFO)
+        log_level_str = data['level'].upper()
+        log_message = data['message']
 
-    if bot_instance and hasattr(bot_instance, 'logger'):
-        # Use the bot's configured logger
-        bot_instance.logger.log(log_level, f"SIMULATED_LOG: {log_message} (Level: {log_level_str})")
-        return jsonify({"status": "success", "message": f"Log message at level {log_level_str} simulated."}), 200
-    else:
-        # Fallback if bot_instance or logger is not ready
-        logging.getLogger().log(log_level, f"SIMULATED_LOG (Fallback): {log_message} (Level: {log_level_str})")
-        return jsonify({"status": "warning", "message": "Bot instance or logger not fully ready; log simulated via root logger."}), 200
+        # Map string level to logging module's level
+        log_level = getattr(logging, log_level_str, logging.INFO)  # Default to INFO if invalid level string
+
+        # Get the bot's main logger instance
+        # Assuming your bot_instance has a logger attribute, or use the root logger
+        if bot_instance and hasattr(bot_instance, 'logger') and bot_instance.logger:
+            bot_instance.logger.log(log_level, f"SIMULATED LOG ({log_level_str}): {log_message}")
+        else:
+            # Fallback to root logger if bot_instance.logger isn't ready
+            logging.getLogger().log(log_level, f"SIMULATED LOG ({log_level_str}): {log_message}")
+
+        return jsonify({"status": "success", "message": "Log simulated successfully."}), 200
+
+    except Exception as e:
+        # Log the error internally for debugging
+        if bot_instance and hasattr(bot_instance, 'logger') and bot_instance.logger:
+            bot_instance.logger.error(f"Error processing simulated log request: {e}", exc_info=True)
+        else:
+            logging.getLogger().error(f"Error processing simulated log request (bot_instance.logger not ready): {e}",
+                                      exc_info=True)
+        return jsonify({"status": "error", "error": f"Internal server error: {e}"}), 500
 
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
