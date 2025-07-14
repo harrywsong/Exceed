@@ -4,14 +4,14 @@ import discord
 from discord.ext import commands
 import traceback
 
-from utils.logger import get_logger
+import utils.logger as logger_module
 from utils import config
 
 class AutoRoleCog(commands.Cog):
     def __init__(self, bot, auto_role_ids):
         self.bot = bot
         self.auto_role_ids = auto_role_ids
-        self.logger = get_logger(self.__class__.__name__)
+        self.logger = logger_module.get_logger(self.__class__.__name__) # Or a specific name like "autoguest"
         self.logger.info("AutoRoleCog initialized.")
 
     @commands.Cog.listener()

@@ -5,7 +5,7 @@ import asyncio
 import re  # Import re for custom emoji parsing
 
 from utils import config
-from utils.logger import get_logger
+import utils.logger as logger_module
 
 
 # from utils.config import REACTION_ROLE_MAP # REMOVED: No longer using static map
@@ -14,7 +14,7 @@ class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.guild_id = config.GUILD_ID
-        self.logger = get_logger(self.__class__.__name__)
+        self.logger = logger_module.get_logger(self.__class__.__name__)
         self.logger.info("ReactionRoles Cog 초기화 완료.")
 
         self.bot.loop.create_task(self.wait_until_ready_then_populate())

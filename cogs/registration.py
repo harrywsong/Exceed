@@ -1,13 +1,13 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-from utils.logger import get_logger
+import utils.logger as logger_module
 from utils import config
 
 class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.log = get_logger(self.__class__.__name__)
+        self.logger = logger_module.get_logger(self.__class__.__name__)
 
     @app_commands.command(
         name="연동",
