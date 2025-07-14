@@ -151,40 +151,62 @@ def command_stats():
             "error": "Bot instance not available."
         })
 
-@api_app.route('/logs')
+
+@api_app.route('/api/logs')
 def get_logs():
     """
-    Returns the last 500 lines of the bot's log file, with optional filtering by log level.
-    Accepts 'level' query parameter (e.g., ?level=INFO, ?level=ERROR).
+    Returns filtered log entries.
+    Accepts 'level' query parameter (e.g., ?level=INFO, ?level=ERROR)
+    and 'since_timestamp' (e.g., ?since_timestamp=YYYY-MM-DD HH:MM:SS) for fetching newer logs.
     """
     log_file_path = logger_module.LOG_FILE_PATH
     requested_level_str = request.args.get('level', '').upper()
     requested_level_int = LEVEL_MAP.get(requested_level_str, None)
 
+    since_timestamp_str = request.args.get('since_timestamp')
+    comparison_timestamp = None
+    if since_timestamp_str:
+        try:
+            # Parse the timestamp from the request. Ensure it matches the log file's format.
+            comparison_timestamp = datetime.strptime(since_timestamp_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            # If timestamp format is invalid, return an error
+            return jsonify(
+                {"status": "error", "message": "Invalid since_timestamp format. Use YYYY-MM-DD HH:MM:SS."}), 400
+
     try:
         if not os.path.exists(log_file_path):
             return jsonify({"status": "error", "error": "Log file not found."}), 404
+
+        # Read all lines from the log file. Removed the last_500_lines limitation.
         with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            lines = f.readlines()
-            last_500_lines = lines[-500:]
+            all_lines = f.readlines()
 
         parsed_and_filtered_logs = []
-        for line in last_500_lines:
+        for line in all_lines:  # Iterate through all lines
             stripped_line = line.strip()
 
+            # Skip specific log messages (as per existing code)
             if "GET /status HTTP/1.1" in stripped_line or \
-               "GET /logs HTTP/1.1" in stripped_line or \
-               "GET /command_stats HTTP/1.1" in stripped_line or \
-               "INFO....] [werkzeug]" in stripped_line:
+                    "GET /logs HTTP/1.1" in stripped_line or \
+                    "GET /command_stats HTTP/1.1" in stripped_line or \
+                    "INFO....] [werkzeug]" in stripped_line:
                 continue
 
             parsed_entry = None
+            log_line_timestamp = None  # To store the datetime object parsed from the log line
 
-# NEW_LINE_START
             match_structured = LOG_LINE_REGEX.match(stripped_line)
             if match_structured:
                 timestamp_str, level_raw, logger_name, message = match_structured.groups()
                 log_level_int = LEVEL_MAP.get(level_raw, logging.INFO)
+
+                try:
+                    log_line_timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    # If timestamp in log line is malformed, treat it as "N/A"
+                    timestamp_str = "N/A"
+
                 parsed_entry = {
                     "timestamp": timestamp_str,
                     "level": level_raw,
@@ -197,7 +219,7 @@ def get_logs():
                     level_raw, message = match_simple.groups()
                     log_level_int = LEVEL_MAP.get(level_raw.upper(), logging.INFO)
                     parsed_entry = {
-                        "timestamp": "N/A",
+                        "timestamp": "N/A",  # Simple logs don't have timestamp in the structured format
                         "level": level_raw.upper(),
                         "logger_name": "ROOT",
                         "message": message.strip()
@@ -206,14 +228,22 @@ def get_logs():
                     log_level_int = logging.INFO
                     parsed_entry = {
                         "timestamp": "N/A",
-                        "level": "RAW",
+                        "level": "RAW",  # Indicates a raw/unparsed line
                         "logger_name": "N/A",
                         "message": stripped_line
                     }
 
+            if comparison_timestamp and log_line_timestamp:
+                if log_line_timestamp <= comparison_timestamp:
+                    continue  # Skip logs that are older than or equal to the comparison timestamp
+            elif comparison_timestamp and not log_line_timestamp:
+                # If filtering by time, and log line has no parseable timestamp, skip it.
+                continue
+
+            # Apply `level` filter (already in your code, kept for consistency)
             if parsed_entry and (requested_level_int is None or log_level_int >= requested_level_int):
                 parsed_and_filtered_logs.append(parsed_entry)
-# NEW_LINE_END
+
         return jsonify({"status": "success", "logs": parsed_and_filtered_logs})
     except Exception as e:
         print(f"Error reading or parsing log file: {e}", file=sys.stderr)
