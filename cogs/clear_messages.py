@@ -11,8 +11,6 @@ class ClearMessages(commands.Cog):
         self.bot = bot
         self.logger = get_logger(
             "메시지 정리",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("ClearMessages cog initialized with logger 'clearmessages'.")
 

@@ -29,8 +29,6 @@ class WelcomeCog(commands.Cog):
         self.bot = bot
         self.logger = get_logger(
             "환영/인사 카드",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
 
         self.logger.info("WelcomeCog 초기화 완료.")

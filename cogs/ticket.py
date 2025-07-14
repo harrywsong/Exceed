@@ -358,8 +358,6 @@ class TicketSystem(commands.Cog):
         self.bot = bot
         self.logger = get_logger(
             "티켓 시스템",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("TicketSystem Cog 초기화 완료.")
 

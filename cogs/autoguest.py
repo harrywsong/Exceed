@@ -11,8 +11,6 @@ class AutoRoleCog(commands.Cog):
         self.role_ids = role_ids
         self.logger = get_logger(
             "자동 역할 (게스트)",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("AutoRoleCog initialized.")
 

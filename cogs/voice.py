@@ -15,8 +15,6 @@ class TempVoice(commands.Cog):
 
         self.logger = get_logger(
             "임시 음성",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
 
         self.cleanup_empty_channels.start()

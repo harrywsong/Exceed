@@ -17,8 +17,6 @@ class ReactionRoles(commands.Cog):
         # self.reaction_role_map is no longer needed as data comes from DB
         self.logger = get_logger(
             "리액션 역할",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("ReactionRoles Cog 초기화 완료.")
 

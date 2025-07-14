@@ -9,8 +9,6 @@ class Registration(commands.Cog):
         self.bot = bot
         self.log = get_logger(
             "계정 연동",
-            bot=bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
 
     @app_commands.command(

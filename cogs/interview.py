@@ -331,8 +331,6 @@ class InterviewRequestCog(commands.Cog):
 
         self.logger = get_logger(
             "클랜 인터뷰",
-            bot=bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("InterviewRequestCog 초기화 완료.")
 

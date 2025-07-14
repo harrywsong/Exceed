@@ -19,7 +19,7 @@ from cogs.clanstats import is_registered # Assuming clanstats.py is in the 'cogs
 class TrackerScraper(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("내전 스크레이퍼", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("내전 스크레이퍼",)
         self.logger.info("TrackerScraper cog initialized.")
 
     @app_commands.command(

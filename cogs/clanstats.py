@@ -37,8 +37,6 @@ class ValorantStats(commands.Cog):
         self.bot = bot
         self.logger = get_logger(
             "발로란트 통계",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
         )
         self.logger.info("ValorantStats cog initialized.")
 

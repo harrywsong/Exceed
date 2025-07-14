@@ -142,8 +142,6 @@ class ClanLeaderboard(commands.Cog):
 
         self.logger = get_logger(
             "클랜 리더보드",
-            bot=bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID,
         )
         self.logger.info("ClanLeaderboard cog initialized.")
 
