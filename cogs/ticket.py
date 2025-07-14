@@ -10,7 +10,7 @@ import html
 import traceback
 
 from utils import config
-import utils.logger as logger_module
+from utils.logger import get_logger
 
 
 class HelpView(View):
@@ -356,7 +356,11 @@ class CloseTicketView(View):
 class TicketSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = logger_module.get_logger(self.__class__.__name__)
+        self.logger = get_logger(
+            "티켓 시스템",
+            bot=self.bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
         self.logger.info("TicketSystem Cog 초기화 완료.")
 
     async def send_ticket_request_message(self):

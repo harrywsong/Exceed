@@ -9,7 +9,7 @@ import asyncio
 import traceback
 
 from utils import config
-import utils.logger as logger_module
+from utils.logger import get_logger
 
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 BG_PATH      = os.path.join(BASE_DIR, "..", "assets", "welcome_bg.png")
@@ -27,7 +27,11 @@ except OSError:
 class WelcomeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = logger_module.get_logger(self.__class__.__name__)
+        self.logger = get_logger(
+            "환영/인사 카드",
+            bot=self.bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
 
         self.logger.info("WelcomeCog 초기화 완료.")
 

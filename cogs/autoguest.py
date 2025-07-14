@@ -1,18 +1,21 @@
-# In cogs/autoguest.py
-
 import discord
 from discord.ext import commands
 import traceback
 
-import utils.logger as logger_module
+from utils.logger import get_logger
 from utils import config
 
 class AutoRoleCog(commands.Cog):
-    def __init__(self, bot, auto_role_ids):
+    def __init__(self, bot, role_ids: list[int]):
         self.bot = bot
-        self.auto_role_ids = auto_role_ids
-        self.logger = logger_module.get_logger(self.__class__.__name__) # Or a specific name like "autoguest"
+        self.role_ids = role_ids
+        self.logger = get_logger(
+            "자동 역할 (게스트)",
+            bot=self.bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
         self.logger.info("AutoRoleCog initialized.")
+
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):

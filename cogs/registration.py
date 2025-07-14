@@ -1,13 +1,17 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import utils.logger as logger_module
+from utils.logger import get_logger
 from utils import config
 
 class Registration(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = logger_module.get_logger(self.__class__.__name__)
+        self.log = get_logger(
+            "계정 연동",
+            bot=bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
 
     @app_commands.command(
         name="연동",

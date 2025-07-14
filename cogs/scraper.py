@@ -9,7 +9,7 @@ import uuid
 import asyncio  # Import asyncio for async subprocess execution
 import traceback  # Import traceback for detailed error logging
 
-import utils.logger as logger_module
+from utils.logger import get_logger
 from utils import config
 
 # Import the is_registered check from clanstats.py
@@ -19,7 +19,7 @@ from cogs.clanstats import is_registered # Assuming clanstats.py is in the 'cogs
 class TrackerScraper(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = logger_module.get_logger(self.__class__.__name__)
+        self.logger = get_logger("내전 스크레이퍼", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
         self.logger.info("TrackerScraper cog initialized.")
 
     @app_commands.command(

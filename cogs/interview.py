@@ -19,7 +19,6 @@ from utils import config
 from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_ID, WELCOME_CHANNEL_ID, \
     RULES_CHANNEL_ID, ANNOUNCEMENTS_CHANNEL_ID, ACCEPTED_ROLE_ID, MEMBER_CHAT_CHANNEL_ID
 from utils.logger import get_logger
-import utils.logger as logger_module
 
 from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID
 
@@ -330,7 +329,11 @@ class InterviewRequestCog(commands.Cog):
         self.public_channel_id = INTERVIEW_PUBLIC_CHANNEL_ID
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
 
-        self.logger = logger_module.get_logger(self.__class__.__name__)
+        self.logger = get_logger(
+            "클랜 인터뷰",
+            bot=bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID
+        )
         self.logger.info("InterviewRequestCog 초기화 완료.")
 
         self.FONT = None

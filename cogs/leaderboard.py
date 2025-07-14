@@ -5,7 +5,7 @@ from typing import Optional, List
 import traceback
 
 from utils import config
-import utils.logger as logger_module
+from utils.logger import get_logger
 from datetime import time
 import pytz
 import asyncio
@@ -140,7 +140,11 @@ class ClanLeaderboard(commands.Cog):
         self.bot = bot
         self.leaderboard_messages = {}
 
-        self.logger = logger_module.get_logger(self.__class__.__name__)
+        self.logger = get_logger(
+            "클랜 리더보드",
+            bot=bot,
+            discord_log_channel_id=config.LOG_CHANNEL_ID,
+        )
         self.logger.info("ClanLeaderboard cog initialized.")
 
         self.leaderboard_channel = None
