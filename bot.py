@@ -47,17 +47,20 @@ async def create_db_pool_in_bot():
 
 
 async def add_reaction_role_to_db(pool, guild_id: int, message_id: int, channel_id: int, emoji: str, role_id: int):
-    """Adds a reaction role to the database."""
+    current_logger = logging.getLogger('discord') # Or your appropriate logger
+    current_logger.debug(f"DB: Attempting to add reaction role for G:{guild_id}, M:{message_id}, C:{channel_id}, E:{emoji}, R:{role_id}") # New debug log
+
     async with pool.acquire() as conn:
         try:
             await conn.execute("""
                 INSERT INTO reaction_roles_table (guild_id, message_id, channel_id, emoji, role_id)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (message_id, emoji, role_id) DO NOTHING;
-            """, guild_id, message_id, channel_id, emoji, role_id) # <--- channel_id added here
-            return True # Indicate success
-        except Exception as e:
-            logging.getLogger().error(f"Error inserting reaction role into DB: {e}", exc_info=True)
+            """, guild_id, message_id, channel_id, emoji, role_id)
+            current_logger.info(f"DB: Successfully inserted reaction role for message {message_id}, emoji {emoji}.") # New info log
+            return True
+        except Exception as db_e:
+            current_logger.error(f"DB: Error inserting reaction role into DB: {db_e}", exc_info=True) # New error log
             return False
 
 # --- Flask API Setup ---
@@ -262,48 +265,66 @@ def get_reaction_roles_api():
 
 @api_app.route('/api/reaction_roles/add', methods=['POST'])
 def add_reaction_role_api():
-    if not bot_instance or not bot_instance.pool:
-        return jsonify({"status": "error", "error": "Bot instance or database not available."}), 503
+    current_logger = bot_instance.logger # Use the bot's logger
 
     try:
         data = request.get_json()
+        current_logger.debug(f"API: Received raw JSON for reaction_roles/add: {data}") # New debug log
+
         if not data:
+            current_logger.warning("API: No JSON data provided for reaction roles add.")
             return jsonify({"error": "No JSON data provided"}), 400
 
-        # Validate required fields
         required_fields = ['guild_id', 'message_id', 'channel_id', 'emoji', 'role_id']
         if not all(field in data for field in required_fields):
+            missing_fields = [field for field in required_fields if field not in data]
+            current_logger.warning(f"API: Missing required fields for reaction role add: {missing_fields}. Data received: {data}")
             return jsonify({"error": f"Missing required fields. Expected: {', '.join(required_fields)}"}), 400
 
-        guild_id = int(data['guild_id'])
-        message_id = int(data['message_id'])
-        channel_id = int(data['channel_id'])
-        emoji = data['emoji']
-        role_id = int(data['role_id'])
+        # Type conversion and validation
+        try:
+            guild_id = int(data['guild_id'])
+            message_id = int(data['message_id'])
+            channel_id = int(data['channel_id'])
+            role_id = int(data['role_id'])
+            emoji = data['emoji']
+            current_logger.debug(f"API: Parsed data - Guild:{guild_id}, Msg:{message_id}, Chan:{channel_id}, Emoji:{emoji}, Role:{role_id}") # New debug log
+        except (ValueError, TypeError) as conv_e: # Added TypeError for robustness
+            current_logger.error(f"API: Data conversion error in reaction roles add: {conv_e}. Input data: {data}", exc_info=True)
+            return jsonify({"error": f"Invalid data type for one or more fields: {conv_e}. Ensure IDs are integers and emoji is a string."}), 400
+        except KeyError as ke:
+            current_logger.error(f"API: Missing key during data access in reaction roles add: {ke}. Input data: {data}", exc_info=True)
+            return jsonify({"error": f"Missing expected key during data processing: {ke}"}), 400
+
+
+        if not bot_instance or not bot_instance.pool:
+            current_logger.critical("API: Bot instance or database pool not available BEFORE DB operation.")
+            return jsonify({"status": "error", "error": "Bot instance or database not available for operation."}), 503
 
         loop = bot_instance.loop # Get the bot's event loop
+        current_logger.debug("API: Attempting to run add_reaction_role_to_db in bot's event loop.") # New debug log
         future = asyncio.run_coroutine_threadsafe(
             add_reaction_role_to_db(bot_instance.pool, guild_id, message_id, channel_id, emoji, role_id),
             loop
         )
         result = future.result(timeout=10) # 10-second timeout
+        current_logger.debug(f"API: Result from add_reaction_role_to_db: {result}") # New debug log
 
         if result:
-            bot_instance.logger.info(f"API Request: Reaction role added for message {message_id} with emoji {emoji}.")
+            current_logger.info(f"API: Reaction role added successfully for message {message_id} with emoji {emoji}.")
             return jsonify({"success": True, "message": "Reaction role added successfully"}), 201
         else:
-            bot_instance.logger.warning(f"API Request: Failed to add reaction role for message {message_id} with emoji {emoji}.")
+            current_logger.warning(f"API: Failed to add reaction role for message {message_id} with emoji {emoji} (DB function returned False).")
             return jsonify({"success": False, "message": "Failed to add reaction role to database"}), 500
 
-    except ValueError as e:
-        return jsonify({"error": f"Invalid data type for one or more IDs: {e}. Ensure IDs are integers."}), 400
     except asyncio.TimeoutError:
-        bot_instance.logger.error("Timeout while adding reaction role to DB.")
+        current_logger.error("API: Timeout while adding reaction role to DB via API request.", exc_info=True)
         return jsonify({"error": "Database operation timed out"}), 504
     except Exception as e:
-        bot_instance.logger.error(f"Error adding reaction role via API: {e}", exc_info=True)
-        return jsonify({"error": "Internal server error adding reaction role", "details": str(e)}), 500
-
+        # This is the crucial catch-all for any UNEXPECTED errors.
+        # Use critical level and exc_info=True to ensure full traceback is logged.
+        current_logger.critical(f"API: Unhandled CRITICAL exception in /api/reaction_roles/add: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected server error occurred.", "details": str(e)}), 500
 @api_app.route('/api/config', methods=['GET'])
 def get_bot_config():
     """
