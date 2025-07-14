@@ -325,6 +325,38 @@ def add_reaction_role_api():
         # Use critical level and exc_info=True to ensure full traceback is logged.
         current_logger.critical(f"API: Unhandled CRITICAL exception in /api/reaction_roles/add: {e}", exc_info=True)
         return jsonify({"error": "An unexpected server error occurred.", "details": str(e)}), 500
+
+    @api_app.route('/config', methods=['GET'])
+    def get_bot_config():
+        """
+        API endpoint to retrieve non-sensitive configuration data from utils.config.
+        """
+        # Your existing get_bot_config function logic goes here
+        # (including the checks for bot_instance and logging, and the sensitive_keywords filtering)
+        if not bot_instance or not hasattr(bot_instance, 'logger') or bot_instance.logger is None:
+            current_logger = logging.getLogger(__name__)
+        else:
+            current_logger = bot_instance.logger
+
+        try:
+            sensitive_keywords = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'DATABASE_URL', 'API', 'WEBHOOK']
+            safe_config = {}
+            for name, value in inspect.getmembers(config):
+                if name.startswith('__') or inspect.ismodule(value) or inspect.isfunction(value) or inspect.isclass(
+                        value):
+                    continue
+                if any(keyword in name.upper() for keyword in sensitive_keywords):
+                    continue
+                safe_config[name] = str(value)
+
+            current_logger.info("API: Successfully retrieved non-sensitive bot configuration.")
+            return jsonify({"status": "success", "config": safe_config}), 200
+
+        except Exception as e:
+            current_logger.error(f"API Error: Failed to retrieve bot configuration from utils.config. Error: {e}",
+                                 exc_info=True)
+            return jsonify({"status": "error", "error": f"Failed to retrieve bot configuration: {e}"}), 500
+
 @api_app.route('/api/config', methods=['GET'])
 def get_bot_config():
     """
@@ -358,9 +390,14 @@ async def fetch_reaction_roles_from_db(pool):
         return reaction_roles
 
 def run_api_server():
-    """Runs the Flask API server for the bot in a separate thread."""
-    # Use a different port than the UI Flask app (5000)
-    api_app.run(host='127.0.0.1', port=5001, debug=False)
+    os.environ['FLASK_APP'] = __name__
+
+    try:
+        # It's crucial that this Flask app runs on port 5001
+        api_app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False)
+    except Exception as e:
+        logging.getLogger().critical(f"봇 API 서버 시작 중 치명적인 오류 발생: {e}", exc_info=True)
+
 
 # --- End Flask API Setup ---
 
