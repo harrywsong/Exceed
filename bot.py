@@ -348,7 +348,6 @@ def get_bot_config():
         return jsonify({"status": "error", "error": "Could not read configuration."}), 500
 
 async def fetch_reaction_roles_from_db(pool):
-    """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
         records = await conn.fetch("""
             SELECT message_id, channel_id, emoji, role_id
