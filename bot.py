@@ -325,6 +325,23 @@ def get_bot_config():
         current_logger.error(f"API Error: Failed to retrieve bot configuration from utils.config. Error: {e}",
                              exc_info=True)
         return jsonify({"status": "error", "error": f"Failed to retrieve bot configuration: {e}"}), 500
+@api_app.route('/guilds', methods=['GET'])
+async def get_bot_guilds():
+    """
+    Returns a list of guilds the bot is currently in.
+    """
+    if not bot_instance or not bot_instance.is_ready():
+        return jsonify({"status": "error", "message": "Bot is not ready or not running."}), 503
+
+    guilds_data = []
+    for guild in bot_instance.guilds:
+        guilds_data.append({
+            "id": str(guild.id),
+            "name": guild.name,
+            "member_count": guild.member_count,
+            # Add other non-sensitive guild properties as needed
+        })
+    return jsonify({"status": "success", "guilds": guilds_data})
 
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
