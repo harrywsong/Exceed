@@ -441,6 +441,28 @@ async def get_guilds():
         return jsonify(guild_data), 200
     return jsonify({"status": "error", "message": "Bot instance not ready."}), 503
 
+@api_app.route('/simulate_log', methods=['POST'])
+def simulate_log():
+    """
+    Simulates a log message at a specific level for testing.
+    Expects JSON: {"level": "INFO", "message": "Test log message"}
+    """
+    data = request.get_json()
+    log_level_str = data.get('level', 'INFO').upper()
+    log_message = data.get('message', 'This is a simulated log message.')
+
+    # Map string level to logging module's level
+    log_level = getattr(logging, log_level_str, logging.INFO)
+
+    if bot_instance and hasattr(bot_instance, 'logger'):
+        # Use the bot's configured logger
+        bot_instance.logger.log(log_level, f"SIMULATED_LOG: {log_message} (Level: {log_level_str})")
+        return jsonify({"status": "success", "message": f"Log message at level {log_level_str} simulated."}), 200
+    else:
+        # Fallback if bot_instance or logger is not ready
+        logging.getLogger().log(log_level, f"SIMULATED_LOG (Fallback): {log_message} (Level: {log_level_str})")
+        return jsonify({"status": "warning", "message": "Bot instance or logger not fully ready; log simulated via root logger."}), 200
+
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
