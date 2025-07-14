@@ -225,7 +225,7 @@ def run_api_server():
 class MyBot(commands.Bot):
     def __init__(self, command_prefix, intents):
         super().__init__(command_prefix=command_prefix, intents=intents)
-        self.start_time = datetime.datetime.now(pytz.utc)
+        self.start_time = datetime.now(pytz.utc)
         self.pool = None # Database connection pool
         self.session = aiohttp.ClientSession() # For HTTP requests
         self.command_counts = {} # For command usage stats
