@@ -724,3 +724,43 @@ async def main():
         # Use the bot's logger
         if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
             bot_instance.logger.critical(f"봇 런타임 중 처리되지 않은 오류 발생: {e}", exc_info=True)
+        else:
+            print(f"CRITICAL: 봇 런타임 중 처리되지 않은 오류 발생: {e}", file=sys.stderr)
+    finally:
+        # Ensure bot_instance.logger is checked before use in finally block
+        if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.info("봇이 중지되었습니다.")
+        else:
+            print("INFO: 봇이 중지되었습니다 (로거 초기화 실패).", file=sys.stderr)
+        # Ensure bot_instance is not None before calling close
+        if bot_instance:
+            await bot_instance.close()
+
+
+if __name__ == "__main__":
+    # Start the Flask API in a separate thread
+    # This ensures the API runs concurrently with the Discord bot.
+    api_thread = Thread(target=run_api_server)
+    api_thread.daemon = True  # Allow main program to exit even if thread is running
+    api_thread.start()
+    print(f"Existing Bot API running on http://127.0.0.1:5001")
+
+    try:
+        # Run the main Discord bot asynchronous loop
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Handle graceful shutdown on Ctrl+C
+        if bot_instance:
+            if hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+                bot_instance.logger.info("봇이 수동으로 중지되었습니다 (KeyboardInterrupt).")
+            else:
+                print("INFO: 봇이 수동으로 중지되었습니다 (로거 초기화 실패, KeyboardInterrupt).", file=sys.stderr)
+        else:
+            print("INFO: 봇이 수동으로 중지되었습니다 (KeyboardInterrupt).", file=sys.stderr)
+    except Exception as e:
+        # Catch any unhandled exceptions during the bot's main run
+        # Use a basic logger or print, as bot_instance.logger might not be fully initialized
+        logging.getLogger().critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
+        # Attempt to use bot_instance's logger if it exists
+        if 'bot_instance' in locals() and hasattr(bot_instance, 'logger') and bot_instance.logger is not None:
+            bot_instance.logger.critical(f"봇 런타임 외부에서 치명적인 오류 발생 (재시도): {e}", exc_info=True)
