@@ -347,12 +347,11 @@ def get_bot_config():
         bot_instance.logger.error(f"API Error: Could not read configuration. Error: {e}")
         return jsonify({"status": "error", "error": "Could not read configuration."}), 500
 
-
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
         records = await conn.fetch("""
-            SELECT message_id, channel_id, emoji, role_id # <--- channel_id added here
+            SELECT message_id, channel_id, emoji, role_id
             FROM reaction_roles_table
         """)
         reaction_roles = [dict(r) for r in records]
