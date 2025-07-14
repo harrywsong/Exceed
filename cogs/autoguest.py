@@ -1,3 +1,5 @@
+# In cogs/autoguest.py
+
 import discord
 from discord.ext import commands
 import traceback
@@ -12,8 +14,9 @@ class AutoRoleCog(commands.Cog):
         self.logger = get_logger(
             "자동 역할 (게스트)",
         )
-        self.logger.info("AutoRoleCog initialized.")
-
+        # ADD THIS DEBUGGING LINE:
+        print(f"DEBUG: self.logger in AutoRoleCog __init__ is: {self.logger}")
+        self.logger.info("AutoRoleCog initialized.") # This is the line that errors out
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
