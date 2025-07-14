@@ -54,7 +54,7 @@ async def add_reaction_role_to_db(pool, guild_id: int, message_id: int, channel_
                 INSERT INTO reaction_roles_table (guild_id, message_id, channel_id, emoji, role_id)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (message_id, emoji, role_id) DO NOTHING;
-            """, guild_id, message_id, channel_id, emoji, role_id)
+            """, guild_id, message_id, channel_id, emoji, role_id) # <--- channel_id added here
             return True # Indicate success
         except Exception as e:
             logging.getLogger().error(f"Error inserting reaction role into DB: {e}", exc_info=True)
@@ -262,10 +262,6 @@ def get_reaction_roles_api():
 
 @api_app.route('/api/reaction_roles/add', methods=['POST'])
 def add_reaction_role_api():
-    """
-    API endpoint to add a new reaction role to the database.
-    Expects JSON payload with 'guild_id', 'message_id', 'channel_id', 'emoji', 'role_id'.
-    """
     if not bot_instance or not bot_instance.pool:
         return jsonify({"status": "error", "error": "Bot instance or database not available."}), 503
 
@@ -317,46 +313,29 @@ def get_bot_config():
         return jsonify({"status": "error", "error": "Bot instance not available."}), 503
 
     try:
-        # Keywords to identify sensitive data that should NOT be exposed via the API
         sensitive_keywords = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'DATABASE_URL', 'API', 'WEBHOOK']
-
         safe_config = {}
-        # Inspect the imported config module to get its variables
         for name, value in inspect.getmembers(config):
-            # Ignore private/dunder members and modules
             if name.startswith('__') or inspect.ismodule(value):
                 continue
-
-            # Check if any part of the variable name is in our sensitive list
             if any(keyword in name.upper() for keyword in sensitive_keywords):
                 continue
-
-            # If it's safe, add it to our dictionary
-            safe_config[name] = str(value)  # Convert value to string for JSON
-
+            safe_config[name] = str(value)
         return jsonify({"status": "success", "config": safe_config})
-
     except Exception as e:
         bot_instance.logger.error(f"API Error: Could not read configuration. Error: {e}")
         return jsonify({"status": "error", "error": "Could not read configuration."}), 500
 
 
-
-# --- You will also need this async function in bot.py (e.g., above Flask routes) ---
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
-        # Replace 'reaction_roles_table' with your actual table name
-        # And select the columns you need for your web UI
         records = await conn.fetch("""
-            SELECT message_id, channel_id, emoji, role_id
+            SELECT message_id, channel_id, emoji, role_id # <--- channel_id added here
             FROM reaction_roles_table
-            -- ORDER BY message_id, emoji; (Optional: add ordering)
         """)
-        # Convert records to a list of dictionaries for JSON serialization
         reaction_roles = [dict(r) for r in records]
         return reaction_roles
-# --- END NEW ROUTE ---
 
 def run_api_server():
     """Runs the Flask API server for the bot in a separate thread."""
