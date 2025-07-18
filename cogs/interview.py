@@ -80,6 +80,7 @@ class DecisionButtonView(discord.ui.View):
             self.logger.error(f"❌ Could not find member ({target_member_id}) associated with interview ID '{interview_id}' in Discord.")
             return
 
+        # --- Google Sheets Integration for Approval ---
         if self.cog and self.cog.gspread_client and interview_id:
             try:
                 testing_worksheet = await self.cog.gspread_client.get_worksheet(config.TEST_SHEET_NAME, "Sheet1")
@@ -130,7 +131,7 @@ class DecisionButtonView(discord.ui.View):
                 premier_interest = get_column_value(interview_data_row, header_testing, "프리미어 팀 참가 의향")
                 notes = "" # Assuming notes column exists or can be added
 
-                accepted_date = datetime.date.today().strftime("%Y-%m-%d")
+                accepted_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
                 new_member_data = [
                     discord_user_id,
@@ -167,38 +168,10 @@ class DecisionButtonView(discord.ui.View):
                     self.logger.error(f"❌ Failed to delete item for interview ID '{interview_id}' from 'Testing' sheet.")
                     await interaction.followup.send(f"❌ Failed to delete item from 'Testing' sheet. Please check manually.", ephemeral=True)
 
-                accepted_role_id = config.ACCEPTED_ROLE_ID
-                accepted_role = interaction.guild.get_role(accepted_role_id)
-                if accepted_role:
-                    await target_member.add_roles(accepted_role, reason="Approved - Role granted")
-                    self.logger.info(f"✅ Granted '{accepted_role.name}' role to {target_member.display_name} ({target_member.id}).")
-                else:
-                    self.logger.warning(f"⚠️ Could not find 'Accepted' role (ID: {accepted_role_id}), so could not grant it to {target_member.display_name}.")
-
-                # Remove applicant and guest roles
-                guest_role = interaction.guild.get_role(config.GUEST_ROLE_ID)
-                if guest_role and guest_role in target_member.roles:
-                    await target_member.remove_roles(guest_role, reason="Approved - Guest role removed")
-                    self.logger.info(f"✅ Removed 'Guest' role from {target_member.display_name} ({target_member.id}).")
-
-                applicant_role = interaction.guild.get_role(config.APPLICANT_ROLE_ID)
-                if applicant_role and applicant_role in target_member.roles:
-                    await target_member.remove_roles(applicant_role, reason="Approved - Applicant role removed")
-                    self.logger.info(f"✅ Removed 'Applicant' role from {target_member.display_name} ({target_member.id}).")
-
-                await interaction.followup.send(
-                    f"✅ `{target_member.display_name}`'s interview has been approved. Added to 'Member List'.",
-                    ephemeral=False
-                )
-                self.logger.info(f"✅ Interview ID '{interview_id}' approved. Channel awaiting deletion.")
-
-                await self.cog.send_welcome_message(target_member) # Send welcome message on approval
-                await self.cog.delete_channel_after_delay(channel, 10, target_member.id, True)
-
             except Exception as e:
-                self.logger.error(f"❌ Error during approval process: {e}\n{traceback.format_exc()}")
+                self.logger.error(f"❌ Error during approval Google Sheets process: {e}\n{traceback.format_exc()}")
                 await interaction.followup.send(
-                    f"❌ An error occurred during the approval process. Please check the bot logs for details.",
+                    f"❌ An error occurred during the Google Sheets approval process. Please check the bot logs for details.",
                     ephemeral=True
                 )
                 if hasattr(self.cog.bot, 'get_channel') and config.LOG_CHANNEL_ID:
@@ -207,9 +180,36 @@ class DecisionButtonView(discord.ui.View):
                         await log_channel.send(
                             f"🚨 **Interview Processing Error:** Unexpected error during approval for `Interview ID: {interview_id}`: `{e}`"
                         )
+                return # Exit if GSheet ops fail
+
+        # --- Discord Role Handling (existing logic, but with target_member) ---
+        accepted_role_id = config.ACCEPTED_ROLE_ID
+        accepted_role = interaction.guild.get_role(accepted_role_id)
+        if accepted_role:
+            await target_member.add_roles(accepted_role, reason="Approved - Role granted")
+            self.logger.info(f"✅ Granted '{accepted_role.name}' role to {target_member.display_name} ({target_member.id}).")
         else:
-            await interaction.followup.send("❌ Google Sheets client not initialized or interview ID not found.", ephemeral=True)
-            self.logger.error("❌ Google Sheets client is missing or interview ID not found, cannot proceed with approval.")
+            self.logger.warning(f"⚠️ Could not find 'Accepted' role (ID: {accepted_role_id}), so could not grant it to {target_member.display_name}.")
+
+        # Remove applicant and guest roles
+        guest_role = interaction.guild.get_role(config.GUEST_ROLE_ID)
+        if guest_role and guest_role in target_member.roles:
+            await target_member.remove_roles(guest_role, reason="Approved - Guest role removed")
+            self.logger.info(f"✅ Removed 'Guest' role from {target_member.display_name} ({target_member.id}).")
+
+        applicant_role = interaction.guild.get_role(config.APPLICANT_ROLE_ID)
+        if applicant_role and applicant_role in target_member.roles:
+            await target_member.remove_roles(applicant_role, reason="Approved - Applicant role removed")
+            self.logger.info(f"✅ Removed 'Applicant' role from {target_member.display_name} ({target_member.id}).")
+
+        await interaction.followup.send(
+            f"✅ `{target_member.display_name}`'s interview has been approved. Added to 'Member List'.",
+            ephemeral=False
+        )
+        self.logger.info(f"✅ Interview ID '{interview_id}' approved. Channel awaiting deletion.")
+
+        await self.cog.send_welcome_message(target_member) # Send welcome message on approval
+        await self.cog.delete_channel_after_delay(channel, 10, target_member.id, True)
 
 
     @discord.ui.button(label="테스트", style=discord.ButtonStyle.secondary, custom_id="interview_test")
@@ -231,6 +231,7 @@ class DecisionButtonView(discord.ui.View):
             self.cog.logger.warning(f"테스트 처리 시 멤버를 찾을 수 없습니다. User ID: {user_id}")
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
+        # --- Google Sheets Integration for Test ---
         try:
             if self.cog and self.cog.gspread_client and interview_id:
                 success = await self.cog.gspread_client.update_row_by_interview_id(
@@ -247,12 +248,18 @@ class DecisionButtonView(discord.ui.View):
                         ephemeral=True
                     )
                     return
+        except Exception as e:
+            self.cog.logger.error(f"❌ Error during test Google Sheets process: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ An error occurred during the Google Sheets test process.", ephemeral=True)
+            return
 
-            test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
-            if not test_role:
-                self.cog.logger.error(f"❌ 테스트 역할 ID {APPLICANT_ROLE_ID}을(를) 찾을 수 없습니다. 설정 확인 필요.")
-                return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
 
+        test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
+        if not test_role:
+            self.cog.logger.error(f"❌ 테스트 역할 ID {APPLICANT_ROLE_ID}을(를) 찾을 수 없습니다. 설정 확인 필요.")
+            return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
+
+        try:
             await member.add_roles(test_role, reason="테스트 역할 부여 (관리자 승인)")
             self.cog.logger.info(f"🟡 {member.display_name} ({member.id})님에게 테스트 역할 '{test_role.name}'을(를) 부여했습니다.")
 
@@ -312,6 +319,7 @@ class DecisionButtonView(discord.ui.View):
                 "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
+        # --- Google Sheets Integration for Rejection ---
         try:
             if self.cog and self.cog.gspread_client and interview_id:
                 success = await self.cog.gspread_client.update_row_by_interview_id(
@@ -328,40 +336,42 @@ class DecisionButtonView(discord.ui.View):
                         ephemeral=True
                     )
                     return
-
-            try:
-                await member.send(
-                    "안녕하세요. \n\n"
-                    "먼저 Exceed 클랜에 관심을 가져주시고 지원해 주셔서 진심으로 감사드립니다.\n"
-                    "안타깝게도 이번에는 여러 사유로 인해 함께하지 못하게 되었습니다.\n"
-                    "지원자님의 열정과 노력은 충분히 높이 평가하지만, 현재 클랜의 상황과 다양한 요소들을 종합적으로 고려한 결과임을 너그러이 이해해 주시길 바랍니다.\n"
-                    "앞으로도 지속적인 발전이 있으시길 진심으로 응원하며, 상황이 괜찮아지면 언제든지 다시 지원해 주시길 바랍니다. \n\n"
-                    "Exceed는 언제나 열려 있으며, 다음 기회에 꼭 함께할 수 있기를 기대하겠습니다.\n\n"
-                    "궁금한 점이 있으시면 언제든지 운영진에게 문의하시거나, 아래 채널을 통해 연락 주시기 바랍니다:  \n\n"
-                    "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
-                    "감사합니다.\n\n"
-                    "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
-                )
-                self.cog.logger.info(f"❌ {member.display_name}님에게 불합격 안내 DM 전송 완료.")
-            except discord.Forbidden:
-                self.cog.logger.warning(f"❌ {member.display_name} ({member.id})님에게 DM을 보낼 수 없습니다. (DM이 비활성화되었거나 차단됨)")
-                await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다. (DM 전송 실패: DM이 비활성화되었을 수 있습니다.)")
-                return
-
-            applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
-            if applicant_role and applicant_role in member.roles:
-                await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
-                self.cog.logger.info(f"지원자 역할 '{applicant_role.name}'을(를) {member.display_name}님에게서 제거했습니다.")
-
-            await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다.")
-            self.cog.logger.info(f"❌ {member.display_name} ({member.id})님을 불합격 처리했습니다.")
-
-            # Delete the channel after rejection
-            await self.cog.delete_channel_after_delay(interaction.channel, 10, member.id, False)
-
         except Exception as e:
-            self.cog.logger.error(f"❌ 불합격 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
-            await interaction.followup.send(f"❌ 오류 발생: {str(e)}", ephemeral=True)
+            self.cog.logger.error(f"❌ Error during rejection Google Sheets process: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ An error occurred during the Google Sheets rejection process.", ephemeral=True)
+            return
+
+        try:
+            await member.send(
+                "안녕하세요. \n\n"
+                "먼저 Exceed 클랜에 관심을 가져주시고 지원해 주셔서 진심으로 감사드립니다.\n"
+                "안타깝게도 이번에는 여러 사유로 인해 함께하지 못하게 되었습니다.\n"
+                "지원자님의 열정과 노력은 충분히 높이 평가하지만, 현재 클랜의 상황과 다양한 요소들을 종합적으로 고려한 결과임을 너그러이 이해해 주시길 바랍니다.\n"
+                "앞으로도 지속적인 발전이 있으시길 진심으로 응원하며, 상황이 괜찮아지면 언제든지 다시 지원해 주시길 바랍니다. \n\n"
+                "Exceed는 언제나 열려 있으며, 다음 기회에 꼭 함께할 수 있기를 기대하겠습니다.\n\n"
+                "궁금한 점이 있으시면 언제든지 운영진에게 문의하시거나, 아래 채널을 통해 연락 주시기 바랍니다:  \n\n"
+                "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
+                "감사합니다.\n\n"
+                "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
+            )
+            self.cog.logger.info(f"❌ {member.display_name}님에게 불합격 안내 DM 전송 완료.")
+        except discord.Forbidden:
+            self.cog.logger.warning(f"❌ {member.display_name} ({member.id})님에게 DM을 보낼 수 없습니다. (DM이 비활성화되었거나 차단됨)")
+            await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다. (DM 전송 실패: DM이 비활성화되었을 수 있습니다.)")
+            return
+
+        applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
+        if applicant_role and applicant_role in member.roles:
+            await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
+            self.cog.logger.info(f"지원자 역할 '{applicant_role.name}'을(를) {member.display_name}님에게서 제거했습니다.")
+
+        await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다.")
+        self.cog.logger.info(f"❌ {member.display_name} ({member.id})님을 불합격 처리했습니다.")
+
+        # Delete the channel after rejection
+        await self.cog.delete_channel_after_delay(interaction.channel, 10, member.id, False)
+
+        # Removed the redundant 'except Exception as e' block here as it was inside the try block for rejection already.
 
 
 class InterviewModal(Modal, title="인터뷰 사전 질문"):
@@ -406,17 +416,11 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         ))
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Defer the interaction as submitting modal might take time to process
-        # Modals inherently handle their own response, so direct defer is not usually needed for the modal itself
-        # but for actions taken AFTER the modal submission, you might want to defer again or use followup.
-        # Here we just respond to the modal, then do work and send a followup at the end.
-
         for item in self.children:
             self.answers[item.label] = item.value.strip()
 
         region = self.answers.get("활동 지역 (서부/중부/동부)", "")
         if region not in ("서부", "중부", "동부"):
-            # Acknowledge the modal submission immediately with an ephemeral error
             await interaction.response.send_message(
                 "❌ 올바른 활동 지역을 입력해주세요 (서부, 중부, 동부 중 하나).",
                 ephemeral=True
@@ -427,7 +431,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         if not cog:
             fallback_logger = get_logger("interview_modal_fallback")
             fallback_logger.error("❌ 인터뷰 코그를 찾을 수 없습니다. on_submit에서.")
-            await interaction.response.send_message( # Use response as this is the direct reply to modal
+            await interaction.response.send_message(
                 "❌ 인터뷰 코그를 찾을 수 없습니다.",
                 ephemeral=True
             )
@@ -436,7 +440,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         private_channel = interaction.guild.get_channel(cog.private_channel_id)
         if not private_channel:
             cog.logger.error(f"❌ 비공개 채널을 찾을 수 없습니다. ID: {cog.private_channel_id}")
-            await interaction.response.send_message( # Use response as this is the direct reply to modal
+            await interaction.response.send_message(
                 "❌ 비공개 채널을 찾을 수 없습니다.",
                 ephemeral=True
             )
@@ -462,7 +466,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
             success = await cog.gspread_client.append_row(config.TEST_SHEET_NAME, "Sheet1", sheet_data)
             if not success:
                 cog.logger.error(f"❌ Google Sheet에 데이터 추가 실패: {interaction.user.display_name}의 인터뷰 요청.")
-                await interaction.response.send_message( # Use response as this is the direct reply to modal
+                await interaction.response.send_message(
                     "❌ 인터뷰 요청이 전송되었으나, Google Sheet에 기록하는 중 오류가 발생했습니다. 관리자에게 문의하세요.",
                     ephemeral=True
                 )
@@ -507,6 +511,7 @@ class InterviewView(View):
         modal = InterviewModal()
         await interaction.response.send_modal(modal)
 
+
 class InterviewRequestCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -539,21 +544,6 @@ class InterviewRequestCog(commands.Cog):
             self.logger.error(f"폰트 로드 중 알 수 없는 오류 발생: {e}\n{traceback.format_exc()}")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
-    def extract_interview_id_from_channel_name(self, channel_name: str) -> Optional[str]:
-        # This function might not be strictly needed if we rely on embed for ID
-        match = re.search(r'-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$',
-                          channel_name)
-        if match:
-            return match.group(1)
-        return None
-
-    def extract_user_id_from_channel_name(self, channel_name: str) -> Optional[int]:
-        # This function might not be strictly needed if we rely on embed for ID
-        match = re.search(r'interview-(\d{17,20})(?:-|$)', channel_name)
-        if match:
-            return int(match.group(1))
-        return None
-
     def check_staff_role(self, member: discord.Member) -> bool:
         """Checks if a member has the configured staff role."""
         if not config.STAFF_ROLE_ID:
@@ -568,6 +558,20 @@ class InterviewRequestCog(commands.Cog):
             return False
 
         return staff_role in member.roles
+
+    async def delete_channel_after_delay(self, channel: discord.TextChannel, delay: int, user_id: int, is_approved: bool):
+        """Deletes a channel after a specified delay and logs the action."""
+        self.logger.info(f"채널 '{channel.name}' ({channel.id})이(가) {delay}초 후 삭제될 예정입니다. 사용자 ID: {user_id}")
+        await asyncio.sleep(delay)
+        try:
+            await channel.delete(reason=f"인터뷰 처리 완료 (사용자 ID: {user_id}, 합격 여부: {is_approved})")
+            self.logger.info(f"채널 '{channel.name}' ({channel.id}) 삭제 완료. 사용자 ID: {user_id}, 합격 여부: {is_approved}")
+        except discord.NotFound:
+            self.logger.warning(f"채널 '{channel.name}' ({channel.id})을(를) 찾을 수 없어 삭제할 수 없습니다. 이미 삭제되었을 수 있습니다.")
+        except discord.Forbidden:
+            self.logger.error(f"채널 '{channel.name}' ({channel.id})을(를) 삭제할 권한이 없습니다. 봇 권한을 확인해주세요.")
+        except Exception as e:
+            self.logger.error(f"채널 '{channel.name}' ({channel.id}) 삭제 중 오류 발생: {e}\n{traceback.format_exc()}")
 
     async def make_congrats_card(self, member: discord.Member) -> Optional[BytesIO]:
         try:
@@ -606,7 +610,6 @@ class InterviewRequestCog(commands.Cog):
 
         current_font = self.FONT if self.FONT else ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
-        # Calculate text bounding box
         text_bbox = draw.textbbox((0, 0), text, font=current_font)
         text_width = text_bbox[2] - text_bbox[0]
         text_height = text_bbox[3] - text_bbox[1]
@@ -662,25 +665,12 @@ class InterviewRequestCog(commands.Cog):
             await channel.send(
                 content=member.mention,
                 embed=embed,
-                file=file if file else None
-            )
-            self.logger.info(f"✅ {member.display_name}님에게 환영 메시지 전송 완료.")
-        except Exception as e:
-            self.logger.error(f"❌ {member.display_name}님에게 환영 메시지 전송 중 오류 발생: {e}\n{traceback.format_exc()}")
+                file=file,
+                allowed_mentions=discord.AllowedMentions(users=True))
+            self.logger.info(f"환영 메시지 전송 완료: {member.display_name} ({member.id})")
 
-    async def delete_channel_after_delay(self, channel: discord.TextChannel, delay: int, user_id: int, is_approved: bool):
-        """Deletes a channel after a specified delay and logs the action."""
-        self.logger.info(f"채널 '{channel.name}' ({channel.id})이(가) {delay}초 후 삭제될 예정입니다. 사용자 ID: {user_id}")
-        await asyncio.sleep(delay)
-        try:
-            await channel.delete(reason=f"인터뷰 처리 완료 (사용자 ID: {user_id}, 합격 여부: {is_approved})")
-            self.logger.info(f"채널 '{channel.name}' ({channel.id}) 삭제 완료. 사용자 ID: {user_id}, 합격 여부: {is_approved}")
-        except discord.NotFound:
-            self.logger.warning(f"채널 '{channel.name}' ({channel.id})을(를) 찾을 수 없어 삭제할 수 없습니다. 이미 삭제되었을 수 있습니다.")
-        except discord.Forbidden:
-            self.logger.error(f"채널 '{channel.name}' ({channel.id})을(를) 삭제할 권한이 없습니다. 봇 권한을 확인해주세요.")
         except Exception as e:
-            self.logger.error(f"채널 '{channel.name}' ({channel.id}) 삭제 중 오류 발생: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"환영 메시지 전송 실패: {str(e)}\n{traceback.format_exc()}")
 
     @commands.command(name="인터뷰패널생성", help="인터뷰 요청 버튼이 포함된 메시지를 공개 채널에 게시합니다. (관리자 전용)")
     @commands.has_permissions(administrator=True) # Ensure only administrators can use this command
@@ -690,23 +680,103 @@ class InterviewRequestCog(commands.Cog):
             self.logger.error(f"❌ 공개 인터뷰 채널을 찾을 수 없습니다. ID: {self.public_channel_id}")
             return await ctx.send("❌ 공개 인터뷰 채널을 찾을 수 없습니다. 설정 확인이 필요합니다.", ephemeral=True)
 
-        interview_embed = discord.Embed(
-            title="Exceed 클랜 인터뷰",
-            description=(
-                "Exceed 클랜에 지원하고 싶으신가요?\n"
-                "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"
-                "신속하게 확인 후 연락드리겠습니다."
-            ),
-            color=discord.Color.blue(),
-            timestamp=datetime.now(timezone.utc)
-        )
-        interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
-        interview_embed.set_footer(text="Exceed • 인터뷰 시스템")
+        try:
+            await public_channel.purge(limit=None)
+            self.logger.info(f"채널 #{public_channel.name} ({public_channel.id})의 기존 메시지를 삭제했습니다.")
 
-        view = InterviewView(private_channel_id=self.private_channel_id, cog=self)
-        await public_channel.send(embed=interview_embed, view=view)
-        self.logger.info(f"인터뷰 패널 메시지가 '{public_channel.name}' 채널에 게시되었습니다.")
-        await ctx.send("✅ 인터뷰 요청 패널이 성공적으로 게시되었습니다.", ephemeral=True)
+            rules_embed = discord.Embed(
+                title="🎯 XCD 발로란트 클랜 가입 조건 안내",
+                description="📜 최종 업데이트: 2025.07.06",
+                color=discord.Color.orange()
+            )
+            rules_embed.add_field(
+                name="가입 전 아래 조건을 반드시 확인해 주세요.",
+                value=(
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "🔞 1. 나이 조건\n"
+                    "・만 20세 이상 (2005년생 이전)\n"
+                    "・성숙한 커뮤니케이션과 책임감 있는 행동을 기대합니다.\n\n"
+                    "🎮 2. 실력 조건\n"
+                    "・현재 티어 골드 이상 (에피소드 기준)\n"
+                    "・트라이아웃(스크림 테스트)으로 실력 확인 가능\n"
+                    "・게임 이해도 & 팀워크도 함께 평가\n\n"
+                    "💬 3. 매너 & 소통\n"
+                    "・욕설/무시/조롱/반말 등 비매너 언행 금지\n"
+                    "・피드백을 받아들이고 긍정적인 태도로 게임 가능\n"
+                    "・디스코드 마이크 필수\n\n"
+                    "⏱️ 4. 활동성\n"
+                    "・주 3회 이상 접속 & 게임 참여 가능자\n"
+                    "・대회/스크림/내전 등 일정에 적극 참여할 의향 있는 분\n"
+                    "・30일 이상 미접속 시 자동 탈퇴 처리 가능\n\n"
+                    "🚫 5. 제한 대상\n"
+                    "・다른 클랜과 겹치는 활동 중인 유저\n"
+                    "・트롤, 욕설, 밴 이력 등 제재 기록 있는 유저\n"
+                    "・대리/부계정/계정 공유 등 비정상 활동\n"
+                    "━━━━━━━━━━━━━━━━━━━━━"
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="📋 가입 절차",
+                value=(
+                    "1️⃣ 디스코드 서버 입장\n"
+                    "2️⃣ 가입 지원서 작성 or 인터뷰\n"
+                    "3️⃣ 트라이아웃 or 최근 경기 클립 확인\n"
+                    "4️⃣ 운영진 승인 → 역할 부여 후 가입 완료"
+                ),
+                inline=False
+            )
+            rules_embed.add_field(
+                name="🧠 FAQ",
+                value=(
+                    "Q. 마이크 없으면 가입 안 되나요?\n"
+                    "→ 네. 음성 소통은 필수입니다. 텍스트만으로는 활동이 어렵습니다.\n\n"
+                    "Q. 골드 미만인데 들어갈 수 있나요?\n"
+                    "→ 트라이아웃으로 팀워크/이해도 확인 후 예외 승인될 수 있습니다."
+                ),
+                inline=False
+            )
+            rules_embed.set_footer(
+                text="✅ 가입 후 일정 기간 적응 평가 기간이 있으며\n"
+                     "매너, 참여도 부족 시 경고 없이 탈퇴될 수 있습니다.\n\n"
+                     "📌 본 안내는 클랜 운영 상황에 따라 변경될 수 있습니다."
+            )
+
+            await public_channel.send(embed=rules_embed)
+
+            interview_embed = discord.Embed(
+                title="✨ 인터뷰 요청 안내 ✨",
+                description=(
+                    "Exceed 클랜에 지원하고 싶으신가요?\n"
+                    "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"
+                    "신속하게 확인 후 연락드리겠습니다."
+                ),
+                color=discord.Color.blue(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
+            interview_embed.set_footer(text="Exceed • 인터뷰 시스템")
+            interview_embed.set_author(
+                name="Exceed 인터뷰 안내",
+                icon_url="https://cdn-icons-png.flaticon.com/512/295/295128.png"
+            )
+
+            await public_channel.send(embed=interview_embed, view=InterviewView(self.private_channel_id, self))
+            self.logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")
+
+        except Exception as e:
+            self.logger.error(f"인터뷰 요청 메시지 전송 실패: {e}\n{traceback.format_exc()}")
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        self.bot.add_view(InterviewView(self.private_channel_id, self))
+        self.bot.add_view(DecisionButtonView(cog=self))
+        # The send_interview_request_message is now a command, so it won't be called automatically on_ready.
+        # You will need to manually use the '!인터뷰패널생성' command in Discord.
+        self.logger.info("인터뷰 요청 뷰 및 영구 뷰 설정 완료. '인터뷰패널생성' 명령어로 패널을 게시하세요.")
+
+    # Removed the redundant slash_request_interview command as '인터뷰패널생성' covers its functionality.
+
 
 async def setup(bot):
     await bot.add_cog(InterviewRequestCog(bot))
