@@ -22,11 +22,11 @@ from utils.logger import get_logger
 import utils.logger as logger_module
 from utils.gspread_utils import GSpreadClient
 
-from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, GSHEET_TESTING_SPREADSHEET_NAME, GSHEET_MEMBER_LIST_SPREADSHEET_NAME
+from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, GSHEET_TESTING_SPREADSHEET_NAME, \
+    GSHEET_MEMBER_LIST_SPREADSHEET_NAME
 
 
 class DecisionButtonView(discord.ui.View):
-    # answers 매개변수 제거
     def __init__(self, applicant_id: int = None, cog=None):
         super().__init__(timeout=None)
         self.applicant_id = applicant_id
@@ -34,34 +34,46 @@ class DecisionButtonView(discord.ui.View):
 
     def _extract_user_id(self, interaction: discord.Interaction) -> Optional[int]:
         user_id = None
+        self.cog.logger.debug(f"Attempting to extract user ID from message ID: {interaction.message.id}")
         if interaction.message.embeds:
             embed = interaction.message.embeds[0]
+            # Try to find in description first
             mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
-            if not mention_match:
+            if mention_match:
+                user_id = int(mention_match.group(1))
+                self.cog.logger.debug(f"User ID extracted from embed description: {user_id}")
+            else:
+                # If not in description, check fields
                 for field in embed.fields:
                     mention_match = re.search(r'<@!?(\d+)>', field.value)
                     if mention_match:
+                        user_id = int(mention_match.group(1))
+                        self.cog.logger.debug(f"User ID extracted from embed field '{field.name}': {user_id}")
                         break
-            if mention_match:
-                user_id = int(mention_match.group(1))
+
+        if user_id is None:
+            self.cog.logger.warning(f"Could not extract user ID from embed in message ID: {interaction.message.id}")
         return user_id
 
-    async def _get_interview_data_from_sheet(self, user_id: str):
+    async def _get_interview_data_from_sheet(self, user_id_str: str):
         """Google Sheet에서 인터뷰 데이터를 조회합니다."""
+        self.cog.logger.info(f"Trying to fetch data from 'Testing' sheet for user ID: {user_id_str}")
         testing_worksheet = await self.cog.gspread_client.get_worksheet(
             config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1"
         )
         if not testing_worksheet:
-            self.cog.logger.error(f"❌ Google Sheets '{config.GSHEET_TESTING_SPREADSHEET_NAME}' 스프레드시트 또는 'Sheet1' 워크시트를 찾을 수 없습니다.")
+            self.cog.logger.error(
+                f"❌ Google Sheets '{config.GSHEET_TESTING_SPREADSHEET_NAME}' 스프레드시트 또는 'Sheet1' 워크시트를 찾을 수 없습니다. (Get data for user: {user_id_str})")
             return None, None
 
         all_test_values = await asyncio.to_thread(testing_worksheet.get_all_values)
         if not all_test_values:
-            self.cog.logger.warning("❌ 'Testing' 시트가 비어있습니다.")
+            self.cog.logger.warning(f"❌ 'Testing' 시트가 비어있습니다. (Get data for user: {user_id_str})")
             return None, None
 
         test_header = all_test_values[0]
         interview_id_col_index = -1
+        self.cog.logger.debug(f"'Testing' sheet header: {test_header}")
 
         for i, col_name in enumerate(test_header):
             if col_name.strip() == "Interview_ID":
@@ -69,22 +81,32 @@ class DecisionButtonView(discord.ui.View):
                 break
 
         if interview_id_col_index == -1:
-            self.cog.logger.error("❌ 'Testing' 시트에 'Interview_ID' 컬럼이 없습니다.")
+            self.cog.logger.error(
+                f"❌ 'Testing' 시트에 'Interview_ID' 컬럼이 없습니다. 헤더: {test_header} (Get data for user: {user_id_str})")
             return None, None
 
         testing_row_to_process = None
-        for i, row in enumerate(all_test_values[1:]): # Skip header
-            if len(row) > interview_id_col_index and row[interview_id_col_index] == user_id:
+        for i, row in enumerate(all_test_values[1:]):  # Skip header
+            if len(row) > interview_id_col_index and row[interview_id_col_index] == user_id_str:
                 testing_row_to_process = row
+                self.cog.logger.info(f"✅ 'Testing' 시트에서 Interview ID '{user_id_str}'에 대한 데이터 행을 찾았습니다.")
                 break
-        return testing_row_to_process, test_header
 
+        if not testing_row_to_process:
+            existing_interview_ids = [row[interview_id_col_index] for row in all_test_values[1:] if
+                                      len(row) > interview_id_col_index]
+            self.cog.logger.warning(
+                f"❌ 'Testing' 시트에서 Interview ID '{user_id_str}'를 찾을 수 없습니다. 현재 시트에 존재하는 Interview_ID들: {existing_interview_ids}")
+            return None, None
+
+        return testing_row_to_process, test_header
 
     @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="interview_pass")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
         user_id = self._extract_user_id(interaction)
+        self.cog.logger.info(f"Approve button pressed. Extracted user ID: {user_id}")
         if not user_id:
             self.cog.logger.warning(f"합격 처리 시 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
             return await interaction.followup.send(
@@ -104,25 +126,22 @@ class DecisionButtonView(discord.ui.View):
             testing_row_to_process, test_header = await self._get_interview_data_from_sheet(str(user_id))
 
             if not testing_row_to_process:
-                self.cog.logger.warning(f"합격 처리 시 'Testing' 시트에서 Interview ID '{user_id}'를 찾을 수 없습니다.")
-                return await interaction.followup.send(f"❌ {member.mention}님의 인터뷰 정보를 'Testing' 시트에서 찾을 수 없습니다.", ephemeral=True)
-            if not test_header: # Should also return None if worksheet not found
+                return await interaction.followup.send(f"❌ {member.mention}님의 인터뷰 정보를 'Testing' 시트에서 찾을 수 없습니다.",
+                                                       ephemeral=True)
+            if not test_header:
                 return await interaction.followup.send("❌ Google Sheets 'Testing' 시트의 헤더를 가져올 수 없습니다.", ephemeral=True)
 
-
-            # Prepare data for "Member List" sheet
-            # Mapping of column names for easier access
             col_map = {col: test_header.index(col) for col in test_header}
 
             member_data_to_append = [
-                str(member.id), # 디스코드 사용자 ID
-                member.display_name, # Discord 사용자명
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), # 합격 날짜
-                testing_row_to_process[col_map.get("인게임 이름 및 태그 (예: 이름#태그)", -1)], # 인게임 이름 및 태그
-                testing_row_to_process[col_map.get("활동 지역 (서부/중부/동부)", -1)], # 활동 지역
-                testing_row_to_process[col_map.get("가장 자신있는 역할", -1)], # 주요 역할
-                testing_row_to_process[col_map.get("프리미어 팀 참가 의향", -1)], # 프리미어 팀 참가 의향
-                "합격 처리됨" # 특이사항 또는 관리자 메모
+                str(member.id),
+                member.display_name,
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                testing_row_to_process[col_map.get("인게임 이름 및 태그 (예: 이름#태그)", -1)],
+                testing_row_to_process[col_map.get("활동 지역 (서부/중부/동부)", -1)],
+                testing_row_to_process[col_map.get("가장 자신있는 역할", -1)],
+                testing_row_to_process[col_map.get("프리미어 팀 참가 의향", -1)],
+                "합격 처리됨"
             ]
 
             success_member_list_append = await self.cog.gspread_client.append_row(
@@ -131,7 +150,8 @@ class DecisionButtonView(discord.ui.View):
             )
 
             if not success_member_list_append:
-                await interaction.followup.send("❌ 'Member List' 시트에 합격 정보를 추가하는 데 실패했습니다. 관리자에게 문의해주세요.", ephemeral=True)
+                await interaction.followup.send("❌ 'Member List' 시트에 합격 정보를 추가하는 데 실패했습니다. 관리자에게 문의해주세요.",
+                                                ephemeral=True)
                 return
 
             # Step 2: Remove row from "Testing" sheet
@@ -140,8 +160,8 @@ class DecisionButtonView(discord.ui.View):
             )
             if not success_delete_testing_row:
                 self.cog.logger.warning(f"합격 처리 후 'Testing' 시트에서 {user_id}의 행을 삭제하는 데 실패했습니다.")
-                await interaction.followup.send("⚠️ 'Testing' 시트에서 인터뷰 정보를 삭제하는 데 실패했지만 합격 처리는 완료되었습니다. 수동으로 삭제해주세요.", ephemeral=True)
-
+                await interaction.followup.send("⚠️ 'Testing' 시트에서 인터뷰 정보를 삭제하는 데 실패했지만 합격 처리는 완료되었습니다. 수동으로 삭제해주세요.",
+                                                ephemeral=True)
 
             # Step 3: Discord role handling and welcome message
             role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
@@ -194,6 +214,7 @@ class DecisionButtonView(discord.ui.View):
             return await interaction.followup.send("❌ 이 작업을 수행할 권한이 없습니다. 관리자만 사용할 수 있습니다.", ephemeral=True)
 
         user_id = self._extract_user_id(interaction)
+        self.cog.logger.info(f"Test button pressed. Extracted user ID: {user_id}")
         if not user_id:
             self.cog.logger.warning(f"테스트 처리 시 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
@@ -204,115 +225,44 @@ class DecisionButtonView(discord.ui.View):
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
         try:
-            # Prepare data for Google Sheet
             submission_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-            # Define a mapping from modal questions to Google Sheet column names
-            # Ensure these exactly match your Google Sheet header for "Testing"
-            # NOTE: These are the *expected* column names in the Google Sheet.
-            gsheet_column_map = {
-                "활동 지역 (서부/중부/동부)": "활동 지역 (서부/중부/동부)",
-                "인게임 이름 및 태그 (예: 이름#태그)": "인게임 이름 및 태그 (예: 이름#태그)",
-                "가장 자신있는 역할": "가장 자신있는 역할",
-                "프리미어 팀 참가 의향": "프리미어 팀 참가 의향",
-                "지원 동기": "지원 동기",
-            }
-
-            # Retrieve the latest answers from the modal.
-            # For "테스트" button, we are adding new data, so we need the answers from the modal submission.
-            # This 'answers' should come from the InterviewModal.
-            # The 'self.answers' in DecisionButtonView is no longer reliable.
-            # We need to assume the data is correctly provided by the `InterviewModal.on_submit` and is
-            # already in the GSheet for 'approve' and 'reject'.
-            # For 'test', it's being *sent* to the sheet, so we should rely on what was just submitted.
-
-            # Re-evaluating: The prompt implies that `test` button *sends* the info.
-            # This means `self.answers` *must* be populated from the `InterviewModal` for `test` to work.
-            # If the bot restarts *before* the 'test' button is pressed, 'self.answers' will be lost.
-            # The error "인터뷰 답변 정보를 찾을 수 없습니다." indicates this scenario.
-
-            # To make 'test' robust to restarts and persistent views:
-            # When the 'test' button is pressed, it should also *read* the data from the embed *if* the view is persistent.
-            # Or, the initial submission to the sheet by the modal *is* the record, and 'test' button *updates* or *confirms* it.
-            # Let's align with the initial prompt: "on the press of the '테스트' button, I want the user's inputted info to be sent to the 'Testing' google sheet"
-            # This implies the button itself is responsible for *sending* the data, not just marking it.
-
-            # This is a conflict with the current flow. Currently, `InterviewModal.on_submit` sends the data to the sheet.
-            # The DecisionButtonView is then displayed *after* that.
-            # So, the data *is already in the sheet* when "테스트" is pressed.
-            # Therefore, `test` should *also* retrieve from the sheet, just like `approve`.
-
-            # Let's stick with the consistent pattern: both `approve` and `test` (and `reject`)
-            # should retrieve the user's latest interview data from the "Testing" sheet.
-
+            # Retrieve the existing data from the "Testing" sheet.
+            # This is key: the modal *should* have already sent the initial data.
+            # The 'test' button *updates* that record.
             testing_row_data, test_sheet_header = await self._get_interview_data_from_sheet(str(user_id))
 
             if not testing_row_data or not test_sheet_header:
-                self.cog.logger.error(f"테스트 처리 시 {member.display_name}의 인터뷰 답변을 'Testing' 시트에서 찾을 수 없거나 시트 헤더를 가져올 수 없습니다.")
+                self.cog.logger.error(
+                    f"테스트 처리 시 {member.display_name}의 인터뷰 답변을 'Testing' 시트에서 찾을 수 없거나 시트 헤더를 가져올 수 없습니다. User ID: {user_id}")
                 return await interaction.followup.send(
-                    "❌ 인터뷰 답변 정보를 찾을 수 없습니다. 인터뷰 요청을 다시 시도해주세요.",
+                    "❌ 인터뷰 답변 정보를 찾을 수 없습니다. (Google Sheet에 데이터가 없거나 헤더 문제) 인터뷰 요청을 다시 시도해주세요.",
                     ephemeral=True
                 )
 
-            # Map column names to indices from the retrieved header
             header_indices = {col: test_sheet_header.index(col) for col in test_sheet_header}
 
-            # Construct the row data for Google Sheet based on the required order for the update
-            # We are essentially updating the Status column of an existing row.
-            # The original request implies 'sending info', so if it's not there, we'd add it.
-            # Given the flow, it *should* be there from the modal submission.
-            # If not, this means the modal didn't correctly send it.
-
-            # For the 'test' button, we are essentially updating the 'Status' of an existing entry,
-            # or ensuring it exists and is marked as '테스트'.
-            # The prompt says "info to be sent", so if it's not there, it should be added.
-            # The current `_get_interview_data_from_sheet` will return None if not found.
-            # If not found, we should create a new entry.
-            # This is complex because `self.answers` is gone.
-            # The simplest way to handle 'sending info' if not found is to re-parse from the embed,
-            # but that's error-prone.
-
-            # The current structure assumes InterviewModal *already sent* the initial data to "Testing".
-            # So, the "테스트" button's role is to *update* the status in "Testing" and grant the role.
-            # The prompt "I want the user's inputted info to be sent to the 'Testing' google sheet"
-            # implies that this action is responsible for the *initial* data entry.
-            # This contradicts the `InterviewModal.on_submit` which already sends it.
-
-            # Assuming the InterviewModal *does* successfully send the initial data:
-            # We will just update the 'Status' column of the existing row to "테스트".
-
-            status_col_index = header_indices.get("Status", -1)
-            if status_col_index == -1:
-                self.cog.logger.error("❌ 'Testing' 시트에 'Status' 컬럼이 없습니다.")
-                return await interaction.followup.send("❌ 'Testing' 시트 형식이 올바르지 않습니다. 'Status' 컬럼이 필요합니다.", ephemeral=True)
-
-            # Create a mutable copy of the row data
+            # Create a mutable copy and update the Status
             updated_row_data = list(testing_row_data)
-            if len(updated_row_data) > status_col_index:
+            status_col_index = header_indices.get("Status", -1)
+
+            if status_col_index != -1 and len(updated_row_data) > status_col_index:
                 updated_row_data[status_col_index] = "테스트"
-            else:
-                # Pad the row if 'Status' column index is beyond current row length
+            elif status_col_index != -1:  # If column exists but row is too short
                 updated_row_data.extend([''] * (status_col_index - len(updated_row_data) + 1))
                 updated_row_data[status_col_index] = "테스트"
+            else:
+                self.cog.logger.warning(f"❌ 'Testing' 시트에 'Status' 컬럼이 없거나 인덱스 문제. {user_id}의 상태 업데이트 실패.")
+                # Decide how to proceed if Status column isn't found/updatable
+                # For now, will proceed without updating status in sheet if column is truly missing
 
-
-            # Find the row number to update
-            # This requires getting all values and finding the index again, which `_get_interview_data_from_sheet` doesn't return.
-            # We need to refine `gspread_utils.update_row` or add a method to get row index.
-            # For simplicity for now, let's just make sure it's in the sheet.
-            # If `append_row` is called, it would add a duplicate.
-            # The `delete_row_by_interview_id` and `append_row` strategy used in `approve` is one way to "update".
-
-            # Let's use the delete then append strategy to ensure the "Status" is updated
-            # and to handle potential duplicates robustly.
-
+            # Delete the old row and append the updated row to effectively "update" it
             success_delete = await self.cog.gspread_client.delete_row_by_interview_id(
                 config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", str(user_id)
             )
             if not success_delete:
                 self.cog.logger.warning(f"테스트 처리 중 기존 {user_id}의 'Testing' 시트 행 삭제 실패 (없었거나 오류). 새로 추가 시도.")
 
-            # Append the modified row (with updated status)
             success_append = await self.cog.gspread_client.append_row(
                 config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", updated_row_data
             )
@@ -320,7 +270,6 @@ class DecisionButtonView(discord.ui.View):
             if not success_append:
                 await interaction.followup.send("❌ Google Sheets에 데이터를 업데이트/추가하는 데 실패했습니다.", ephemeral=True)
                 return
-
 
             test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if not test_role:
@@ -367,6 +316,7 @@ class DecisionButtonView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
 
         user_id = self._extract_user_id(interaction)
+        self.cog.logger.info(f"Reject button pressed. Extracted user ID: {user_id}")
         if not user_id:
             self.cog.logger.warning(f"불합격 처리 시 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
             return await interaction.followup.send(
@@ -390,7 +340,6 @@ class DecisionButtonView(discord.ui.View):
                 self.cog.logger.warning(f"불합격 처리 시 'Testing' 시트에서 {user_id}의 행을 삭제하는 데 실패했습니다. (이미 없거나 오류)")
             else:
                 self.cog.logger.info(f"불합격 처리로 'Testing' 시트에서 {user_id}의 행을 삭제했습니다.")
-
 
             try:
                 await member.send(
@@ -493,8 +442,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 ephemeral=True
             )
 
-        # Before sending the embed, let's ensure the data is indeed sent to the 'Testing' sheet first.
-        # This part remains crucial as the modal is the initial point of data entry.
+        # Ensure the data is immediately sent to the 'Testing' sheet upon modal submission
         try:
             submission_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             data_row = [
@@ -527,7 +475,6 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 ephemeral=True
             )
 
-
         embed = discord.Embed(
             title="📝 인터뷰 요청 접수",
             description=f"{interaction.user.mention} 님이 인터뷰를 요청했습니다.",
@@ -545,7 +492,6 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 inline=False
             )
 
-        # answers는 DecisionButtonView로 직접 전달되지 않습니다. Sheet에서 조회합니다.
         view = DecisionButtonView(applicant_id=interaction.user.id, cog=cog)
         await private_channel.send(embed=embed, view=view)
         cog.logger.info(f"인터뷰 요청 접수: {interaction.user.display_name} ({interaction.user.id})")
@@ -794,7 +740,6 @@ class InterviewRequestCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(InterviewView(self.private_channel_id, self))
-        # DecisionButtonView는 이제 `answers`를 생성자에서 받지 않습니다.
         self.bot.add_view(DecisionButtonView(cog=self))
         await self.send_interview_request_message()
         self.logger.info("인터뷰 요청 메시지 및 영구 뷰 설정 완료.")
