@@ -707,3 +707,6 @@ class InterviewRequestCog(commands.Cog):
         await public_channel.send(embed=interview_embed, view=view)
         self.logger.info(f"인터뷰 패널 메시지가 '{public_channel.name}' 채널에 게시되었습니다.")
         await ctx.send("✅ 인터뷰 요청 패널이 성공적으로 게시되었습니다.", ephemeral=True)
+
+async def setup(bot):
+    await bot.add_cog(InterviewRequestCog(bot))
