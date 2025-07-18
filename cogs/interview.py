@@ -474,7 +474,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
             title="📝 인터뷰 요청 접수",
             description=f"{interaction.user.mention} 님이 인터뷰를 요청했습니다.",
             color=discord.Color.green(),
-            timestamp=datetime.now(timezone.utc)
+            timestamp=datetime.datetime.now(timezone.utc)
         )
 
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
@@ -652,7 +652,7 @@ class InterviewRequestCog(commands.Cog):
                 title=f"🎉 {member.display_name}님, Exceed 클랜에 합격하셨습니다!",
                 description="축하드립니다! 공식 클랜 멤버가 되신 것을 진심으로 환영합니다.",
                 color=discord.Color.gold(),
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.datetime.now(timezone.utc)
             )
             embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>", inline=False)
             embed.add_field(name="2️⃣ 역할지급 채널에서 원하는 역할을 선택해 주세요.", value=f"<#{config.ROLE_ASSIGN_CHANNEL_ID}>",
@@ -768,7 +768,7 @@ class InterviewRequestCog(commands.Cog):
                     "신속하게 확인 후 연락드리겠습니다."
                 ),
                 color=discord.Color.blue(),
-                timestamp=datetime.now(timezone.utc)
+                timestamp=datetime.datetime.now(timezone.utc)
             )
             interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
             interview_embed.set_footer(text="Exceed • 인터뷰 시스템")
