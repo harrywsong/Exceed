@@ -22,8 +22,6 @@ from utils.logger import get_logger
 from utils.gspread_utils import GSpreadClient # Import GSpreadClient
 from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, MEMBERS_SHEET_NAME, TEST_SHEET_NAME
 
-import datetime
-
 class DecisionButtonView(discord.ui.View):
     def __init__(self, cog, timeout: Optional[float] = None):
         super().__init__(timeout=timeout)
@@ -506,7 +504,6 @@ class InterviewView(View):
 
     @discord.ui.button(label="인터뷰 요청 시작하기", style=discord.ButtonStyle.primary, custom_id="start_interview")
     async def start_interview(self, interaction: discord.Interaction, button: Button):
-
         modal = InterviewModal()
         await interaction.response.send_modal(modal)
 
@@ -665,142 +662,48 @@ class InterviewRequestCog(commands.Cog):
             await channel.send(
                 content=member.mention,
                 embed=embed,
-                file=file,
-                allowed_mentions=discord.AllowedMentions(users=True))
-            self.logger.info(f"환영 메시지 전송 완료: {member.display_name} ({member.id})")
-
+                file=file if file else None
+            )
+            self.logger.info(f"✅ {member.display_name}님에게 환영 메시지 전송 완료.")
         except Exception as e:
-            self.logger.error(f"환영 메시지 전송 실패: {str(e)}\n{traceback.format_exc()}")
+            self.logger.error(f"❌ {member.display_name}님에게 환영 메시지 전송 중 오류 발생: {e}\n{traceback.format_exc()}")
 
-    async def delete_channel_after_delay(self, channel: discord.TextChannel, delay: int, member_id: int, is_accepted: bool):
-        self.logger.info(f"Channel {channel.name} ({channel.id}) will be deleted in {delay} seconds.")
+    async def delete_channel_after_delay(self, channel: discord.TextChannel, delay: int, user_id: int, is_approved: bool):
+        """Deletes a channel after a specified delay and logs the action."""
+        self.logger.info(f"채널 '{channel.name}' ({channel.id})이(가) {delay}초 후 삭제될 예정입니다. 사용자 ID: {user_id}")
         await asyncio.sleep(delay)
         try:
-            if channel:
-                await channel.delete(reason=f"Interview process completed (Member ID: {member_id}, Accepted: {is_accepted})")
-                self.logger.info(f"Channel {channel.name} ({channel.id}) deleted successfully.")
+            await channel.delete(reason=f"인터뷰 처리 완료 (사용자 ID: {user_id}, 합격 여부: {is_approved})")
+            self.logger.info(f"채널 '{channel.name}' ({channel.id}) 삭제 완료. 사용자 ID: {user_id}, 합격 여부: {is_approved}")
+        except discord.NotFound:
+            self.logger.warning(f"채널 '{channel.name}' ({channel.id})을(를) 찾을 수 없어 삭제할 수 없습니다. 이미 삭제되었을 수 있습니다.")
         except discord.Forbidden:
-            self.logger.error(f"❌ Missing permissions to delete channel {channel.name} ({channel.id}).")
-        except discord.HTTPException as e:
-            self.logger.error(f"❌ HTTP error while deleting channel {channel.name} ({channel.id}): {e}")
+            self.logger.error(f"채널 '{channel.name}' ({channel.id})을(를) 삭제할 권한이 없습니다. 봇 권한을 확인해주세요.")
         except Exception as e:
-            self.logger.error(f"❌ Unknown error while deleting channel {channel.name} ({channel.id}): {e}\n{traceback.format_exc()}")
+            self.logger.error(f"채널 '{channel.name}' ({channel.id}) 삭제 중 오류 발생: {e}\n{traceback.format_exc()}")
 
-    async def send_interview_request_message(self):
-        channel = self.bot.get_channel(self.public_channel_id)
-        if not channel:
-            self.logger.error(f"공개 채널 ID {self.public_channel_id}를 찾을 수 없습니다.")
-            return
+    @commands.command(name="인터뷰패널생성", help="인터뷰 요청 버튼이 포함된 메시지를 공개 채널에 게시합니다. (관리자 전용)")
+    @commands.has_permissions(administrator=True) # Ensure only administrators can use this command
+    async def send_interview_panel(self, ctx: commands.Context):
+        public_channel = self.bot.get_channel(self.public_channel_id)
+        if not public_channel:
+            self.logger.error(f"❌ 공개 인터뷰 채널을 찾을 수 없습니다. ID: {self.public_channel_id}")
+            return await ctx.send("❌ 공개 인터뷰 채널을 찾을 수 없습니다. 설정 확인이 필요합니다.", ephemeral=True)
 
-        try:
-            await channel.purge(limit=None)
-            self.logger.info(f"채널 #{channel.name} ({channel.id})의 기존 메시지를 삭제했습니다.")
-
-            rules_embed = discord.Embed(
-                title="🎯 XCD 발로란트 클랜 가입 조건 안내",
-                description="📜 최종 업데이트: 2025.07.06",
-                color=discord.Color.orange()
-            )
-            rules_embed.add_field(
-                name="가입 전 아래 조건을 반드시 확인해 주세요.",
-                value=(
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "🔞 1. 나이 조건\n"
-                    "・만 20세 이상 (2005년생 이전)\n"
-                    "・성숙한 커뮤니케이션과 책임감 있는 행동을 기대합니다.\n\n"
-                    "🎮 2. 실력 조건\n"
-                    "・현재 티어 골드 이상 (에피소드 기준)\n"
-                    "・트라이아웃(스크림 테스트)으로 실력 확인 가능\n"
-                    "・게임 이해도 & 팀워크도 함께 평가\n\n"
-                    "💬 3. 매너 & 소통\n"
-                    "・욕설/무시/조롱/반말 등 비매너 언행 금지\n"
-                    "・피드백을 받아들이고 긍정적인 태도로 게임 가능\n"
-                    "・디스코드 마이크 필수\n\n"
-                    "⏱️ 4. 활동성\n"
-                    "・주 3회 이상 접속 & 게임 참여 가능자\n"
-                    "・대회/스크림/내전 등 일정에 적극 참여할 의향 있는 분\n"
-                    "・30일 이상 미접속 시 자동 탈퇴 처리 가능\n\n"
-                    "🚫 5. 제한 대상\n"
-                    "・다른 클랜과 겹치는 활동 중인 유저\n"
-                    "・트롤, 욕설, 밴 이력 등 제재 기록 있는 유저\n"
-                    "・대리/부계정/계정 공유 등 비정상 활동\n"
-                    "━━━━━━━━━━━━━━━━━━━━━"
-                ),
-                inline=False
-            )
-            rules_embed.add_field(
-                name="📋 가입 절차",
-                value=(
-                    "1️⃣ 디스코드 서버 입장\n"
-                    "2️⃣ 가입 지원서 작성 or 인터뷰\n"
-                    "3️⃣ 트라이아웃 or 최근 경기 클립 확인\n"
-                    "4️⃣ 운영진 승인 → 역할 부여 후 가입 완료"
-                ),
-                inline=False
-            )
-            rules_embed.add_field(
-                name="🧠 FAQ",
-                value=(
-                    "Q. 마이크 없으면 가입 안 되나요?\n"
-                    "→ 네. 음성 소통은 필수입니다. 텍스트만으로는 활동이 어렵습니다.\n\n"
-                    "Q. 골드 미만인데 들어갈 수 있나요?\n"
-                    "→ 트라이아웃으로 팀워크/이해도 확인 후 예외 승인될 수 있습니다."
-                ),
-                inline=False
-            )
-            rules_embed.set_footer(
-                text="✅ 가입 후 일정 기간 적응 평가 기간이 있으며\n"
-                     "매너, 참여도 부족 시 경고 없이 탈퇴될 수 있습니다.\n\n"
-                     "📌 본 안내는 클랜 운영 상황에 따라 변경될 수 있습니다."
-            )
-
-            await channel.send(embed=rules_embed)
-
-            interview_embed = discord.Embed(
-                title="✨ 인터뷰 요청 안내 ✨",
-                description=(
-                    "Exceed 클랜에 지원하고 싶으신가요?\n"
-                    "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"
-                    "신속하게 확인 후 연락드리겠습니다."
-                ),
-                color=discord.Color.blue(),
-                timestamp=datetime.now(timezone.utc)
-            )
-            interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
-            interview_embed.set_footer(text="Exceed • 인터뷰 시스템")
-            interview_embed.set_author(
-                name="Exceed 인터뷰 안내",
-                icon_url="https://cdn-icons-png.flaticon.com/512/295/295128.png"
-            )
-
-            await channel.send(embed=interview_embed, view=InterviewView(self.private_channel_id, self))
-            self.logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")
-
-        except Exception as e:
-            self.logger.error(f"인터뷰 요청 메시지 전송 실패: {e}\n{traceback.format_exc()}")
-
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        # Pass cog to DecisionButtonView for persistence
-        self.bot.add_view(InterviewView(self.private_channel_id, self))
-        self.bot.add_view(DecisionButtonView(cog=self))
-        await self.send_interview_request_message()
-        self.logger.info("인터뷰 요청 메시지 및 영구 뷰 설정 완료.")
-
-    @discord.app_commands.command(
-        name="request_interview",
-        description="인터뷰 요청 메시지를 다시 보냅니다 (관리자용)"
-    )
-    @discord.app_commands.default_permissions(administrator=True)
-    async def slash_request_interview(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        await self.send_interview_request_message()
-        await interaction.followup.send(
-            "인터뷰 요청 메시지를 갱신했습니다!",
-            ephemeral=True
+        interview_embed = discord.Embed(
+            title="Exceed 클랜 인터뷰",
+            description=(
+                "Exceed 클랜에 지원하고 싶으신가요?\n"
+                "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"
+                "신속하게 확인 후 연락드리겠습니다."
+            ),
+            color=discord.Color.blue(),
+            timestamp=datetime.now(timezone.utc)
         )
+        interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
+        interview_embed.set_footer(text="Exceed • 인터뷰 시스템")
 
-
-async def setup(bot):
-    await bot.add_cog(InterviewRequestCog(bot))
+        view = InterviewView(private_channel_id=self.private_channel_id, cog=self)
+        await public_channel.send(embed=interview_embed, view=view)
+        self.logger.info(f"인터뷰 패널 메시지가 '{public_channel.name}' 채널에 게시되었습니다.")
+        await ctx.send("✅ 인터뷰 요청 패널이 성공적으로 게시되었습니다.", ephemeral=True)
