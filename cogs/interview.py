@@ -506,8 +506,6 @@ class InterviewView(View):
 
     @discord.ui.button(label="인터뷰 요청 시작하기", style=discord.ButtonStyle.primary, custom_id="start_interview")
     async def start_interview(self, interaction: discord.Interaction, button: Button):
-        # --- FIX: Defer the interaction immediately to prevent "This interaction failed" ---
-        await interaction.response.defer(ephemeral=True) # Ephemeral=True so only the user sees the "thinking" message
 
         modal = InterviewModal()
         await interaction.response.send_modal(modal)
