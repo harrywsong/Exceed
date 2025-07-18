@@ -16,7 +16,7 @@ def parse_ids(env_var):
     return [int(x) for x in raw.split(",") if x.strip().isdigit()]
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!") # Added COMMAND_PREFIX
+COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -67,3 +67,7 @@ try:
 except json.JSONDecodeError as e:
     print(f"Failed to parse REACTION_ROLE_MAP_JSON: {e}")
     REACTION_ROLE_MAP = {}
+
+GSHEET_CREDENTIALS_PATH = os.getenv("GSHEET_CREDENTIALS_PATH")
+MEMBERS_SHEET_NAME = os.getenv("MEMBERS_SHEET_NAME")
+TEST_SHEET_NAME = os.getenv("TEST_SHEET_NAME")

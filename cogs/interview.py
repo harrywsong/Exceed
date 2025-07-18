@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from utils import config
+# NEW: Import gspread_utils
+from utils.gspread_utils import GSpreadClient
 from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_ID, WELCOME_CHANNEL_ID, \
     RULES_CHANNEL_ID, ANNOUNCEMENTS_CHANNEL_ID, ACCEPTED_ROLE_ID, MEMBER_CHAT_CHANNEL_ID
 from utils.logger import get_logger
@@ -33,34 +35,66 @@ class DecisionButtonView(discord.ui.View):
         user_id = None
         if interaction.message.embeds:
             embed = interaction.message.embeds[0]
+            # Check description first for mention
             mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
             if not mention_match:
+                # If not in description, check fields
                 for field in embed.fields:
                     mention_match = re.search(r'<@!?(\d+)>', field.value)
                     if mention_match:
-                        break
+                        break  # Found in a field, break loop
             if mention_match:
                 user_id = int(mention_match.group(1))
         return user_id
+
+    # NEW: Helper function to extract answers from the embed
+    def _extract_answers_from_embed(self, interaction: discord.Interaction) -> dict:
+        answers = {}
+        if not interaction.message.embeds:
+            return answers
+        embed = interaction.message.embeds[0]
+        for field in embed.fields:
+            # Cleans up the question key from "❓ " prefix and strips whitespace
+            # For your specific modal's questions, match them exactly
+            original_question_label = field.name.replace("❓ ", "").strip()
+
+            # Map the displayed question to the actual key used in the modal/gspread
+            if original_question_label == "활동 지역 (서부/중부/동부)":
+                question_key = "활동 지역 (서부/중부/동부)"
+            elif original_question_label == "인게임 이름 및 태그 (예: 이름#태그)":
+                question_key = "인게임 이름 및 태그 (예: 이름#태그)"
+            elif original_question_label == "가장 자신있는 역할":
+                question_key = "가장 자신있는 역할"
+            elif original_question_label == "프리미어 팀 참가 의향":
+                question_key = "프리미어 팀 참가 의향"
+            elif original_question_label == "지원 동기":
+                question_key = "지원 동기"
+            else:
+                question_key = original_question_label  # Fallback if not a known question
+
+            # Cleans up the answer value from "> " prefix and "*응답 없음*" and strips whitespace
+            answer = field.value.replace("> ", "").replace("*응답 없음*", "").strip()
+            answers[question_key] = answer
+        return answers
 
     @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="interview_pass")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
+        # Check if the interaction user has administrator permissions
+        if not interaction.user.guild_permissions.administrator:
+            self.cog.logger.warning(f"관리자 권한 없는 사용자 ({interaction.user.display_name})가 합격 버튼을 누름.")
+            return await interaction.followup.send("❌ 이 버튼을 사용할 권한이 없습니다.", ephemeral=True)
+
         user_id = self._extract_user_id(interaction)
         if not user_id:
             self.cog.logger.warning(f"합격 처리 시 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
-            return await interaction.followup.send(
-                "❌ 지원자 정보를 찾을 수 없습니다.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
+
         member = interaction.guild.get_member(user_id)
         if not member:
             self.cog.logger.warning(f"합격 처리 시 멤버를 찾을 수 없습니다. User ID: {user_id}")
-            return await interaction.followup.send(
-                "❌ 지원자 정보를 찾을 수 없습니다.",
-                ephemeral=True
-            )
+            return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
         try:
             role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
@@ -70,6 +104,10 @@ class DecisionButtonView(discord.ui.View):
                     "❌ 합격 역할을 찾을 수 없습니다. 관리자에게 문의해주세요.",
                     ephemeral=True
                 )
+
+            if role in member.roles:
+                return await interaction.followup.send(f"✅ {member.mention}님은 이미 '{role.name}' 역할을 가지고 있습니다.",
+                                                       ephemeral=True)
 
             await member.add_roles(role, reason="합격 처리됨")
             self.cog.logger.info(f"✅ {member.display_name} ({member.id})님을 합격 처리했습니다. 역할 '{role.name}' 부여.")
@@ -83,6 +121,17 @@ class DecisionButtonView(discord.ui.View):
             if guest_role and guest_role in member.roles:
                 await member.remove_roles(guest_role, reason="합격 처리로 인한 게스트 역할 제거")
                 self.cog.logger.info(f"게스트 역할 '{guest_role.name}'을(를) {member.display_name}님에게서 제거했습니다.")
+
+            # --- NEW: Google Sheets Integration ---
+            answers = self._extract_answers_from_embed(interaction)
+            if self.cog.gspread_client:
+                # Remove from test sheet (if they were there)
+                self.cog.gspread_client.remove_from_test_sheet(member.id,
+                                                               member.display_name)  # No await needed here, it's synchronous now
+                # Add to main members sheet
+                self.cog.gspread_client.add_to_members_sheet(member.id, member.display_name,
+                                                             answers)  # No await needed here, it's synchronous now
+            # --- End of Google Sheets Integration ---
 
             await interaction.followup.send(
                 f"✅ {member.mention}님을 합격 처리했습니다!"
@@ -122,14 +171,25 @@ class DecisionButtonView(discord.ui.View):
             self.cog.logger.warning(f"테스트 처리 시 멤버를 찾을 수 없습니다. User ID: {user_id}")
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
-        test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
+        test_role = interaction.guild.get_role(
+            APPLICANT_ROLE_ID)  # Assuming APPLICANT_ROLE_ID is for 'Test' or 'Applicant'
         if not test_role:
             self.cog.logger.error(f"❌ 테스트 역할 ID {APPLICANT_ROLE_ID}을(를) 찾을 수 없습니다. 설정 확인 필요.")
             return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
 
         try:
+            if test_role in member.roles:
+                return await interaction.followup.send(f"🟡 {member.mention}님은 이미 테스트 역할을 가지고 있습니다.", ephemeral=True)
+
             await member.add_roles(test_role, reason="테스트 역할 부여 (관리자 승인)")
             self.cog.logger.info(f"🟡 {member.display_name} ({member.id})님에게 테스트 역할 '{test_role.name}'을(를) 부여했습니다.")
+
+            # --- NEW: Google Sheets Integration ---
+            answers = self._extract_answers_from_embed(interaction)
+            if self.cog.gspread_client:
+                self.cog.gspread_client.add_to_test_sheet(member.id, member.display_name,
+                                                          answers)  # No await needed here
+            # --- End of Google Sheets Integration ---
 
             try:
                 await member.send(
@@ -167,6 +227,10 @@ class DecisionButtonView(discord.ui.View):
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
+        if not interaction.user.guild_permissions.administrator:
+            self.cog.logger.warning(f"관리자 권한 없는 사용자 ({interaction.user.display_name})가 불합격 버튼을 누름.")
+            return await interaction.followup.send("❌ 이 버튼을 사용할 권한이 없습니다.", ephemeral=True)
+
         user_id = self._extract_user_id(interaction)
         if not user_id:
             self.cog.logger.warning(f"불합격 처리 시 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
@@ -192,7 +256,7 @@ class DecisionButtonView(discord.ui.View):
                     "앞으로도 지속적인 발전이 있으시길 진심으로 응원하며, 상황이 괜찮아지면 언제든지 다시 지원해 주시길 바랍니다. \n\n"
                     "Exceed는 언제나 열려 있으며, 다음 기회에 꼭 함께할 수 있기를 기대하겠습니다.\n\n"
                     "궁금한 점이 있으시면 언제든지 운영진에게 문의하시거나, 아래 채널을 통해 연락 주시기 바랍니다:  \n\n"
-                    "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"  
+                    "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
                     "감사합니다.\n\n"
                     "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
                 )
@@ -202,6 +266,12 @@ class DecisionButtonView(discord.ui.View):
                 await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다. (DM 전송 실패: DM이 비활성화되었을 수 있습니다.)")
                 return
 
+            # --- NEW: Google Sheets Integration ---
+            if self.cog.gspread_client:
+                # Remove from test sheet (if they were there)
+                self.cog.gspread_client.remove_from_test_sheet(member.id, member.display_name)  # No await needed here
+            # --- End of Google Sheets Integration ---
+
             applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if applicant_role and applicant_role in member.roles:
                 await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
@@ -209,6 +279,17 @@ class DecisionButtonView(discord.ui.View):
 
             await interaction.followup.send(f"❌ {member.mention}님을 불합격 처리했습니다.")
             self.cog.logger.info(f"❌ {member.display_name} ({member.id})님을 불합격 처리했습니다.")
+
+            # Kick the user after a short delay to allow the DM to send
+            await asyncio.sleep(5)  # Give some time for the DM to be delivered
+            try:
+                await member.kick(reason="클랜 인터뷰 불합격")
+                self.cog.logger.info(f"{member.display_name} ({member.id})님을 서버에서 추방했습니다 (불합격 처리).")
+            except discord.Forbidden:
+                self.cog.logger.error(f"❌ {member.display_name} ({member.id})님을 추방할 권한이 없습니다. 봇 권한을 확인해주세요.")
+                await interaction.followup.send(
+                    f"❌ {member.mention}님을 추방하지 못했습니다. 봇 권한을 확인해주세요.", ephemeral=True)
+
 
         except Exception as e:
             self.cog.logger.error(f"❌ 불합격 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
@@ -257,12 +338,19 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         ))
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)  # Defer the interaction
+
+        user = interaction.user
+        guild = interaction.guild
+
+        # Store answers in the modal instance for later retrieval if needed,
+        # but for embed, we'll iterate through children again.
         for item in self.children:
             self.answers[item.label] = item.value.strip()
 
         region = self.answers.get("활동 지역 (서부/중부/동부)", "")
         if region not in ("서부", "중부", "동부"):
-            return await interaction.response.send_message(
+            return await interaction.followup.send(  # Use followup after defer
                 "❌ 올바른 활동 지역을 입력해주세요 (서부, 중부, 동부 중 하나).",
                 ephemeral=True
             )
@@ -271,44 +359,88 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         if not cog:
             fallback_logger = get_logger("interview_modal_fallback")
             fallback_logger.error("❌ 인터뷰 코그를 찾을 수 없습니다. on_submit에서.")
-            return await interaction.response.send_message(
+            return await interaction.followup.send(  # Use followup after defer
                 "❌ 인터뷰 코그를 찾을 수 없습니다.",
                 ephemeral=True
             )
 
-        private_channel = interaction.guild.get_channel(cog.private_channel_id)
-        if not private_channel:
-            cog.logger.error(f"❌ 비공개 채널을 찾을 수 없습니다. ID: {cog.private_channel_id}")
-            return await interaction.response.send_message(
-                "❌ 비공개 채널을 찾을 수 없습니다.",
-                ephemeral=True
-            )
+        applicant_role = guild.get_role(APPLICANT_ROLE_ID)
+        guest_role = guild.get_role(GUEST_ROLE_ID)
+
+        if not applicant_role:
+            cog.logger.error(f"APPLICANT_ROLE_ID ({APPLICANT_ROLE_ID}) 역할을 찾을 수 없습니다.")
+            return await interaction.followup.send("❌ 지원자 역할을 찾을 수 없습니다. 봇 설정 오류입니다.", ephemeral=True)
+
+        if applicant_role in user.roles:
+            return await interaction.followup.send("이미 인터뷰 질문을 제출하셨습니다. 관리자의 답변을 기다려주세요.", ephemeral=True)
+
+        try:
+            await user.add_roles(applicant_role, reason="인터뷰 질문 제출 완료")
+            cog.logger.info(f"✅ {user.display_name} ({user.id})님에게 '지원자' 역할을 부여했습니다.")
+
+            if guest_role and guest_role in user.roles:
+                await user.remove_roles(guest_role, reason="인터뷰 질문 제출 후 '게스트' 역할 제거")
+                cog.logger.info(f"✅ {user.display_name} ({user.id})님에게서 '게스트' 역할을 제거했습니다.")
+        except discord.Forbidden:
+            cog.logger.error(f"❌ 역할 부여/제거 권한이 없습니다. 봇 권한을 확인해주세요. {traceback.format_exc()}")
+            return await interaction.followup.send("❌ 역할을 부여/제거할 권한이 없습니다. 봇 권한을 확인해주세요.", ephemeral=True)
+        except Exception as e:
+            cog.logger.error(f"❌ 역할 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
+            return await interaction.followup.send(f"❌ 역할 처리 중 오류가 발생했습니다: {e}", ephemeral=True)
 
         embed = discord.Embed(
-            title="📝 인터뷰 요청 접수",
-            description=f"{interaction.user.mention} 님이 인터뷰를 요청했습니다.",
-            color=discord.Color.green(),
+            title=f"📝 인터뷰 요청 접수",
+            description=f"**<@{user.id}> 님이 인터뷰를 요청했습니다.**\n\n"
+                        f"제출된 답변을 확인하고 합격, 테스트, 또는 불합격 여부를 결정해주세요.",
+            color=discord.Color.blue(),
             timestamp=datetime.now(timezone.utc)
         )
-
-        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+        embed.set_thumbnail(url=user.avatar.url if user.avatar else user.default_avatar.url)
         embed.set_author(name="Exceed 인터뷰 시스템")
 
-        for question, answer in self.answers.items():
+        # Populate embed fields from modal children
+        for item in self.children:
             embed.add_field(
-                name=f"❓ {question}",
-                value=f"> {answer or '*응답 없음*'}",
+                name=f"❓ {item.label}",
+                value=f"> {item.value.strip() or '*응답 없음*'}",
                 inline=False
             )
+        embed.set_footer(text=f"User ID: {user.id}")
 
-        view = DecisionButtonView(applicant_id=interaction.user.id, cog=cog)
-        await private_channel.send(embed=embed, view=view)
-        cog.logger.info(f"인터뷰 요청 접수: {interaction.user.display_name} ({interaction.user.id})")
+        public_channel = guild.get_channel(cog.public_channel_id)
+        private_channel = guild.get_channel(cog.private_channel_id)
 
-        await interaction.response.send_message(
-            "✅ 인터뷰 요청이 성공적으로 전송되었습니다!",
-            ephemeral=True
-        )
+        try:
+            if public_channel:
+                await public_channel.send(
+                    content=f"{user.mention}님이 인터뷰 질문을 제출했습니다! 관리자분들의 검토가 필요합니다.",
+                    embed=embed,
+                    view=DecisionButtonView(applicant_id=user.id, cog=cog)
+                )
+                cog.logger.info(f"공개 채널에 {user.display_name}님의 인터뷰 요청 메시지 전송.")
+            else:
+                cog.logger.error(f"공개 채널 ID {cog.public_channel_id}를 찾을 수 없습니다.")
+
+            if private_channel and private_channel != public_channel:  # Avoid sending twice if IDs are same
+                await private_channel.send(
+                    content=f"새 지원자 {user.mention} ({user.display_name})님의 인터뷰 질문이 도착했습니다. 확인 후 처리해주세요.",
+                    embed=embed.copy(),  # Send a copy to avoid modifying the same embed object
+                    view=DecisionButtonView(applicant_id=user.id, cog=cog)
+                )
+                cog.logger.info(f"비공개 채널에 {user.display_name}님의 인터뷰 요청 메시지 전송.")
+            elif not private_channel:
+                cog.logger.warning(f"비공개 채널 ID {cog.private_channel_id}를 찾을 수 없습니다. 비공개 채널에는 메시지를 보내지 않습니다.")
+
+            # Confirmation message to the user
+            await interaction.followup.send(
+                "✅ 인터뷰 질문이 성공적으로 제출되었습니다! 관리자의 검토 후 결과를 알려드리겠습니다.",
+                ephemeral=True
+            )
+            cog.logger.info(f"{user.display_name}님에게 인터뷰 질문 제출 확인 메시지 전송.")
+
+        except Exception as e:
+            cog.logger.error(f"인터뷰 요청 메시지 전송 실패: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ 인터뷰 요청 메시지 전송 중 오류 발생: {e}", ephemeral=True)
 
 
 class InterviewView(View):
@@ -319,7 +451,24 @@ class InterviewView(View):
 
     @discord.ui.button(label="인터뷰 요청 시작하기", style=discord.ButtonStyle.primary, custom_id="start_interview")
     async def start_interview(self, interaction: discord.Interaction, button: Button):
-        modal = InterviewModal()
+        # Check if user already has APPLICANT_ROLE_ID or ACCEPTED_ROLE_ID
+        member = interaction.user
+        applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
+        accepted_role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
+
+        if accepted_role and accepted_role in member.roles:
+            return await interaction.response.send_message(
+                "이미 클랜 멤버이십니다. 환영합니다!",
+                ephemeral=True
+            )
+
+        if applicant_role and applicant_role in member.roles:
+            return await interaction.response.send_message(
+                "이미 인터뷰 질문을 제출하셨습니다. 관리자의 답변을 기다려주세요.",
+                ephemeral=True
+            )
+
+        modal = InterviewModal()  # No cog passed directly to modal
         await interaction.response.send_modal(modal)
 
 
@@ -334,6 +483,14 @@ class InterviewRequestCog(commands.Cog):
             bot=bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
+
+        # NEW: Initialize GSpreadClient
+        self.gspread_client = GSpreadClient(
+            credentials_path=config.GSHEET_CREDENTIALS_PATH,
+            members_sheet_name=config.MEMBERS_SHEET_NAME,
+            test_sheet_name=config.TEST_SHEET_NAME
+        )
+
         self.logger.info("InterviewRequestCog 초기화 완료.")
 
         self.FONT = None
@@ -354,6 +511,10 @@ class InterviewRequestCog(commands.Cog):
 
     async def make_congrats_card(self, member: discord.Member) -> Optional[BytesIO]:
         try:
+            # Ensure the path is correct
+            if not os.path.exists(self.CONGRATS_BG_PATH):
+                self.logger.error(f"축하 배경 이미지를 찾을 수 없습니다: {self.CONGRATS_BG_PATH}. 경로를 확인하세요.")
+                return None
             bg = Image.open(self.CONGRATS_BG_PATH).convert("RGBA")
         except FileNotFoundError:
             self.logger.error(f"축하 배경 이미지를 찾을 수 없습니다: {self.CONGRATS_BG_PATH}")
@@ -364,22 +525,35 @@ class InterviewRequestCog(commands.Cog):
 
         draw = ImageDraw.Draw(bg)
 
-        avatar_asset = member.display_avatar.with_size(128).with_format("png")
+        # Use member.display_avatar.url for flexibility
+        avatar_url = member.display_avatar.url
+        avatar_bytes = None
         try:
-            avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=5)
-        except asyncio.TimeoutError:
-            self.logger.error(f"❌ [congrats] {member.display_name}의 아바타를 가져오는 데 시간 초과.")
-            avatar_bytes = None
+            # Fetch avatar using aiohttp or similar for async operations
+            async with self.bot.http_session.get(avatar_url) as resp:  # Assuming bot has aiohttp session
+                if resp.status == 200:
+                    avatar_bytes = await resp.read()
+                else:
+                    self.logger.warning(f"Failed to fetch avatar for {member.display_name}. Status: {resp.status}")
         except Exception as e:
             self.logger.error(f"❌ [congrats] {member.display_name}의 아바타 가져오기 실패: {e}\n{traceback.format_exc()}")
             avatar_bytes = None
 
         if avatar_bytes:
             try:
+                # Create a circular avatar mask
+                mask = Image.new("L", (128, 128), 0)
+                draw_mask = ImageDraw.Draw(mask)
+                draw_mask.ellipse((0, 0, 128, 128), fill=255)
+
                 avatar = Image.open(BytesIO(avatar_bytes)).resize((128, 128)).convert("RGBA")
+
+                # Apply the circular mask
+                alpha_composite = Image.composite(avatar, Image.new("RGBA", (128, 128)), mask)
+
                 avatar_x = 40
-                avatar_y = (bg.height - avatar.height) // 2
-                bg.paste(avatar, (avatar_x, avatar_y), avatar)
+                avatar_y = (bg.height - alpha_composite.height) // 2
+                bg.paste(alpha_composite, (avatar_x, avatar_y), alpha_composite)  # Use alpha_composite for pasting
             except Exception as e:
                 self.logger.error(f"아바타 이미지 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
         else:
@@ -389,13 +563,14 @@ class InterviewRequestCog(commands.Cog):
 
         current_font = self.FONT if self.FONT else ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
+        # Get text bounding box relative to (0,0)
         text_bbox = draw.textbbox((0, 0), text, font=current_font)
         text_width = text_bbox[2] - text_bbox[0]
         text_height = text_bbox[3] - text_bbox[1]
 
-        avatar_width_used = 128 if avatar_bytes else 0
-        text_x = 40 + avatar_width_used + 30
-        text_y = (bg.height - text_height) // 2
+        avatar_width_used = 128 if avatar_bytes else 0  # Account for avatar width in text positioning
+        text_x = 40 + avatar_width_used + 30  # X position after avatar + padding
+        text_y = (bg.height - text_height) // 2  # Center vertically
 
         draw.text((text_x, text_y), text, font=current_font, fill="white")
 
@@ -458,6 +633,7 @@ class InterviewRequestCog(commands.Cog):
             return
 
         try:
+            # Clear all messages in the channel before sending new ones
             await channel.purge(limit=None)
             self.logger.info(f"채널 #{channel.name} ({channel.id})의 기존 메시지를 삭제했습니다.")
 
@@ -546,8 +722,11 @@ class InterviewRequestCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
+        # Ensure permanent views are added so buttons work after bot restarts
         self.bot.add_view(InterviewView(self.private_channel_id, self))
-        self.bot.add_view(DecisionButtonView(cog=self))
+        self.bot.add_view(DecisionButtonView(cog=self))  # Pass cog to DecisionButtonView
+
+        # Initial message send/refresh
         await self.send_interview_request_message()
         self.logger.info("인터뷰 요청 메시지 및 영구 뷰 설정 완료.")
 
