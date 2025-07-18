@@ -554,7 +554,29 @@ class InterviewRequestCog(commands.Cog):
             self.logger.error(f"폰트 로드 중 알 수 없는 오류 발생: {e}\n{traceback.format_exc()}")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
-    # --- 이 메서드를 __init__ 밖으로 빼내어 클래스 직속 메서드로 만듭니다 ---
+    def extract_interview_id_from_channel_name(self, channel_name: str) -> Optional[str]:
+        """
+        Extracts the interview ID (UUID) from a channel name.
+        Assumes format like 'interview-user_id-uuid' or 'interview-uuid'.
+        """
+        match = re.search(r'-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$',
+                          channel_name)
+        if match:
+            return match.group(1)
+        return None
+
+    def extract_user_id_from_channel_name(self, channel_name: str) -> Optional[int]:
+        """
+        Extracts the Discord User ID from a channel name.
+        Assumes format like 'interview-user_id-uuid'.
+        """
+        # Regex to find a Discord user ID (17-20 digits) after 'interview-'
+        # and before the final UUID part (if present)
+        match = re.search(r'interview-(\d{17,20})(?:-|$)', channel_name)
+        if match:
+            return int(match.group(1))
+        return None
+
     def check_staff_role(self, member: discord.Member) -> bool:
         """Checks if the member has the staff role."""
         if not config.STAFF_ROLE_ID:
