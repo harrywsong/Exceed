@@ -554,6 +554,21 @@ class InterviewRequestCog(commands.Cog):
             self.logger.error(f"폰트 로드 중 알 수 없는 오류 발생: {e}\n{traceback.format_exc()}")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
+        # --- ADD THIS NEW METHOD ---
+        def check_staff_role(self, member: discord.Member) -> bool:
+            """Checks if the member has the staff role."""
+            if not config.STAFF_ROLE_ID:
+                self.logger.warning(
+                    "⚠️ STAFF_ROLE_ID is not configured in config.py. All users will be denied staff access.")
+                return False
+
+            staff_role = member.guild.get_role(config.STAFF_ROLE_ID)
+            if not staff_role:
+                self.logger.error(
+                    f"❌ Staff role with ID {config.STAFF_ROLE_ID} not found in guild {member.guild.name}.")
+                return False
+
+            return staff_role in member.roles
     async def make_congrats_card(self, member: discord.Member) -> Optional[BytesIO]:
         try:
             bg = Image.open(self.CONGRATS_BG_PATH).convert("RGBA")
