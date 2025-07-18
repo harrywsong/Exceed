@@ -68,7 +68,7 @@ except json.JSONDecodeError as e:
     print(f"Failed to parse REACTION_ROLE_MAP_JSON: {e}")
     REACTION_ROLE_MAP = {}
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 GSHEET_CREDENTIALS_PATH = os.path.join(
     BASE_DIR,
