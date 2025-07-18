@@ -3,7 +3,7 @@ import os
 from io import BytesIO
 
 import re
-import uuid # Add this import for generating unique IDs
+import uuid
 
 import discord
 from PIL import Image, ImageDraw, ImageFont
@@ -19,13 +19,13 @@ from utils import config
 from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_ID, WELCOME_CHANNEL_ID, \
     RULES_CHANNEL_ID, ANNOUNCEMENTS_CHANNEL_ID, ACCEPTED_ROLE_ID, MEMBER_CHAT_CHANNEL_ID
 from utils.logger import get_logger
-from utils.gspread_utils import GSpreadClient # Corrected import for Google Sheets client
-from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, MEMBERS_SHEET_NAME, TEST_SHEET_NAME # Ensure these are imported
+from utils.gspread_utils import GSpreadClient
+from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, MEMBERS_SHEET_NAME, TEST_SHEET_NAME
 
-import datetime  # 상단 import 섹션에 추가
+import datetime
 
 class DecisionButtonView(discord.ui.View):
-    def __init__(self, cog, timeout: Optional[float] = None): # Keep timeout=None for persistent view
+    def __init__(self, cog, timeout: Optional[float] = None):
         super().__init__(timeout=timeout)
         self.cog = cog
         self.logger = cog.logger
@@ -36,7 +36,6 @@ class DecisionButtonView(discord.ui.View):
         interview_id = None
         if interaction.message.embeds:
             embed = interaction.message.embeds[0]
-            # Extract user ID from description or fields
             mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
             if not mention_match:
                 for field in embed.fields:
@@ -46,26 +45,21 @@ class DecisionButtonView(discord.ui.View):
             if mention_match:
                 user_id = int(mention_match.group(1))
 
-            # Extract interview ID from fields (assuming it's added as a field in the embed)
             for field in embed.fields:
-                if field.name.strip().lower() == "❓ interview_id": # Match the field name from InterviewModal.on_submit
-                    interview_id = field.value.replace('>', '').strip() # .replace('>', '') to clean up markdown if any
+                if field.name.strip().lower() == "❓ interview_id":
+                    interview_id = field.value.replace('>', '').strip()
                     break
         return user_id, interview_id
 
     @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="approve_button")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # --- CRITICAL CHANGE: Defer the interaction immediately ---
-        # Set ephemeral=False if you want everyone to see the follow-up messages
-        # Set ephemeral=True if you want only the button-presser to see the follow-up messages
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=False) # Defer immediately
 
         member = interaction.user
         channel = interaction.channel
         self.logger.info(f"✅ {member.display_name} ({member.id}) clicked 'Approve' button in channel '{channel.name}'.")
 
         if not self.cog.check_staff_role(member):
-            # After deferring, use interaction.followup.send()
             await interaction.followup.send("❌ You do not have permission to use this button.", ephemeral=True)
             self.logger.warning(f"⚠️ {member.display_name} ({member.id}) attempted to use 'Approve' button without permission.")
             return
@@ -86,7 +80,6 @@ class DecisionButtonView(discord.ui.View):
             self.logger.error(f"❌ Could not find member ({target_member_id}) associated with interview ID '{interview_id}' in Discord.")
             return
 
-        # --- Google Sheets operations begin ---
         if self.cog and self.cog.gspread_client and interview_id:
             try:
                 testing_worksheet = await self.cog.gspread_client.get_worksheet(config.TEST_SHEET_NAME, "Sheet1")
@@ -191,7 +184,6 @@ class DecisionButtonView(discord.ui.View):
                     await target_member.remove_roles(applicant_role, reason="Approved - Applicant role removed")
                     self.logger.info(f"✅ Removed 'Applicant' role from {target_member.display_name} ({target_member.id}).")
 
-                # After deferring, use interaction.followup.send()
                 await interaction.followup.send(
                     f"✅ `{target_member.display_name}`'s interview has been approved. Added to 'Member List'.",
                     ephemeral=False
@@ -236,7 +228,6 @@ class DecisionButtonView(discord.ui.View):
             return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
         try:
-            # Update Google Sheet status
             if self.cog and self.cog.gspread_client and interview_id:
                 success = await self.cog.gspread_client.update_row_by_interview_id(
                     config.TEST_SHEET_NAME,
@@ -251,7 +242,7 @@ class DecisionButtonView(discord.ui.View):
                         "❌ Google Sheet 업데이트에 실패했습니다. 관리자에게 문의하세요.",
                         ephemeral=True
                     )
-                    return # Exit if sheet update failed
+                    return
 
             test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if not test_role:
@@ -313,7 +304,6 @@ class DecisionButtonView(discord.ui.View):
                 ephemeral=True
             )
         try:
-            # Update Google Sheet status
             if self.cog and self.cog.gspread_client and interview_id:
                 success = await self.cog.gspread_client.update_row_by_interview_id(
                     config.TEST_SHEET_NAME,
@@ -328,7 +318,7 @@ class DecisionButtonView(discord.ui.View):
                         "❌ Google Sheet 업데이트에 실패했습니다. 관리자에게 문의하세요.",
                         ephemeral=True
                     )
-                    return # Exit if sheet update failed
+                    return
 
             try:
                 await member.send(
@@ -431,10 +421,9 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 ephemeral=True
             )
 
-        interview_id = str(uuid.uuid4()) # Generate a unique ID for this interview request
+        interview_id = str(uuid.uuid4())
         submission_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        # Prepare data for Google Sheet
         sheet_data = [
             interview_id,
             submission_time,
@@ -445,14 +434,11 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
             self.answers.get("가장 자신있는 역할", ""),
             self.answers.get("프리미어 팀 참가 의향", ""),
             self.answers.get("지원 동기", ""),
-            "Pending" # Initial status
+            "Pending"
         ]
 
-        # Append data to Google Sheet
         if cog.gspread_client:
             success = await cog.gspread_client.append_row(config.TEST_SHEET_NAME, "Sheet1", sheet_data)
-            # Assuming "Sheet1" is the default worksheet for applications.
-            # You might want to make this configurable in config.py as well if needed.
             if not success:
                 cog.logger.error(f"❌ Google Sheet에 데이터 추가 실패: {interaction.user.display_name}의 인터뷰 요청.")
                 await interaction.response.send_message(
@@ -471,17 +457,15 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
         embed.set_author(name="Exceed 인터뷰 시스템")
 
-        # Add all answers from the modal
         for question, answer in self.answers.items():
             embed.add_field(
                 name=f"❓ {question}",
                 value=f"> {answer or '*응답 없음*'}",
                 inline=False
             )
-        embed.add_field(name="❓ Interview_ID", value=f"> {interview_id}", inline=False) # Add Interview ID to embed
+        embed.add_field(name="❓ Interview_ID", value=f"> {interview_id}", inline=False)
 
-        # Pass 'cog' directly to DecisionButtonView
-        view = DecisionButtonView(cog=cog) # Pass cog, applicant_id and interview_id are extracted from embed later
+        view = DecisionButtonView(cog=cog)
         await private_channel.send(embed=embed, view=view)
         cog.logger.info(f"인터뷰 요청 접수: {interaction.user.display_name} ({interaction.user.id}), Interview ID: {interview_id}")
 
@@ -499,7 +483,16 @@ class InterviewView(View):
 
     @discord.ui.button(label="인터뷰 요청 시작하기", style=discord.ButtonStyle.primary, custom_id="start_interview")
     async def start_interview(self, interaction: discord.Interaction, button: Button):
+        # --- FIX: Defer the interaction immediately to prevent "This interaction failed" ---
+        await interaction.response.defer(ephemeral=True) # Ephemeral=True so only the user sees the "thinking" message
+
         modal = InterviewModal()
+        # After deferring, you cannot use interaction.response.send_modal directly.
+        # However, for modals, Discord treats them as a direct response to the interaction
+        # even after a defer, so this specific case usually works without `followup`.
+        # If issues persist, consider sending a follow-up message saying "Opening modal..."
+        # and then responding to the modal's submit, but generally direct modal response
+        # after a defer for buttons is fine.
         await interaction.response.send_modal(modal)
 
 
@@ -516,7 +509,6 @@ class InterviewRequestCog(commands.Cog):
         )
         self.logger.info("InterviewRequestCog 초기화 완료.")
 
-        # Initialize Google Sheets client
         self.gspread_client = GSpreadClient(config.GSHEET_CREDENTIALS_PATH, self.logger)
         self.logger.info("Google Sheets client instance created.")
 
@@ -536,17 +528,10 @@ class InterviewRequestCog(commands.Cog):
             self.logger.error(f"폰트 로드 중 알 수 없는 오류 발생: {e}\n{traceback.format_exc()}")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
-        # --- CRITICAL CHANGE: Add this line to register the persistent view ---
-        # This allows the bot to listen for interactions on existing messages
-        # after a restart.
         self.bot.add_view(DecisionButtonView(cog=self))
         self.logger.info("DecisionButtonView registered with the bot for persistence.")
 
     def extract_interview_id_from_channel_name(self, channel_name: str) -> Optional[str]:
-        """
-        Extracts the interview ID (UUID) from a channel name.
-        Assumes format like 'interview-user_id-uuid' or 'interview-uuid'.
-        """
         match = re.search(r'-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$',
                           channel_name)
         if match:
@@ -554,19 +539,12 @@ class InterviewRequestCog(commands.Cog):
         return None
 
     def extract_user_id_from_channel_name(self, channel_name: str) -> Optional[int]:
-        """
-        Extracts the Discord User ID from a channel name.
-        Assumes format like 'interview-user_id-uuid'.
-        """
-        # Regex to find a Discord user ID (17-20 digits) after 'interview-'
-        # and before the final UUID part (if present)
         match = re.search(r'interview-(\d{17,20})(?:-|$)', channel_name)
         if match:
             return int(match.group(1))
         return None
 
     def check_staff_role(self, member: discord.Member) -> bool:
-        """Checks if the member has the staff role."""
         if not config.STAFF_ROLE_ID:
             self.logger.warning(
                 "⚠️ STAFF_ROLE_ID is not configured in config.py. All users will be denied staff access.")
@@ -637,7 +615,6 @@ class InterviewRequestCog(commands.Cog):
             return None
 
     async def send_welcome_message(self, member: discord.Member):
-        """Send welcome message to welcome channel"""
         channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
         if not channel:
             self.logger.error(f"환영 채널 ID {WELCOME_CHANNEL_ID}을(를) 찾을 수 없습니다.")
@@ -693,11 +670,9 @@ class InterviewRequestCog(commands.Cog):
         except Exception as e:
             self.logger.error(f"❌ Unknown error while deleting channel {channel.name} ({channel.id}): {e}\n{traceback.format_exc()}")
 
-    # Commands can be added here if needed, e.g., to send the initial InterviewView
     @commands.command(name="setupinterview")
     @commands.has_permissions(administrator=True)
     async def setup_interview(self, ctx: commands.Context):
-        """Sends the initial interview request button to the public channel."""
         public_channel = self.bot.get_channel(self.public_channel_id)
         if not public_channel:
             self.logger.error(f"공개 인터뷰 채널 ID {self.public_channel_id}을(를) 찾을 수 없습니다.")
