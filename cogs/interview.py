@@ -411,15 +411,6 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
         private_channel = guild.get_channel(cog.private_channel_id)
 
         try:
-            if public_channel:
-                await public_channel.send(
-                    content=f"{user.mention}님이 인터뷰 질문을 제출했습니다! 관리자분들의 검토가 필요합니다.",
-                    embed=embed,
-                    view=DecisionButtonView(applicant_id=user.id, cog=cog)
-                )
-                cog.logger.info(f"공개 채널에 {user.display_name}님의 인터뷰 요청 메시지 전송.")
-            else:
-                cog.logger.error(f"공개 채널 ID {cog.public_channel_id}를 찾을 수 없습니다.")
 
             if private_channel and private_channel != public_channel:  # Avoid sending twice if IDs are same
                 await private_channel.send(
