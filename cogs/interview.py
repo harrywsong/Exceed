@@ -22,15 +22,16 @@ from utils.logger import get_logger
 from utils.gspread_utils import GSpreadClient # Corrected import for Google Sheets client
 from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, MEMBERS_SHEET_NAME, TEST_SHEET_NAME # Ensure these are imported
 
-class DecisionButtonView(discord.ui.View):
-    def __init__(self, applicant_id: int = None, interview_id: str = None, cog=None):
-        super().__init__(timeout=None)
-        self.applicant_id = applicant_id
-        self.interview_id = interview_id # Store the interview ID
-        self.logger = cog.logger # <--- ADD THIS LINE to pass the logger
-        self.cog = cog
+import datetime  # 상단 import 섹션에 추가
 
-    def _extract_user_id_and_interview_id(self, interaction: discord.Interaction) -> tuple[Optional[int], Optional[str]]:
+class DecisionButtonView(discord.ui.View):
+    def __init__(self, cog, timeout: Optional[float] = 180):  # Keep cog argument
+        super().__init__(timeout=timeout)
+        self.cog = cog  # Store the cog
+        self.logger = cog.logger  # Pass the logger
+
+    def _extract_user_id_and_interview_id(self, interaction: discord.Interaction) -> tuple[
+        Optional[int], Optional[str]]:
         user_id = None
         interview_id = None
         if interaction.message.embeds:
@@ -47,8 +48,8 @@ class DecisionButtonView(discord.ui.View):
 
             # Extract interview ID from fields (assuming it's added as a field in the embed)
             for field in embed.fields:
-                if field.name.strip().lower() == "❓ interview_id": # Match the field name from InterviewModal.on_submit
-                    interview_id = field.value.replace('>', '').strip()
+                if field.name.strip().lower() == "❓ interview_id":  # Match the field name from InterviewModal.on_submit
+                    interview_id = field.value.replace('>', '').strip()  # .replace('>', '') to clean up markdown if any
                     break
         return user_id, interview_id
 
@@ -63,21 +64,23 @@ class DecisionButtonView(discord.ui.View):
             self.logger.warning(f"⚠️ {member.display_name} ({member.id})님이 '합격' 버튼을 사용하려 했으나 권한이 없습니다.")
             return
 
-        # 인터뷰 ID 추출 로직 (기존 로직 사용)
-        interview_id = self.cog.extract_interview_id_from_channel_name(channel.name)
+        # --- THIS IS THE CRUCIAL CHANGE ---
+        # Extract user_id and interview_id from the embed associated with the button message
+        target_member_id, interview_id = self._extract_user_id_and_interview_id(interaction)
+
         if not interview_id:
-            await interaction.response.send_message("❌ 채널 이름에서 유효한 인터뷰 ID를 찾을 수 없습니다.", ephemeral=True)
-            self.logger.error(f"❌ 채널 '{channel.name}'에서 인터뷰 ID 추출 실패.")
+            await interaction.response.send_message("❌ 버튼이 포함된 메시지 임베드에서 유효한 인터뷰 ID를 찾을 수 없습니다. (정보 누락)",
+                                                    ephemeral=True)
+            self.logger.error(f"❌ 임베드에서 인터뷰 ID 추출 실패. 메시지 ID: {interaction.message.id}")
             return
 
-        target_member_id = self.cog.extract_user_id_from_channel_name(channel.name)
         target_member = None
         if target_member_id:
             target_member = interaction.guild.get_member(target_member_id)
 
         if not target_member:
             await interaction.response.send_message("❌ 이 채널에 연결된 멤버를 찾을 수 없습니다. 수동으로 처리해주세요.", ephemeral=True)
-            self.logger.error(f"❌ 인터뷰 ID '{interview_id}'에 연결된 멤버를 Discord에서 찾을 수 없습니다.")
+            self.logger.error(f"❌ 인터뷰 ID '{interview_id}'에 연결된 멤버 ({target_member_id})를 Discord에서 찾을 수 없습니다.")
             return
 
         # --- Google Sheets 작업 시작 ---
@@ -97,7 +100,6 @@ class DecisionButtonView(discord.ui.View):
 
                 header_testing = [h.strip().lower() for h in all_testing_values[0]]
                 interview_data_row = None
-                interview_row_index = -1
 
                 # 'Interview_ID' 열의 인덱스 찾기
                 try:
@@ -111,7 +113,6 @@ class DecisionButtonView(discord.ui.View):
                 for i, row in enumerate(all_testing_values[1:]):  # 헤더 제외, 실제 데이터 행에서 검색
                     if len(row) > interview_id_col_index and row[interview_id_col_index] == interview_id:
                         interview_data_row = row
-                        interview_row_index = i + 2  # Google Sheets 1-based index (header + 1 for 0-indexed list)
                         break
 
                 if not interview_data_row:
@@ -131,14 +132,14 @@ class DecisionButtonView(discord.ui.View):
                     except ValueError:
                         return ""  # 컬럼이 없으면 빈 문자열 반환
 
+                # Ensure these match the actual headers in your Testing sheet
                 discord_user_id = get_column_value(interview_data_row, header_testing, "discord_user_id")
                 discord_username = get_column_value(interview_data_row, header_testing, "discord_username")
                 ingame_name_tag = get_column_value(interview_data_row, header_testing, "인게임 이름 및 태그 (예: 이름#태그)")
                 activity_region = get_column_value(interview_data_row, header_testing, "활동 지역 (서부/중부/동부)")
                 main_role = get_column_value(interview_data_row, header_testing, "가장 자신있는 역할")
                 premier_interest = get_column_value(interview_data_row, header_testing, "프리미어 팀 참가 의향")
-                # '특이사항 또는 관리자 메모'는 현재 Testing 시트에서 직접 가져올 필드가 없으므로, 필요시 수동 입력 또는 비워둡니다.
-                notes = ""  # 초기에는 비워둠
+                notes = ""  # '특이사항 또는 관리자 메모'는 현재 Testing 시트에서 직접 가져올 필드가 없으므로, 필요시 수동 입력 또는 비워둡니다.
 
                 # 2. Member List 시트에 새 항목 추가
                 accepted_date = datetime.date.today().strftime("%Y-%m-%d")  # 오늘 날짜
@@ -169,7 +170,6 @@ class DecisionButtonView(discord.ui.View):
                     return
 
                 # 3. Testing 시트에서 해당 항목 삭제
-                # delete_row_by_interview_id는 해당 ID가 속한 행을 정확히 삭제해야 합니다.
                 delete_success = await self.cog.gspread_client.delete_row_by_interview_id(
                     config.TEST_SHEET_NAME,
                     "Sheet1",
@@ -180,12 +180,10 @@ class DecisionButtonView(discord.ui.View):
                     self.logger.error(f"❌ 'Testing' 시트에서 인터뷰 ID '{interview_id}' 항목 삭제 실패.")
                     await interaction.response.send_message(f"❌ 'Testing' 시트에서 항목을 삭제하는 데 실패했습니다. 수동으로 확인해주세요.",
                                                             ephemeral=True)
-                    # 이 경우에도 Member List에 추가되었으므로 응답은 성공으로 간주하지만, 로그로 남깁니다.
 
                 # --- Google Sheets 작업 종료 ---
 
                 # 역할 부여 및 제거 (기존 로직 유지)
-                # Accepted 역할 부여
                 accepted_role_id = config.ACCEPTED_ROLE_ID
                 accepted_role = interaction.guild.get_role(accepted_role_id)
                 if accepted_role:
@@ -196,7 +194,6 @@ class DecisionButtonView(discord.ui.View):
                     self.logger.warning(
                         f"⚠️ 'Accepted' 역할 (ID: {accepted_role_id})을 찾을 수 없어 {target_member.display_name}님에게 부여하지 못했습니다.")
 
-                # Guest 및 Applicant 역할 제거 (기존 로직 유지)
                 guest_role = interaction.guild.get_role(config.GUEST_ROLE_ID)
                 if guest_role and guest_role in target_member.roles:
                     await target_member.remove_roles(guest_role, reason="합격 처리 - Guest 역할 제거")
@@ -207,15 +204,12 @@ class DecisionButtonView(discord.ui.View):
                     await target_member.remove_roles(applicant_role, reason="합격 처리 - Applicant 역할 제거")
                     self.logger.info(f"✅ {target_member.display_name} ({target_member.id})님에게 'Applicant' 역할 제거.")
 
-                # 결과 메시지 전송 및 채널 삭제 (기존 로직 유지)
                 await interaction.response.send_message(
                     f"✅ `{target_member.display_name}`님의 인터뷰가 합격 처리되었습니다. 'Member List'에 추가되었습니다.",
-                    ephemeral=False  # 모든 사람이 볼 수 있도록
+                    ephemeral=False
                 )
                 self.logger.info(f"✅ 인터뷰 ID '{interview_id}' 합격 처리 완료. 채널 삭제 대기 중.")
 
-                # 채널 삭제 (기존 로직 유지)
-                # self.cog.delete_channel_after_delay는 Discord API 요청에 포함되지 않으므로, 이 시점에서 응답을 보냅니다.
                 await self.cog.delete_channel_after_delay(channel, 10, target_member.id, True)
 
             except Exception as e:
