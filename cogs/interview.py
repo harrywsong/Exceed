@@ -286,23 +286,24 @@ class DecisionButtonView(discord.ui.View):
                 self.cog.logger.error(f"❌ Test role ID {APPLICANT_ROLE_ID} not found. Configuration check needed.")
                 return await interaction.followup.send("❌ Test role not found.", ephemeral=True)
 
-            await member.add_roles(test_role, reason="Test role granted (Admin approval)")
+            await member.add_roles(test_role, reason="테스트 역할 부여 (관리자 승인)")
             self.cog.logger.info(f"🟡 Granted test role '{test_role.name}' to {member.display_name} ({member.id}).")
 
             try:
                 await member.send(
-                    "Hello.\n\n"
-                    "Thank you for your interest in the Exceed clan.\n"
-                    "To further assess your potential and enthusiasm, we have granted you the **Test Role**.\n\n"
-                    "With this role, you are free to be active on the server during the test period,\n"
-                    "and the operations team will make a final decision based on your activity and communication.\n\n"
-                    "Exceed values teamwork and community atmosphere, so we expect active participation and positive communication during the test period.\n\n"
-                    "If you have any questions or inconveniences, please feel free to contact the operations team at any time.\n"
-                    "You can also use the channel below for inquiries:\n\n"
+                    "안녕하세요.\n\n"
+                    "Exceed 클랜에 지원해 주셔서 진심으로 감사드립니다.\n"
+                    "지원자님의 가능성과 열정을 더욱 알아보기 위해 **테스트 역할**을 부여드렸습니다.\n\n"
+                    "해당 역할을 통해 테스트 기간 동안 서버에서 자유롭게 활동해 주시고,\n"
+                    "운영진은 지원자님의 활동 및 소통을 바탕으로 최종 결정을 내리게 됩니다.\n\n"
+                    "Exceed는 팀워크와 커뮤니티 분위기를 중시하는 만큼,\n"
+                    "테스트 기간 중 적극적인 참여와 긍정적인 소통을 기대하겠습니다.\n\n"
+                    "궁금하신 사항이나 불편한 점이 있으시면 언제든지 운영진에게 문의해 주세요.\n"
+                    "문의는 아래 채널을 통해 주셔도 됩니다:\n\n"
                     "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
-                    "Thank you again for applying, and we look forward to your future activities!\n\n"
-                    "Thank you.\n\n"
-                    "📌 *This message was automatically sent, and replies directly to this bot will not be seen by the operations team.*"
+                    "다시 한번 지원해 주셔서 감사드리며, 앞으로의 활동을 기대하겠습니다!\n\n"
+                    "감사합니다.\n\n"
+                    "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
                 )
                 self.cog.logger.info(f"🟡 Sent test guidance DM to {member.display_name}.")
             except discord.Forbidden:
@@ -357,16 +358,16 @@ class DecisionButtonView(discord.ui.View):
 
             try:
                 await member.send(
-                    "Hello. \n\n"
-                    "First, thank you for your interest and application to the Exceed clan.\n"
-                    "Unfortunately, for various reasons, we cannot proceed with your application at this time.\n"
-                    "We sincerely appreciate your passion and effort, but please understand that this decision was made after comprehensive consideration of the current clan situation and various factors.\n"
-                    "We sincerely hope for your continued growth and encourage you to reapply whenever circumstances allow. \n\n"
-                    "Exceed is always open, and we look forward to the opportunity to have you join us in the future.\n\n"
-                    "If you have any questions, please feel free to contact the operations team or reach out through the channel below:  \n\n"
+                    "안녕하세요. \n\n"
+                    "먼저 Exceed 클랜에 관심을 가져주시고 지원해 주셔서 진심으로 감사드립니다.\n"
+                    "안타깝게도 이번에는 여러 사유로 인해 함께하지 못하게 되었습니다.\n"
+                    "지원자님의 열정과 노력은 충분히 높이 평가하지만, 현재 클랜의 상황과 다양한 요소들을 종합적으로 고려한 결과임을 너그러이 이해해 주시길 바랍니다.\n"
+                    "앞으로도 지속적인 발전이 있으시길 진심으로 응원하며, 상황이 괜찮아지면 언제든지 다시 지원해 주시길 바랍니다. \n\n"
+                    "Exceed는 언제나 열려 있으며, 다음 기회에 꼭 함께할 수 있기를 기대하겠습니다.\n\n"
+                    "궁금한 점이 있으시면 언제든지 운영진에게 문의하시거나, 아래 채널을 통해 연락 주시기 바랍니다:  \n\n"
                     "https://discord.com/channels/1389527318699053178/1389742771253805077\n\n"
-                    "Thank you.\n\n"
-                    "📌 *This message was automatically sent, and replies directly to this bot will not be seen by the operations team.*"
+                    "감사합니다.\n\n"
+                    "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
                 )
                 self.cog.logger.info(f"❌ Sent rejection DM to {member.display_name}.")
             except discord.Forbidden:
@@ -377,7 +378,7 @@ class DecisionButtonView(discord.ui.View):
 
             applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if applicant_role and applicant_role in member.roles:
-                await member.remove_roles(applicant_role, reason="Applicant role removed due to rejection")
+                await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
                 self.cog.logger.info(f"Removed applicant role '{applicant_role.name}' from {member.display_name}.")
 
             await interaction.followup.send(f"❌ Rejected {member.mention}.")
@@ -388,42 +389,42 @@ class DecisionButtonView(discord.ui.View):
             await interaction.followup.send(f"❌ An error occurred: {str(e)}", ephemeral=True)
 
 
-class InterviewModal(Modal, title="Interview Pre-Questions"):
+class InterviewModal(Modal, title="인터뷰 사전 질문"):
     def __init__(self):
         super().__init__()
         self.answers = {}
 
         self.add_item(TextInput(
-            label="Activity Region (West/Central/East)",
-            placeholder="e.g., Central",
+            label="활동 지역 (서부/중부/동부)",
+            placeholder="예: 중부",
             style=TextStyle.short,
             required=True,
             max_length=20
         ))
         self.add_item(TextInput(
-            label="In-game Name and Tag (e.g., Name#Tag)",
-            placeholder="e.g., RiotName#RiotTag",
+            label="인게임 이름 및 태그 (예: 이름#태그)",
+            placeholder="예: 라이엇이름#라이엇태그",
             style=TextStyle.short,
             required=True,
             max_length=50
         ))
         self.add_item(TextInput(
-            label="Most Confident Role",
-            placeholder="e.g., Duelist, Sentinel, Initiator, etc.",
+            label="가장 자신있는 역할",
+            placeholder="예: 타격대, 감시자, 척후대 등",
             style=TextStyle.short,
             required=True,
             max_length=30
         ))
         self.add_item(TextInput(
-            label="Intention to Join Premier Team",
-            placeholder="e.g., Yes / No",
+            label="프리미어 팀 참가 의향",
+            placeholder="예: 네 / 아니요",
             style=TextStyle.short,
             required=True,
             max_length=10
         ))
         self.add_item(TextInput(
-            label="Reason for Application",
-            placeholder="Briefly state your reason for applying to Exceed.",
+            label="지원 동기",
+            placeholder="Exceed에 지원하게 된 이유를 간단히 적어주세요.",
             style=TextStyle.paragraph,
             required=True,
             max_length=300
@@ -433,27 +434,27 @@ class InterviewModal(Modal, title="Interview Pre-Questions"):
         for item in self.children:
             self.answers[item.label] = item.value.strip()
 
-        region = self.answers.get("Activity Region (West/Central/East)", "")
-        if region not in ("West", "Central", "East"):  # Updated to English regions for consistency
+        region = self.answers.get("활동 지역 (서부/중부/동부)", "")
+        if region not in ("서부", "중부", "동부"):
             return await interaction.response.send_message(
-                "❌ Please enter a valid activity region (West, Central, or East).",
+                "❌ 올바른 활동 지역을 입력해주세요 (서부, 중부, 동부 중 하나).",
                 ephemeral=True
             )
 
         cog = interaction.client.get_cog("InterviewRequestCog")
         if not cog:
             fallback_logger = get_logger("interview_modal_fallback")
-            fallback_logger.error("❌ Interview cog not found in on_submit.")
+            fallback_logger.error("❌ 인터뷰 코그를 찾을 수 없습니다. on_submit에서.")
             return await interaction.response.send_message(
-                "❌ Interview cog not found.",
+                "❌ 인터뷰 코그를 찾을 수 없습니다.",
                 ephemeral=True
             )
 
         private_channel = interaction.guild.get_channel(cog.private_channel_id)
         if not private_channel:
-            cog.logger.error(f"❌ Private channel not found. ID: {cog.private_channel_id}")
+            cog.logger.error(f"❌ 비공개 채널을 찾을 수 없습니다. ID: {cog.private_channel_id}")
             return await interaction.response.send_message(
-                "❌ Private channel not found.",
+                "❌ 비공개 채널을 찾을 수 없습니다.",
                 ephemeral=True
             )
 
@@ -465,12 +466,12 @@ class InterviewModal(Modal, title="Interview Pre-Questions"):
                 submission_time,  # Submission_Time
                 str(interaction.user.id),  # Discord_User_ID
                 interaction.user.display_name,  # Discord_Username
-                self.answers.get("Activity Region (West/Central/East)", ""),
-                self.answers.get("In-game Name and Tag (e.g., Name#Tag)", ""),
-                self.answers.get("Most Confident Role", ""),
-                self.answers.get("Intention to Join Premier Team", ""),
-                self.answers.get("Reason for Application", ""),
-                "Submitted"  # Initial Status after submission (Changed to English)
+                self.answers.get("활동 지역 (서부/중부/동부)", ""),
+                self.answers.get("인게임 이름 및 태그 (예: 이름#태그)", ""),
+                self.answers.get("가장 자신있는 역할", ""),
+                self.answers.get("프리미어 팀 참가 의향", ""),
+                self.answers.get("지원 동기", ""),
+                "제출됨"  # Initial Status after submission
             ]
             cog.logger.info(f"Attempting to append row to 'Testing' sheet for user: {interaction.user.id}")
             success = await cog.gspread_client.append_row(
@@ -480,7 +481,7 @@ class InterviewModal(Modal, title="Interview Pre-Questions"):
                 cog.logger.error(
                     f"❌ Failed to add data to 'Testing' sheet from InterviewModal for user: {interaction.user.id}. GSpreadClient returned False.")
                 return await interaction.response.send_message(
-                    "❌ Failed to save interview information to Google Sheet. Please try again.",
+                    "❌ 인터뷰 정보를 Google Sheet에 저장하는 데 실패했습니다. 다시 시도해주세요.",
                     ephemeral=True
                 )
             cog.logger.info(f"✅ Interview data successfully saved to 'Testing' sheet: {interaction.user.id}")
@@ -489,33 +490,33 @@ class InterviewModal(Modal, title="Interview Pre-Questions"):
             cog.logger.error(
                 f"❌ Error while saving Google Sheet data from InterviewModal: {e}\n{traceback.format_exc()}")
             return await interaction.response.send_message(
-                f"❌ An error occurred while processing interview data: {str(e)}",
+                f"❌ 인터뷰 데이터를 처리하는 중 오류가 발생했습니다: {str(e)}",
                 ephemeral=True
             )
 
         embed = discord.Embed(
-            title="📝 Interview Request Received",
-            description=f"{interaction.user.mention} has requested an interview.",
+            title="📝 인터뷰 요청 접수",
+            description=f"{interaction.user.mention} 님이 인터뷰를 요청했습니다.",
             color=discord.Color.green(),
             timestamp=datetime.now(timezone.utc)
         )
 
         embed.set_thumbnail(url=interaction.user.display_avatar.url)
-        embed.set_author(name="Exceed Interview System")
+        embed.set_author(name="Exceed 인터뷰 시스템")
 
         for question, answer in self.answers.items():
             embed.add_field(
                 name=f"❓ {question}",
-                value=f"> {answer or '*No response*'}",
+                value=f"> {answer or '*응답 없음*'}",
                 inline=False
             )
 
         view = DecisionButtonView(applicant_id=interaction.user.id, cog=cog)
         await private_channel.send(embed=embed, view=view)
-        cog.logger.info(f"Interview request received: {interaction.user.display_name} ({interaction.user.id})")
+        cog.logger.info(f"인터뷰 요청 접수: {interaction.user.display_name} ({interaction.user.id})")
 
         await interaction.response.send_message(
-            "✅ Your interview request has been successfully sent!",
+            "✅ 인터뷰 요청이 성공적으로 전송되었습니다!",
             ephemeral=True
         )
 
@@ -526,7 +527,7 @@ class InterviewView(View):
         self.private_channel_id = private_channel_id
         self.cog = cog
 
-    @discord.ui.button(label="Start Interview Request", style=discord.ButtonStyle.primary, custom_id="start_interview")
+    @discord.ui.button(label="인터뷰 요청 시작하기", style=discord.ButtonStyle.primary, custom_id="start_interview")
     async def start_interview(self, interaction: discord.Interaction, button: Button):
         modal = InterviewModal()
         await interaction.response.send_modal(modal)
@@ -539,7 +540,7 @@ class InterviewRequestCog(commands.Cog):
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
 
         self.logger = logger_module.get_logger(self.__class__.__name__)
-        self.logger.info("InterviewRequestCog initialized.")
+        self.logger.info("InterviewRequestCog 초기화 완료.")
         self.logger = get_logger("interview_cog")
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
         self.gspread_client = GSpreadClient(config.GSHEET_CREDENTIALS_PATH, self.logger)
@@ -598,7 +599,7 @@ class InterviewRequestCog(commands.Cog):
             self.logger.warning(
                 f"Failed to fetch avatar, cannot add avatar to {member.display_name}'s congratulatory card.")
 
-        text = f"Congratulations, {member.display_name}!"
+        text = f"축하합니다, {member.display_name}님!"  # Reverted to Korean
 
         current_font = self.FONT if self.FONT else ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
@@ -625,7 +626,7 @@ class InterviewRequestCog(commands.Cog):
         """Send welcome message to welcome channel"""
         channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
         if not channel:
-            self.logger.error(f"Welcome channel ID {WELCOME_CHANNEL_ID} not found.")
+            self.logger.error(f"환영 채널 ID {WELCOME_CHANNEL_ID}을(를) 찾을 수 없습니다.")
             return
 
         file = None
@@ -634,150 +635,149 @@ class InterviewRequestCog(commands.Cog):
             if card_buf:
                 file = File(card_buf, filename="welcome.png")
             else:
-                self.logger.warning(
-                    f"Failed to create welcome card for {member.display_name}. Sending message without file.")
+                self.logger.warning(f"{member.display_name}님의 환영 카드 생성에 실패했습니다. 파일 없이 메시지를 보냅니다.")
 
             embed = discord.Embed(
-                title=f"🎉 Congratulations, {member.display_name}! You've joined Exceed Clan!",
-                description="Congratulations! We sincerely welcome you as an official clan member.",
+                title=f"🎉 {member.display_name}님, Exceed 클랜에 합격하셨습니다!",  # Reverted to Korean
+                description="축하드립니다! 공식 클랜 멤버가 되신 것을 진심으로 환영합니다.",  # Reverted to Korean
                 color=discord.Color.gold(),
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.add_field(name="1️⃣ Please be sure to check the clan rules!", value=f"<#{config.RULES_CHANNEL_ID}>",
+            embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>",
+                            inline=False)  # Reverted to Korean
+            embed.add_field(name="2️⃣ 역할지급 채널에서 원하는 역할을 선택해 주세요.", value=f"<#{config.ROLE_ASSIGN_CHANNEL_ID}>",
+                            # Reverted to Korean
                             inline=False)
-            embed.add_field(name="2️⃣ Select your desired role in the role assignment channel.",
-                            value=f"<#{config.ROLE_ASSIGN_CHANNEL_ID}>",
-                            inline=False)
-            embed.add_field(name="3️⃣ Check out the member-only chat room.",
-                            value=f"<#{config.MEMBER_CHAT_CHANNEL_ID}>", inline=False)
-            embed.add_field(name="4️⃣ Check the clan leaderboard based on the clan MMR system.",
+            embed.add_field(name="3️⃣ 멤버 전용 채팅방을 확인해 보세요.", value=f"<#{config.MEMBER_CHAT_CHANNEL_ID}>",
+                            inline=False)  # Reverted to Korean
+            embed.add_field(name="4️⃣ 클랜 MMR 시스템을 기반으로 한 클랜 리더보드를 확인해 보세요.",  # Reverted to Korean
                             value=f"<#{config.CLAN_LEADERBOARD_CHANNEL_ID}>", inline=False)
 
             if file:
                 embed.set_image(url="attachment://welcome.png")
 
-            embed.set_footer(text="Exceed • Welcome Message", icon_url=self.bot.user.display_avatar.url)
+            embed.set_footer(text="Exceed • 합격 축하 메시지", icon_url=self.bot.user.display_avatar.url)  # Reverted to Korean
 
             await channel.send(
                 content=member.mention,
                 embed=embed,
                 file=file,
                 allowed_mentions=discord.AllowedMentions(users=True))
-            self.logger.info(f"Welcome message sent: {member.display_name} ({member.id})")
+            self.logger.info(f"환영 메시지 전송 완료: {member.display_name} ({member.id})")  # Reverted to Korean
 
         except Exception as e:
-            self.logger.error(f"Failed to send welcome message: {str(e)}\n{traceback.format_exc()}")
+            self.logger.error(f"환영 메시지 전송 실패: {str(e)}\n{traceback.format_exc()}")  # Reverted to Korean
 
     async def send_interview_request_message(self):
         channel = self.bot.get_channel(self.public_channel_id)
         if not channel:
-            self.logger.error(f"Public channel ID {self.public_channel_id} not found.")
+            self.logger.error(f"공개 채널 ID {self.public_channel_id}를 찾을 수 없습니다.")  # Reverted to Korean
             return
 
         try:
             await channel.purge(limit=None)
-            self.logger.info(f"Purged existing messages in channel #{channel.name} ({channel.id}).")
+            self.logger.info(f"채널 #{channel.name} ({channel.id})의 기존 메시지를 삭제했습니다.")  # Reverted to Korean
 
             rules_embed = discord.Embed(
-                title="🎯 XCD Valorant Clan Membership Requirements",
-                description="📜 Last Updated: 2025.07.06",
+                title="🎯 XCD 발로란트 클랜 가입 조건 안내",  # Reverted to Korean
+                description="📜 최종 업데이트: 2025.07.06",  # Reverted to Korean
                 color=discord.Color.orange()
             )
             rules_embed.add_field(
-                name="Please confirm the conditions below before joining.",
+                name="가입 전 아래 조건을 반드시 확인해 주세요.",  # Reverted to Korean
                 value=(
                     "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "🔞 1. Age Requirement\n"
-                    "・20 years old or older (born before 2005)\n"
-                    "・Expect mature communication and responsible behavior.\n\n"
-                    "🎮 2. Skill Requirement\n"
-                    "・Current rank Gold or higher (Episode based)\n"
-                    "・Skill can be verified through tryouts (scrim tests)\n"
-                    "・Game understanding & teamwork will also be evaluated\n\n"
-                    "💬 3. Manners & Communication\n"
-                    "・No abusive language/disrespect/mocking/informal speech\n"
-                    "・Able to accept feedback and play with a positive attitude\n"
-                    "・Discord microphone required\n\n"
-                    "⏱️ 4. Activity\n"
-                    "・Able to connect & play at least 3 times a week\n"
-                    "・Willingness to actively participate in tournaments/scrims/internal matches etc.\n"
-                    "・Automatic removal after 30 days of inactivity\n\n"
-                    "🚫 5. Restricted Individuals\n"
-                    "・Users active in other clans simultaneously\n"
-                    "・Users with records of trolling, abusive language, bans, etc.\n"
-                    "・Abnormal activities such as boosting/smurfing/account sharing\n"
+                    "🔞 1. 나이 조건\n"  # Reverted to Korean
+                    "・만 20세 이상 (2005년생 이전)\n"  # Reverted to Korean
+                    "・성숙한 커뮤니케이션과 책임감 있는 행동을 기대합니다.\n\n"  # Reverted to Korean
+                    "🎮 2. 실력 조건\n"  # Reverted to Korean
+                    "・현재 티어 골드 이상 (에피소드 기준)\n"  # Reverted to Korean
+                    "・트라이아웃(스크림 테스트)으로 실력 확인 가능\n"  # Reverted to Korean
+                    "・게임 이해도 & 팀워크도 함께 평가\n\n"  # Reverted to Korean
+                    "💬 3. 매너 & 소통\n"  # Reverted to Korean
+                    "・욕설/무시/조롱/반말 등 비매너 언행 금지\n"  # Reverted to Korean
+                    "・피드백을 받아들이고 긍정적인 태도로 게임 가능\n"  # Reverted to Korean
+                    "・디스코드 마이크 필수\n\n"  # Reverted to Korean
+                    "⏱️ 4. 활동성\n"  # Reverted to Korean
+                    "・주 3회 이상 접속 & 게임 참여 가능자\n"  # Reverted to Korean
+                    "・대회/스크림/내전 등 일정에 적극 참여할 의향 있는 분\n"  # Reverted to Korean
+                    "・30일 이상 미접속 시 자동 탈퇴 처리 가능\n\n"  # Reverted to Korean
+                    "🚫 5. 제한 대상\n"  # Reverted to Korean
+                    "・다른 클랜과 겹치는 활동 중인 유저\n"  # Reverted to Korean
+                    "・트롤, 욕설, 밴 이력 등 제재 기록 있는 유저\n"  # Reverted to Korean
+                    "・대리/부계정/계정 공유 등 비정상 활동\n"  # Reverted to Korean
                     "━━━━━━━━━━━━━━━━━━━━━"
                 ),
                 inline=False
             )
             rules_embed.add_field(
-                name="📋 Joining Procedure",
+                name="📋 가입 절차",  # Reverted to Korean
                 value=(
-                    "1️⃣ Join Discord Server\n"
-                    "2️⃣ Fill out Application Form or Interview\n"
-                    "3️⃣ Tryout or Recent Match Clip Review\n"
-                    "4️⃣ Operations Team Approval → Role Assignment → Completion of Joining"
+                    "1️⃣ 디스코드 서버 입장\n"  # Reverted to Korean
+                    "2️⃣ 가입 지원서 작성 or 인터뷰\n"  # Reverted to Korean
+                    "3️⃣ 트라이아웃 or 최근 경기 클립 확인\n"  # Reverted to Korean
+                    "4️⃣ 운영진 승인 → 역할 부여 후 가입 완료"  # Reverted to Korean
                 ),
                 inline=False
             )
             rules_embed.add_field(
-                name="🧠 FAQ",
+                name="🧠 FAQ",  # Reverted to Korean
                 value=(
-                    "Q. Can I join without a microphone?\n"
-                    "→ No. Voice communication is mandatory. It's difficult to be active with text only.\n\n"
-                    "Q. Can I join if I'm below Gold rank?\n"
-                    "→ Exceptional approval may be granted after evaluating teamwork/understanding through tryouts."
+                    "Q. 마이크 없으면 가입 안 되나요?\n"  # Reverted to Korean
+                    "→ 네. 음성 소통은 필수입니다. 텍스트만으로는 활동이 어렵습니다.\n\n"  # Reverted to Korean
+                    "Q. 골드 미만인데 들어갈 수 있나요?\n"  # Reverted to Korean
+                    "→ 트라이아웃으로 팀워크/이해도 확인 후 예외 승인될 수 있습니다."  # Reverted to Korean
                 ),
                 inline=False
             )
             rules_embed.set_footer(
-                text="✅ After joining, there will be an adjustment period\n"
-                     "and you may be removed without warning for lack of manners or participation.\n\n"
-                     "📌 This guide may be subject to change based on clan operations."
+                text="✅ 가입 후 일정 기간 적응 평가 기간이 있으며\n"  # Reverted to Korean
+                     "매너, 참여도 부족 시 경고 없이 탈퇴될 수 있습니다.\n\n"  # Reverted to Korean
+                     "📌 본 안내는 클랜 운영 상황에 따라 변경될 수 있습니다."  # Reverted to Korean
             )
 
             await channel.send(embed=rules_embed)
 
             interview_embed = discord.Embed(
-                title="✨ Interview Request Guide ✨",
+                title="✨ 인터뷰 요청 안내 ✨",  # Reverted to Korean
                 description=(
-                    "Interested in joining the Exceed clan?\n"
-                    "Click the button below to start your interview request.\n"
-                    "We will review it promptly and contact you."
+                    "Exceed 클랜에 지원하고 싶으신가요?\n"  # Reverted to Korean
+                    "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"  # Reverted to Korean
+                    "신속하게 확인 후 연락드리겠습니다."  # Reverted to Korean
                 ),
                 color=discord.Color.blue(),
                 timestamp=datetime.now(timezone.utc)
             )
             interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
-            interview_embed.set_footer(text="Exceed • Interview System")
+            interview_embed.set_footer(text="Exceed • 인터뷰 시스템")  # Reverted to Korean
             interview_embed.set_author(
-                name="Exceed Interview Guide",
+                name="Exceed 인터뷰 안내",  # Reverted to Korean
                 icon_url="https://cdn-icons-png.flaticon.com/512/295/295128.png"
             )
 
             await channel.send(embed=interview_embed, view=InterviewView(self.private_channel_id, self))
-            self.logger.info("📨・Application-Submission channel: Posted membership requirements and interview button.")
+            self.logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")  # Reverted to Korean
 
         except Exception as e:
-            self.logger.error(f"Failed to send interview request message: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"인터뷰 요청 메시지 전송 실패: {e}\n{traceback.format_exc()}")  # Reverted to Korean
 
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(InterviewView(self.private_channel_id, self))
         self.bot.add_view(DecisionButtonView(cog=self))
         await self.send_interview_request_message()
-        self.logger.info("Interview request message and persistent views set up.")
+        self.logger.info("인터뷰 요청 메시지 및 영구 뷰 설정 완료.")  # Reverted to Korean
 
     @discord.app_commands.command(
         name="request_interview",
-        description="Resends the interview request message (Admin only)"
+        description="인터뷰 요청 메시지를 다시 보냅니다 (관리자용)"  # Reverted to Korean
     )
     @discord.app_commands.default_permissions(administrator=True)
     async def slash_request_interview(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.send_interview_request_message()
         await interaction.followup.send(
-            "Interview request message refreshed!",
+            "인터뷰 요청 메시지를 갱신했습니다!",  # Reverted to Korean
             ephemeral=True
         )
 
