@@ -20,9 +20,9 @@ from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_
     RULES_CHANNEL_ID, ANNOUNCEMENTS_CHANNEL_ID, ACCEPTED_ROLE_ID, MEMBER_CHAT_CHANNEL_ID
 from utils.logger import get_logger
 import utils.logger as logger_module
-from utils.gspread_utils import GSpreadClient  # Import GSpreadClient
+from utils.gspread_utils import GSpreadClient
 
-from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID
+from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, GSHEET_TESTING_SPREADSHEET_NAME, GSHEET_MEMBER_LIST_SPREADSHEET_NAME
 
 
 class DecisionButtonView(discord.ui.View):
@@ -30,7 +30,7 @@ class DecisionButtonView(discord.ui.View):
         super().__init__(timeout=None)
         self.applicant_id = applicant_id
         self.cog = cog
-        self.answers = answers  # Store the answers from the modal
+        self.answers = answers
 
     def _extract_user_id(self, interaction: discord.Interaction) -> Optional[int]:
         user_id = None
@@ -67,11 +67,12 @@ class DecisionButtonView(discord.ui.View):
 
         try:
             # Step 1: Get data from "Testing" sheet and add to "Member List"
+            # CHANGED: Use GSHEET_TESTING_SPREADSHEET_NAME for the Testing spreadsheet
             testing_worksheet = await self.cog.gspread_client.get_worksheet(
-                config.MEMBERS_SHEET_NAME, config.TEST_SHEET_NAME
+                config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1" # Assuming 'Sheet1' is the worksheet name within "Testing" spreadsheet
             )
             if not testing_worksheet:
-                await interaction.followup.send("❌ Google Sheets 'Testing' 시트를 찾을 수 없습니다.", ephemeral=True)
+                await interaction.followup.send("❌ Google Sheets 'Testing' 시트를 찾을 수 없습니다. (스프레드시트 이름 또는 워크시트 이름 확인)", ephemeral=True)
                 return
 
             all_test_values = await asyncio.to_thread(testing_worksheet.get_all_values)
@@ -99,53 +100,54 @@ class DecisionButtonView(discord.ui.View):
 
             if interview_id_col_index == -1:
                 self.cog.logger.error("❌ 'Testing' 시트에 'Interview_ID' 컬럼이 없습니다.")
-                await interaction.followup.send("❌ 'Testing' 시트 형식이 올바르지 않습니다. 'Interview_ID' 컬럼이 필요합니다.",
-                                                ephemeral=True)
+                await interaction.followup.send("❌ 'Testing' 시트 형식이 올바르지 않습니다. 'Interview_ID' 컬럼이 필요합니다.", ephemeral=True)
                 return
 
             testing_row_to_process = None
             testing_row_index = -1
-            for i, row in enumerate(all_test_values[1:]):  # Skip header
+            for i, row in enumerate(all_test_values[1:]): # Skip header
                 if len(row) > interview_id_col_index and row[interview_id_col_index] == str(user_id):
                     testing_row_to_process = row
-                    testing_row_index = i + 2  # +2 because all_test_values is 0-indexed and header is row 1
+                    testing_row_index = i + 2 # +2 because all_test_values is 0-indexed and header is row 1
                     break
 
             if not testing_row_to_process:
                 self.cog.logger.warning(f"합격 처리 시 'Testing' 시트에서 Interview ID '{user_id}'를 찾을 수 없습니다.")
-                await interaction.followup.send(f"❌ {member.mention}님의 인터뷰 정보를 'Testing' 시트에서 찾을 수 없습니다.",
-                                                ephemeral=True)
+                await interaction.followup.send(f"❌ {member.mention}님의 인터뷰 정보를 'Testing' 시트에서 찾을 수 없습니다.", ephemeral=True)
                 return
 
             # Prepare data for "Member List" sheet
             member_data_to_append = [
-                str(member.id),  # 디스코드 사용자 ID
-                member.display_name,  # Discord 사용자명
-                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),  # 합격 날짜
-                testing_row_to_process[test_header.index(question_to_column["인게임 이름 및 태그 (예: 이름#태그)"])],  # 인게임 이름 및 태그
-                testing_row_to_process[test_header.index(question_to_column["활동 지역 (서부/중부/동부)"])],  # 활동 지역
-                testing_row_to_process[test_header.index(question_to_column["가장 자신있는 역할"])],  # 주요 역할
-                testing_row_to_process[test_header.index(question_to_column["프리미어 팀 참가 의향"])],  # 프리미어 팀 참가 의향
-                "합격 처리됨"  # 특이사항 또는 관리자 메모
+                str(member.id), # 디스코드 사용자 ID
+                member.display_name, # Discord 사용자명
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), # 합격 날짜
+                testing_row_to_process[test_header.index(question_to_column["인게임 이름 및 태그 (예: 이름#태그)"])], # 인게임 이름 및 태그
+                testing_row_to_process[test_header.index(question_to_column["활동 지역 (서부/중부/동부)"])], # 활동 지역
+                testing_row_to_process[test_header.index(question_to_column["가장 자신있는 역할"])], # 주요 역할
+                testing_row_to_process[test_header.index(question_to_column["프리미어 팀 참가 의향"])], # 프리미어 팀 참가 의향
+                "합격 처리됨" # 특이사항 또는 관리자 메모
             ]
 
+            # CHANGED: Use GSHEET_MEMBER_LIST_SPREADSHEET_NAME for the Member List spreadsheet
             success_member_list_append = await self.cog.gspread_client.append_row(
-                config.MEMBERS_SHEET_NAME, config.MEMBERS_SHEET_NAME, member_data_to_append
+                config.GSHEET_MEMBER_LIST_SPREADSHEET_NAME, "Sheet1", # Assuming 'Sheet1' is the worksheet name within "Member List" spreadsheet
+                member_data_to_append
             )
 
             if not success_member_list_append:
-                await interaction.followup.send("❌ 'Member List' 시트에 합격 정보를 추가하는 데 실패했습니다. 관리자에게 문의해주세요.",
-                                                ephemeral=True)
+                await interaction.followup.send("❌ 'Member List' 시트에 합격 정보를 추가하는 데 실패했습니다. 관리자에게 문의해주세요.", ephemeral=True)
                 return
 
             # Step 2: Remove row from "Testing" sheet
+            # CHANGED: Use GSHEET_TESTING_SPREADSHEET_NAME for the Testing spreadsheet
             success_delete_testing_row = await self.cog.gspread_client.delete_row_by_interview_id(
-                config.MEMBERS_SHEET_NAME, config.TEST_SHEET_NAME, str(user_id)
+                config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", # Assuming 'Sheet1' is the worksheet name within "Testing" spreadsheet
+                str(user_id)
             )
             if not success_delete_testing_row:
                 self.cog.logger.warning(f"합격 처리 후 'Testing' 시트에서 {user_id}의 행을 삭제하는 데 실패했습니다.")
-                await interaction.followup.send("⚠️ 'Testing' 시트에서 인터뷰 정보를 삭제하는 데 실패했지만 합격 처리는 완료되었습니다. 수동으로 삭제해주세요.",
-                                                ephemeral=True)
+                await interaction.followup.send("⚠️ 'Testing' 시트에서 인터뷰 정보를 삭제하는 데 실패했지만 합격 처리는 완료되었습니다. 수동으로 삭제해주세요.", ephemeral=True)
+
 
             # Step 3: Discord role handling and welcome message
             role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
@@ -233,21 +235,22 @@ class DecisionButtonView(discord.ui.View):
             # Construct the row data for Google Sheet based on the required order
             # Interview_ID, Submission_Time, Discord_User_ID, Discord_Username, ..., Status
             data_row = [
-                str(user_id),  # Interview_ID
-                submission_time,  # Submission_Time
-                str(user_id),  # Discord_User_ID
-                member.display_name,  # Discord_Username
+                str(user_id), # Interview_ID
+                submission_time, # Submission_Time
+                str(user_id), # Discord_User_ID
+                member.display_name, # Discord_Username
                 self.answers.get(gsheet_column_map["활동 지역 (서부/중부/동부)"], ""),
                 self.answers.get(gsheet_column_map["인게임 이름 및 태그 (예: 이름#태그)"], ""),
                 self.answers.get(gsheet_column_map["가장 자신있는 역할"], ""),
                 self.answers.get(gsheet_column_map["프리미어 팀 참가 의향"], ""),
                 self.answers.get(gsheet_column_map["지원 동기"], ""),
-                "테스트"  # Status
+                "테스트" # Status
             ]
 
-            # Append data to the "Testing" sheet
+            # CHANGED: Use GSHEET_TESTING_SPREADSHEET_NAME for the Testing spreadsheet
             success = await self.cog.gspread_client.append_row(
-                config.MEMBERS_SHEET_NAME, config.TEST_SHEET_NAME, data_row
+                config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", # Assuming 'Sheet1' is the worksheet name within "Testing" spreadsheet
+                data_row
             )
 
             if not success:
@@ -315,13 +318,16 @@ class DecisionButtonView(discord.ui.View):
             )
         try:
             # If rejected, remove from "Testing" sheet if they were there
+            # CHANGED: Use GSHEET_TESTING_SPREADSHEET_NAME for the Testing spreadsheet
             success_delete_testing_row = await self.cog.gspread_client.delete_row_by_interview_id(
-                config.MEMBERS_SHEET_NAME, config.TEST_SHEET_NAME, str(user_id)
+                config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", # Assuming 'Sheet1' is the worksheet name within "Testing" spreadsheet
+                str(user_id)
             )
             if not success_delete_testing_row:
                 self.cog.logger.warning(f"불합격 처리 시 'Testing' 시트에서 {user_id}의 행을 삭제하는 데 실패했습니다. (이미 없거나 오류)")
             else:
                 self.cog.logger.info(f"불합격 처리로 'Testing' 시트에서 {user_id}의 행을 삭제했습니다.")
+
 
             try:
                 await member.send(
@@ -441,7 +447,6 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 inline=False
             )
 
-        # Pass the answers to the DecisionButtonView
         view = DecisionButtonView(applicant_id=interaction.user.id, cog=cog, answers=self.answers)
         await private_channel.send(embed=embed, view=view)
         cog.logger.info(f"인터뷰 요청 접수: {interaction.user.display_name} ({interaction.user.id})")
@@ -473,11 +478,11 @@ class InterviewRequestCog(commands.Cog):
         self.logger = logger_module.get_logger(self.__class__.__name__)
         self.logger.info("InterviewRequestCog 초기화 완료.")
         self.logger = get_logger("interview_cog")
-        self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID  # Assuming this is where decision buttons are
-        self.gspread_client = GSpreadClient(config.GSHEET_CREDENTIALS_PATH, self.logger)  # Initialize GSpreadClient
+        self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
+        self.gspread_client = GSpreadClient(config.GSHEET_CREDENTIALS_PATH, self.logger)
 
     async def cog_load(self):
-        await self.gspread_client.authorize()  # Authorize GSpreadClient when cog loads
+        await self.gspread_client.authorize()
 
         self.FONT = None
         try:
@@ -690,9 +695,6 @@ class InterviewRequestCog(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(InterviewView(self.private_channel_id, self))
-        # When adding DecisionButtonView, ensure `answers` is handled as it might not be present on bot restart
-        # For persistent views, it's generally better not to store interaction-specific data in the view itself
-        # For simplicity in this example, we will not pass `answers` on `on_ready` but it will be passed on new interactions
         self.bot.add_view(DecisionButtonView(cog=self))
         await self.send_interview_request_message()
         self.logger.info("인터뷰 요청 메시지 및 영구 뷰 설정 완료.")
