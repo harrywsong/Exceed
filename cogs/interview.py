@@ -51,84 +51,188 @@ class DecisionButtonView(discord.ui.View):
                     break
         return user_id, interview_id
 
-
-    @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="interview_pass")
+    @discord.ui.button(label="합격", style=discord.ButtonStyle.success, custom_id="approve_button")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
+        member = interaction.user
+        channel = interaction.channel
+        self.logger.info(f"✅ {member.display_name} ({member.id})님이 채널 '{channel.name}'에서 '합격' 버튼을 눌렀습니다.")
 
-        user_id, interview_id = self._extract_user_id_and_interview_id(interaction)
-        if not user_id:
-            self.cog.logger.warning(f"합격 처리 시 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
-            return await interaction.followup.send(
-                "❌ 지원자 정보를 찾을 수 없습니다.",
-                ephemeral=True
-            )
-        member = interaction.guild.get_member(user_id)
-        if not member:
-            self.cog.logger.warning(f"합격 처리 시 멤버를 찾을 수 없습니다. User ID: {user_id}")
-            return await interaction.followup.send(
-                "❌ 지원자 정보를 찾을 수 없습니다.",
-                ephemeral=True
-            )
+        if not self.cog.check_staff_role(member):
+            await interaction.response.send_message("❌ 이 버튼을 사용할 권한이 없습니다.", ephemeral=True)
+            self.logger.warning(f"⚠️ {member.display_name} ({member.id})님이 '합격' 버튼을 사용하려 했으나 권한이 없습니다.")
+            return
 
-        try:
-            # Update Google Sheet status
-            if self.cog and self.cog.gspread_client and interview_id:
-                # Use the interview ID to update the status in the TEST_SHEET_NAME
-                success = await self.cog.gspread_client.update_row_by_interview_id(  # CHANGE THIS LINE
+        # 인터뷰 ID 추출 로직 (기존 로직 사용)
+        interview_id = self.cog.extract_interview_id_from_channel_name(channel.name)
+        if not interview_id:
+            await interaction.response.send_message("❌ 채널 이름에서 유효한 인터뷰 ID를 찾을 수 없습니다.", ephemeral=True)
+            self.logger.error(f"❌ 채널 '{channel.name}'에서 인터뷰 ID 추출 실패.")
+            return
+
+        target_member_id = self.cog.extract_user_id_from_channel_name(channel.name)
+        target_member = None
+        if target_member_id:
+            target_member = interaction.guild.get_member(target_member_id)
+
+        if not target_member:
+            await interaction.response.send_message("❌ 이 채널에 연결된 멤버를 찾을 수 없습니다. 수동으로 처리해주세요.", ephemeral=True)
+            self.logger.error(f"❌ 인터뷰 ID '{interview_id}'에 연결된 멤버를 Discord에서 찾을 수 없습니다.")
+            return
+
+        # --- Google Sheets 작업 시작 ---
+        if self.cog and self.cog.gspread_client and interview_id:
+            try:
+                # 1. Testing 시트에서 해당 인터뷰 데이터 가져오기
+                testing_worksheet = await self.cog.gspread_client.get_worksheet(config.TEST_SHEET_NAME, "Sheet1")
+                if not testing_worksheet:
+                    await interaction.response.send_message("❌ 'Testing' 시트에 접근할 수 없습니다.", ephemeral=True)
+                    return
+
+                all_testing_values = await asyncio.to_thread(testing_worksheet.get_all_values)
+                if not all_testing_values:
+                    self.logger.warning("🟡 'Testing' 시트가 비어있습니다.")
+                    await interaction.response.send_message("❌ 'Testing' 시트에서 데이터를 찾을 수 없습니다.", ephemeral=True)
+                    return
+
+                header_testing = [h.strip().lower() for h in all_testing_values[0]]
+                interview_data_row = None
+                interview_row_index = -1
+
+                # 'Interview_ID' 열의 인덱스 찾기
+                try:
+                    interview_id_col_index = header_testing.index("interview_id")
+                except ValueError:
+                    self.logger.error("❌ 'Testing' 시트에 'Interview_ID' 열이 없습니다.")
+                    await interaction.response.send_message(
+                        "❌ 'Testing' 시트의 열 구조가 올바르지 않습니다. 'Interview_ID' 열을 찾을 수 없습니다.", ephemeral=True)
+                    return
+
+                for i, row in enumerate(all_testing_values[1:]):  # 헤더 제외, 실제 데이터 행에서 검색
+                    if len(row) > interview_id_col_index and row[interview_id_col_index] == interview_id:
+                        interview_data_row = row
+                        interview_row_index = i + 2  # Google Sheets 1-based index (header + 1 for 0-indexed list)
+                        break
+
+                if not interview_data_row:
+                    self.logger.warning(f"🟡 인터뷰 ID '{interview_id}'에 해당하는 데이터를 'Testing' 시트에서 찾을 수 없습니다.")
+                    await interaction.response.send_message(
+                        f"❌ 인터뷰 ID '{interview_id}'에 해당하는 데이터를 'Testing' 시트에서 찾을 수 없습니다.", ephemeral=True)
+                    return
+
+                # 필요한 데이터 추출 (Testing 시트의 예상 열 순서에 따라 인덱스 조정)
+                # 'Submission_Time', 'Discord_User_ID', 'Discord_Username', '활동 지역', '인게임 이름 및 태그', '가장 자신있는 역할', '프리미어 팀 참가 의향', '지원 동기', 'Status'
+
+                # 열 이름을 기반으로 안전하게 인덱스를 가져오는 함수
+                def get_column_value(row_data, header_list, column_name_lower):
+                    try:
+                        idx = header_list.index(column_name_lower)
+                        return row_data[idx] if idx < len(row_data) else ""
+                    except ValueError:
+                        return ""  # 컬럼이 없으면 빈 문자열 반환
+
+                discord_user_id = get_column_value(interview_data_row, header_testing, "discord_user_id")
+                discord_username = get_column_value(interview_data_row, header_testing, "discord_username")
+                ingame_name_tag = get_column_value(interview_data_row, header_testing, "인게임 이름 및 태그 (예: 이름#태그)")
+                activity_region = get_column_value(interview_data_row, header_testing, "활동 지역 (서부/중부/동부)")
+                main_role = get_column_value(interview_data_row, header_testing, "가장 자신있는 역할")
+                premier_interest = get_column_value(interview_data_row, header_testing, "프리미어 팀 참가 의향")
+                # '특이사항 또는 관리자 메모'는 현재 Testing 시트에서 직접 가져올 필드가 없으므로, 필요시 수동 입력 또는 비워둡니다.
+                notes = ""  # 초기에는 비워둠
+
+                # 2. Member List 시트에 새 항목 추가
+                accepted_date = datetime.date.today().strftime("%Y-%m-%d")  # 오늘 날짜
+
+                # Member List 시트의 열 순서에 맞춰 데이터 리스트 생성
+                new_member_data = [
+                    discord_user_id,
+                    discord_username,
+                    accepted_date,
+                    ingame_name_tag,
+                    activity_region,
+                    main_role,
+                    premier_interest,
+                    notes
+                ]
+
+                member_list_sheet_name = config.MEMBERS_SHEET_NAME  # 'Member List' 시트 이름
+                member_list_worksheet_name = "Sheet1"  # 'Member List' 시트 내의 워크시트 이름
+
+                append_success = await self.cog.gspread_client.append_row(
+                    member_list_sheet_name,
+                    member_list_worksheet_name,
+                    new_member_data
+                )
+
+                if not append_success:
+                    await interaction.response.send_message("❌ 'Member List' 시트에 새 멤버를 추가하는 데 실패했습니다.", ephemeral=True)
+                    return
+
+                # 3. Testing 시트에서 해당 항목 삭제
+                # delete_row_by_interview_id는 해당 ID가 속한 행을 정확히 삭제해야 합니다.
+                delete_success = await self.cog.gspread_client.delete_row_by_interview_id(
                     config.TEST_SHEET_NAME,
                     "Sheet1",
-                    interview_id,
-                    "Status",
-                    "Accepted"
+                    interview_id
                 )
-                if not success:
-                    self.cog.logger.error(f"❌ Google Sheet 업데이트 실패: {user_id} 합격 처리.")
-                    await interaction.followup.send(
-                        "❌ Google Sheet 업데이트에 실패했습니다. 관리자에게 문의하세요.",
-                        ephemeral=True
-                    )
-                    return # Exit if sheet update failed
 
-            role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
-            if not role:
-                self.cog.logger.error(f"❌ 합격 역할 ID {ACCEPTED_ROLE_ID}을(를) 찾을 수 없습니다. 관리자에게 문의해주세요.")
-                return await interaction.followup.send(
-                    "❌ 합격 역할을 찾을 수 없습니다. 관리자에게 문의해주세요.",
+                if not delete_success:
+                    self.logger.error(f"❌ 'Testing' 시트에서 인터뷰 ID '{interview_id}' 항목 삭제 실패.")
+                    await interaction.response.send_message(f"❌ 'Testing' 시트에서 항목을 삭제하는 데 실패했습니다. 수동으로 확인해주세요.",
+                                                            ephemeral=True)
+                    # 이 경우에도 Member List에 추가되었으므로 응답은 성공으로 간주하지만, 로그로 남깁니다.
+
+                # --- Google Sheets 작업 종료 ---
+
+                # 역할 부여 및 제거 (기존 로직 유지)
+                # Accepted 역할 부여
+                accepted_role_id = config.ACCEPTED_ROLE_ID
+                accepted_role = interaction.guild.get_role(accepted_role_id)
+                if accepted_role:
+                    await target_member.add_roles(accepted_role, reason="합격 처리 - 역할 부여")
+                    self.logger.info(
+                        f"✅ {target_member.display_name} ({target_member.id})님에게 '{accepted_role.name}' 역할 부여.")
+                else:
+                    self.logger.warning(
+                        f"⚠️ 'Accepted' 역할 (ID: {accepted_role_id})을 찾을 수 없어 {target_member.display_name}님에게 부여하지 못했습니다.")
+
+                # Guest 및 Applicant 역할 제거 (기존 로직 유지)
+                guest_role = interaction.guild.get_role(config.GUEST_ROLE_ID)
+                if guest_role and guest_role in target_member.roles:
+                    await target_member.remove_roles(guest_role, reason="합격 처리 - Guest 역할 제거")
+                    self.logger.info(f"✅ {target_member.display_name} ({target_member.id})님에게 'Guest' 역할 제거.")
+
+                applicant_role = interaction.guild.get_role(config.APPLICANT_ROLE_ID)
+                if applicant_role and applicant_role in target_member.roles:
+                    await target_member.remove_roles(applicant_role, reason="합격 처리 - Applicant 역할 제거")
+                    self.logger.info(f"✅ {target_member.display_name} ({target_member.id})님에게 'Applicant' 역할 제거.")
+
+                # 결과 메시지 전송 및 채널 삭제 (기존 로직 유지)
+                await interaction.response.send_message(
+                    f"✅ `{target_member.display_name}`님의 인터뷰가 합격 처리되었습니다. 'Member List'에 추가되었습니다.",
+                    ephemeral=False  # 모든 사람이 볼 수 있도록
+                )
+                self.logger.info(f"✅ 인터뷰 ID '{interview_id}' 합격 처리 완료. 채널 삭제 대기 중.")
+
+                # 채널 삭제 (기존 로직 유지)
+                # self.cog.delete_channel_after_delay는 Discord API 요청에 포함되지 않으므로, 이 시점에서 응답을 보냅니다.
+                await self.cog.delete_channel_after_delay(channel, 10, target_member.id, True)
+
+            except Exception as e:
+                self.logger.error(f"❌ 합격 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
+                await interaction.response.send_message(
+                    f"❌ 합격 처리 중 오류가 발생했습니다. 자세한 내용은 봇 로그를 확인해주세요.",
                     ephemeral=True
                 )
-
-            await member.add_roles(role, reason="합격 처리됨")
-            self.cog.logger.info(f"✅ {member.display_name} ({member.id})님을 합격 처리했습니다. 역할 '{role.name}' 부여.")
-
-            applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
-            if applicant_role and applicant_role in member.roles:
-                await member.remove_roles(applicant_role, reason="합격 처리로 인한 지원자 역할 제거")
-                self.cog.logger.info(f"지원자 역할 '{applicant_role.name}'을(를) {member.display_name}님에게서 제거했습니다.")
-
-            guest_role = interaction.guild.get_role(GUEST_ROLE_ID)
-            if guest_role and guest_role in member.roles:
-                await member.remove_roles(guest_role, reason="합격 처리로 인한 게스트 역할 제거")
-                self.cog.logger.info(f"게스트 역할 '{guest_role.name}'을(를) {member.display_name}님에게서 제거했습니다.")
-
-            await interaction.followup.send(
-                f"✅ {member.mention}님을 합격 처리했습니다!"
-            )
-            if self.cog:
-                await self.cog.send_welcome_message(member)
-
-        except discord.Forbidden:
-            self.cog.logger.error(f"❌ 역할을 부여할 권한이 없습니다. 봇 권한을 확인해주세요. {traceback.format_exc()}")
-            await interaction.followup.send(
-                "❌ 역할을 부여할 권한이 없습니다. 봇 권한을 확인해주세요.",
-                ephemeral=True
-            )
-        except Exception as e:
-            self.cog.logger.error(f"❌ 합격 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
-            await interaction.followup.send(
-                f"❌ 오류 발생: {str(e)}",
-                ephemeral=True
-            )
+                if hasattr(self.cog.bot, 'get_channel') and config.LOG_CHANNEL_ID:
+                    log_channel = self.cog.bot.get_channel(config.LOG_CHANNEL_ID)
+                    if log_channel:
+                        await log_channel.send(
+                            f"🚨 **인터뷰 처리 오류:** 합격 처리 중 `인터뷰 ID: {interview_id}`에 대해 예상치 못한 오류 발생: `{e}`"
+                        )
+        else:
+            await interaction.response.send_message("❌ Google Sheets 클라이언트가 초기화되지 않았거나 인터뷰 ID를 찾을 수 없습니다.",
+                                                    ephemeral=True)
+            self.logger.error("❌ Google Sheets 클라이언트가 없거나 인터뷰 ID가 없어 합격 처리를 진행할 수 없습니다.")
 
     @discord.ui.button(label="테스트", style=discord.ButtonStyle.secondary, custom_id="interview_test")
     async def test(self, interaction: discord.Interaction, button: discord.ui.Button):
