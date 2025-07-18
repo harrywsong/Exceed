@@ -2,7 +2,9 @@ import os
 import json
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 def parse_int(env_var_name, default=None):
     val = os.getenv(env_var_name)
@@ -68,11 +70,9 @@ except json.JSONDecodeError as e:
     print(f"Failed to parse REACTION_ROLE_MAP_JSON: {e}")
     REACTION_ROLE_MAP = {}
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 GSHEET_CREDENTIALS_PATH = os.path.join(
     BASE_DIR,
     os.getenv('GSHEET_CREDENTIALS_PATH', 'exceed-465801-9a237edcd3b1.json')
 )
-MEMBERS_SHEET_NAME = os.getenv("MEMBERS_SHEET_NAME")
-TEST_SHEET_NAME = os.getenv("TEST_SHEET_NAME")
+MEMBERS_SHEET_NAME = os.getenv("MEMBERS_SHEET_NAME", "Member List")
+TEST_SHEET_NAME = os.getenv("TEST_SHEET_NAME", "Testing")
