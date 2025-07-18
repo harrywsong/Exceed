@@ -27,6 +27,7 @@ class DecisionButtonView(discord.ui.View):
         super().__init__(timeout=None)
         self.applicant_id = applicant_id
         self.interview_id = interview_id # Store the interview ID
+        self.logger = cog.logger # <--- ADD THIS LINE to pass the logger
         self.cog = cog
 
     def _extract_user_id_and_interview_id(self, interaction: discord.Interaction) -> tuple[Optional[int], Optional[str]]:
