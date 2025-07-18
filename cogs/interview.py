@@ -9,7 +9,7 @@ import discord
 from PIL import Image, ImageDraw, ImageFont
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
-from discord import TextStyle
+from discord import TextStyle, File
 import traceback
 from datetime import datetime, timezone
 
@@ -19,8 +19,7 @@ from utils import config
 from utils.config import INTERVIEW_PUBLIC_CHANNEL_ID, INTERVIEW_PRIVATE_CHANNEL_ID, WELCOME_CHANNEL_ID, \
     RULES_CHANNEL_ID, ANNOUNCEMENTS_CHANNEL_ID, ACCEPTED_ROLE_ID, MEMBER_CHAT_CHANNEL_ID
 from utils.logger import get_logger
-from utils.gspread_client import GSpreadClient # Add this import for Google Sheets client
-
+from utils.gspread_utils import GSpreadClient # Corrected import for Google Sheets client
 from utils.config import APPLICANT_ROLE_ID, GUEST_ROLE_ID, MEMBERS_SHEET_NAME, TEST_SHEET_NAME # Ensure these are imported
 
 class DecisionButtonView(discord.ui.View):
