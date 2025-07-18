@@ -73,14 +73,14 @@ class DecisionButtonView(discord.ui.View):
 
         try:
             # Update Google Sheet status
-            if self.cog and self.cog.gspread_client:
-                # Use the user ID to update the status in the TEST_SHEET_NAME
-                success = await self.cog.gspread_client.update_row_by_user_id(
-                    config.TEST_SHEET_NAME, # Assuming TEST_SHEET_NAME is where all applications are recorded
-                    "Interview_ID", # Assuming 'Interview_ID' is the column to match against
-                    interview_id, # The value to match
-                    "Status", # The column to update
-                    "Accepted" # The new status
+            if self.cog and self.cog.gspread_client and interview_id:
+                # Use the interview ID to update the status in the TEST_SHEET_NAME
+                success = await self.cog.gspread_client.update_row_by_interview_id(  # CHANGE THIS LINE
+                    config.TEST_SHEET_NAME,
+                    "Sheet1",
+                    interview_id,
+                    "Status",
+                    "Accepted"
                 )
                 if not success:
                     self.cog.logger.error(f"❌ Google Sheet 업데이트 실패: {user_id} 합격 처리.")
@@ -151,13 +151,13 @@ class DecisionButtonView(discord.ui.View):
 
         try:
             # Update Google Sheet status
-            if self.cog and self.cog.gspread_client:
-                success = await self.cog.gspread_client.update_row_by_user_id(
-                    config.TEST_SHEET_NAME, # Assuming TEST_SHEET_NAME is where all applications are recorded
-                    "Interview_ID", # Assuming 'Interview_ID' is the column to match against
-                    interview_id, # The value to match
-                    "Status", # The column to update
-                    "Testing" # The new status
+            if self.cog and self.cog.gspread_client and interview_id:
+                success = await self.cog.gspread_client.update_row_by_interview_id(  # CHANGE THIS LINE
+                    config.TEST_SHEET_NAME,
+                    "Sheet1",
+                    interview_id,
+                    "Status",
+                    "Testing"
                 )
                 if not success:
                     self.cog.logger.error(f"❌ Google Sheet 업데이트 실패: {user_id} 테스트 처리.")
@@ -228,13 +228,13 @@ class DecisionButtonView(discord.ui.View):
             )
         try:
             # Update Google Sheet status
-            if self.cog and self.cog.gspread_client:
-                success = await self.cog.gspread_client.update_row_by_user_id(
-                    config.TEST_SHEET_NAME, # Assuming TEST_SHEET_NAME is where all applications are recorded
-                    "Interview_ID", # Assuming 'Interview_ID' is the column to match against
-                    interview_id, # The value to match
-                    "Status", # The column to update
-                    "Rejected" # The new status
+            if self.cog and self.cog.gspread_client and interview_id:
+                success = await self.cog.gspread_client.update_row_by_interview_id(  # CHANGE THIS LINE
+                    config.TEST_SHEET_NAME,
+                    "Sheet1",
+                    interview_id,
+                    "Status",
+                    "Rejected"
                 )
                 if not success:
                     self.cog.logger.error(f"❌ Google Sheet 업데이트 실패: {user_id} 불합격 처리.")
