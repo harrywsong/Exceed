@@ -8,7 +8,7 @@ import discord
 from PIL import Image, ImageDraw, ImageFont
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput
-from discord import TextStyle
+from discord import TextStyle, File
 import traceback
 from datetime import datetime, timezone
 
@@ -33,41 +33,41 @@ class DecisionButtonView(discord.ui.View):
 
     def _extract_user_id(self, interaction: discord.Interaction) -> Optional[int]:
         user_id = None
-        self.cog.logger.debug(f"Attempting to extract user ID from message ID: {interaction.message.id}")
+        self.cog.logger.debug(f"메시지 ID: {interaction.message.id}에서 사용자 ID를 추출하려고 시도합니다")
         if interaction.message.embeds:
             embed = interaction.message.embeds[0]
             # Try to find in description first
             mention_match = re.search(r'<@!?(\d+)>', embed.description or "")
             if mention_match:
                 user_id = int(mention_match.group(1))
-                self.cog.logger.debug(f"User ID extracted from embed description: {user_id}")
+                self.cog.logger.debug(f"임베드 설명에서 추출된 사용자 ID: {user_id}")
             else:
                 # If not in description, check fields
                 for field in embed.fields:
                     mention_match = re.search(r'<@!?(\d+)>', field.value)
                     if mention_match:
                         user_id = int(mention_match.group(1))
-                        self.cog.logger.debug(f"User ID extracted from embed field '{field.name}': {user_id}")
+                        self.cog.logger.debug(f"{field.name} 임베드 필드에서 추출된 사용자 ID: {user_id}")
                         break
 
         if user_id is None:
-            self.cog.logger.warning(f"Could not extract user ID from embed in message ID: {interaction.message.id}")
+            self.cog.logger.warning(f"메시지 ID {interaction.message.id}에 포함된 사용자 ID를 추출할 수 없습니다")
         return user_id
 
     async def _get_interview_data_from_sheet(self, user_id_str: str):
         """Google Sheet에서 인터뷰 데이터를 조회합니다."""
-        self.cog.logger.info(f"Trying to fetch data from 'Testing' sheet for user ID: {user_id_str}")
+        self.cog.logger.info(f"사용자 ID: {user_id_str}에 대한 '테스트' 시트에서 데이터를 가져오려고 합니다")
         testing_worksheet = await self.cog.gspread_client.get_worksheet(
             config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1"
         )
         if not testing_worksheet:
             self.cog.logger.error(
-                f"❌ Google Sheets '{config.GSHEET_TESTING_SPREADSHEET_NAME}' spreadsheet or 'Sheet1' worksheet not found. (Get data for user: {user_id_str})")
+                f"❌ Google 스프레드시트 '{config.GSHEET_TESTING_SPREADSHEET_NAME}' 스프레드시트 또는 'Sheet1' 워크시트를 찾을 수 없습니다. (사용자 데이터 가져오기: {user_id_str})")
             return None, None
 
         all_test_values = await asyncio.to_thread(testing_worksheet.get_all_values)
         if not all_test_values:
-            self.cog.logger.warning(f"❌ 'Testing' sheet is empty. (Get data for user: {user_id_str})")
+            self.cog.logger.warning(f"❌ '테스트' 시트가 비어 있습니다. (사용자 데이터 가져오기: {user_id_str})")
             return None, None
 
         test_header = all_test_values[0]
@@ -105,19 +105,19 @@ class DecisionButtonView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
 
         user_id = self._extract_user_id(interaction)
-        self.cog.logger.info(f"Approve button pressed. Extracted user ID: {user_id}")
+        self.cog.logger.info(f"합격 버튼이 눌렸습니다. 추출된 사용자 ID: {user_id}")
         if not user_id:
             self.cog.logger.warning(
-                f"Could not find user_id during approval process. Message ID: {interaction.message.id}")
+                f"승인 과정 중 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
             return await interaction.followup.send(
-                "❌ Applicant information not found.",
+                "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
         member = interaction.guild.get_member(user_id)
         if not member:
-            self.cog.logger.warning(f"Could not find member during approval process. User ID: {user_id}")
+            self.cog.logger.warning(f"승인 과정 중 멤버를 찾을 수 없습니다. 사용자 ID: {user_id}")
             return await interaction.followup.send(
-                "❌ Applicant information not found.",
+                "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
 
@@ -128,11 +128,11 @@ class DecisionButtonView(discord.ui.View):
             if not testing_row_to_process:
                 # _get_interview_data_from_sheet already logs specific reason
                 return await interaction.followup.send(
-                    f"❌ Interview information for {member.mention} not found in 'Testing' sheet. Please ensure data was recorded after modal submission.",
+                    f"❌ '테스트' 시트에서 {member.mention}의 인터뷰 정보를 찾을 수 없습니다. 모달 제출 후 데이터가 기록되었는지 확인하십시오.",
                     ephemeral=True)
             if not test_header:
                 return await interaction.followup.send(
-                    "❌ Could not retrieve header from Google Sheets 'Testing' sheet.", ephemeral=True)
+                    "❌ Google Sheet '테스트' 시트에서 헤더를 가져올 수 없습니다.", ephemeral=True)
 
             col_map = {col: test_header.index(col) for col in test_header}
 
@@ -154,7 +154,7 @@ class DecisionButtonView(discord.ui.View):
 
             if not success_member_list_append:
                 await interaction.followup.send(
-                    "❌ Failed to add approval information to 'Member List' sheet. Please contact an administrator.",
+                    "❌ '멤버 목록' 시트에 승인 정보를 추가하지 못했습니다. 관리자에게 문의하십시오.",
                     ephemeral=True)
                 return
 
@@ -163,51 +163,51 @@ class DecisionButtonView(discord.ui.View):
                 config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", str(user_id)
             )
             if not success_delete_testing_row:
-                self.cog.logger.warning(f"Failed to delete row for {user_id} from 'Testing' sheet after approval.")
+                self.cog.logger.warning(f"승인 후 '테스트' 시트에서 {user_id}의 행을 삭제하지 못했습니다.")
                 await interaction.followup.send(
-                    "⚠️ Failed to delete interview information from 'Testing' sheet, but approval was completed. Please delete manually.",
+                    "⚠️ '테스트' 시트에서 인터뷰 정보를 삭제하지 못했지만 승인이 완료되었습니다. 수동으로 삭제하십시오.",
                     ephemeral=True)
 
             # Step 3: Discord role handling and welcome message
             role = interaction.guild.get_role(ACCEPTED_ROLE_ID)
             if not role:
                 self.cog.logger.error(
-                    f"❌ Accepted role ID {ACCEPTED_ROLE_ID} not found. Please contact an administrator.")
+                    f"❌ 합격 역할 ID {ACCEPTED_ROLE_ID}를 찾을 수 없습니다. 관리자에게 문의하십시오.")
                 return await interaction.followup.send(
-                    "❌ Accepted role not found. Please contact an administrator.",
+                    "❌ 합격 역할을 찾을 수 없습니다. 관리자에게 문의하십시오.",
                     ephemeral=True
                 )
 
-            await member.add_roles(role, reason="Approved")
-            self.cog.logger.info(f"✅ Approved {member.display_name} ({member.id}). Role '{role.name}' granted.")
+            await member.add_roles(role, reason="승인됨")
+            self.cog.logger.info(f"✅ {member.display_name} ({member.id}) 승인됨. 역할 '{role.name}' 부여됨.")
 
             applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if applicant_role and applicant_role in member.roles:
-                await member.remove_roles(applicant_role, reason="Applicant role removed due to approval")
-                self.cog.logger.info(f"Removed applicant role '{applicant_role.name}' from {member.display_name}.")
+                await member.remove_roles(applicant_role, reason="승인으로 인해 지원자 역할 제거됨")
+                self.cog.logger.info(f"{member.display_name}에서 지원자 역할 '{applicant_role.name}' 제거됨.")
 
             guest_role = interaction.guild.get_role(GUEST_ROLE_ID)
             if guest_role and guest_role in member.roles:
-                await member.remove_roles(guest_role, reason="Guest role removed due to approval")
-                self.cog.logger.info(f"Removed guest role '{guest_role.name}' from {member.display_name}.")
+                await member.remove_roles(guest_role, reason="승인으로 인해 게스트 역할 제거됨")
+                self.cog.logger.info(f"{member.display_name}에서 게스트 역할 '{guest_role.name}' 제거됨.")
 
             await interaction.followup.send(
-                f"✅ {member.mention} has been approved!"
+                f"✅ {member.mention}이(가) 승인되었습니다!"
             )
             if self.cog:
                 await self.cog.send_welcome_message(member)
 
         except discord.Forbidden:
             self.cog.logger.error(
-                f"❌ Missing permissions to assign roles. Please check bot permissions. {traceback.format_exc()}")
+                f"❌ 역할 할당 권한이 없습니다. 봇 권한을 확인하십시오. {traceback.format_exc()}")
             await interaction.followup.send(
-                "❌ Missing permissions to assign roles. Please check bot permissions.",
+                "❌ 역할 할당 권한이 없습니다. 봇 권한을 확인하십시오.",
                 ephemeral=True
             )
         except Exception as e:
-            self.cog.logger.error(f"❌ Error during approval process: {e}\n{traceback.format_exc()}")
+            self.cog.logger.error(f"❌ 승인 과정 중 오류 발생: {e}\n{traceback.format_exc()}")
             await interaction.followup.send(
-                f"❌ An error occurred: {str(e)}",
+                f"❌ 오류가 발생했습니다: {str(e)}",
                 ephemeral=True
             )
 
@@ -217,22 +217,22 @@ class DecisionButtonView(discord.ui.View):
 
         if not interaction.user.guild_permissions.administrator:
             self.cog.logger.warning(
-                f"{interaction.user.display_name} ({interaction.user.id}) attempted to use the test button without permission.")
+                f"{interaction.user.display_name} ({interaction.user.id})이(가) 권한 없이 테스트 버튼을 사용하려고 시도했습니다.")
             return await interaction.followup.send(
-                "❌ You do not have permission to perform this action. Only administrators can use this.",
+                "❌ 이 작업을 수행할 권한이 없습니다. 관리자만 사용할 수 있습니다.",
                 ephemeral=True)
 
         user_id = self._extract_user_id(interaction)
-        self.cog.logger.info(f"Test button pressed. Extracted user ID: {user_id}")
+        self.cog.logger.info(f"테스트 버튼이 눌렸습니다. 추출된 사용자 ID: {user_id}")
         if not user_id:
             self.cog.logger.warning(
-                f"Could not find user_id during test processing. Message ID: {interaction.message.id}")
-            return await interaction.followup.send("❌ Applicant information not found.", ephemeral=True)
+                f"테스트 처리 중 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
+            return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
         member = interaction.guild.get_member(user_id)
         if not member:
-            self.cog.logger.warning(f"Could not find member during test processing. User ID: {user_id}")
-            return await interaction.followup.send("❌ Applicant information not found.", ephemeral=True)
+            self.cog.logger.warning(f"테스트 처리 중 멤버를 찾을 수 없습니다. 사용자 ID: {user_id}")
+            return await interaction.followup.send("❌ 지원자 정보를 찾을 수 없습니다.", ephemeral=True)
 
         try:
             # Retrieve the existing data from the "Testing" sheet.
@@ -242,9 +242,9 @@ class DecisionButtonView(discord.ui.View):
 
             if not testing_row_data or not test_sheet_header:
                 self.cog.logger.error(
-                    f"Failed to find interview answers for {member.display_name} in 'Testing' sheet or retrieve sheet header during test processing. User ID: {user_id}")
+                    f"테스트 처리 중 '테스트' 시트에서 {member.display_name}의 인터뷰 답변을 찾거나 시트 헤더를 검색하지 못했습니다. 사용자 ID: {user_id}")
                 return await interaction.followup.send(
-                    f"❌ Interview answer information not found for {member.mention}. (Data might not have been recorded in Google Sheet or header issue). Please try the interview request again.",
+                    f"❌ {member.mention}의 인터뷰 답변 정보를 찾을 수 없습니다. (Google Sheet에 데이터가 기록되지 않았거나 헤더 문제). 인터뷰 요청을 다시 시도하십시오.",
                     ephemeral=True
                 )
 
@@ -261,7 +261,7 @@ class DecisionButtonView(discord.ui.View):
                 updated_row_data[status_col_index] = "테스트"
             else:
                 self.cog.logger.warning(
-                    f"❌ 'Status' column missing or index issue in 'Testing' sheet. Failed to update status for {user_id}.")
+                    f"❌ '테스트' 시트에 '상태' 열이 없거나 인덱스 문제입니다. {user_id}의 상태를 업데이트하지 못했습니다.")
                 # Decide how to proceed if Status column isn't found/updatable
                 # For now, will proceed without updating status in sheet if column is truly missing
 
@@ -271,23 +271,23 @@ class DecisionButtonView(discord.ui.View):
             )
             if not success_delete:
                 self.cog.logger.warning(
-                    f"Failed to delete existing 'Testing' sheet row for {user_id} during test processing (might not have existed or error). Attempting to append new.")
+                    f"테스트 처리 중 {user_id}에 대한 기존 '테스트' 시트 행을 삭제하지 못했습니다 (존재하지 않았거나 오류). 새 항목을 추가하려고 시도합니다.")
 
             success_append = await self.cog.gspread_client.append_row(
                 config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", updated_row_data
             )
 
             if not success_append:
-                await interaction.followup.send("❌ Failed to update/add data to Google Sheets.", ephemeral=True)
+                await interaction.followup.send("❌ Google Sheets에 데이터를 업데이트/추가하지 못했습니다.", ephemeral=True)
                 return
 
             test_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if not test_role:
-                self.cog.logger.error(f"❌ Test role ID {APPLICANT_ROLE_ID} not found. Configuration check needed.")
-                return await interaction.followup.send("❌ Test role not found.", ephemeral=True)
+                self.cog.logger.error(f"❌ 테스트 역할 ID {APPLICANT_ROLE_ID}를 찾을 수 없습니다. 구성 확인이 필요합니다.")
+                return await interaction.followup.send("❌ 테스트 역할을 찾을 수 없습니다.", ephemeral=True)
 
             await member.add_roles(test_role, reason="테스트 역할 부여 (관리자 승인)")
-            self.cog.logger.info(f"🟡 Granted test role '{test_role.name}' to {member.display_name} ({member.id}).")
+            self.cog.logger.info(f"🟡 {member.display_name} ({member.id})에게 테스트 역할 '{test_role.name}' 부여됨.")
 
             try:
                 await member.send(
@@ -305,44 +305,44 @@ class DecisionButtonView(discord.ui.View):
                     "감사합니다.\n\n"
                     "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
                 )
-                self.cog.logger.info(f"🟡 Sent test guidance DM to {member.display_name}.")
+                self.cog.logger.info(f"🟡 {member.display_name}에게 테스트 안내 DM 전송됨.")
             except discord.Forbidden:
                 self.cog.logger.warning(
-                    f"🟡 Could not send DM to {member.display_name} ({member.id}). (DM disabled or blocked)")
+                    f"🟡 {member.display_name} ({member.id})에게 DM을 보낼 수 없습니다. (DM 비활성화 또는 차단됨)")
                 await interaction.followup.send(
-                    f"🟡 Granted test role to {member.mention}. (DM failed: DM might be disabled.)")
+                    f"🟡 {member.mention}에게 테스트 역할이 부여되었습니다. (DM 실패: DM이 비활성화되었을 수 있습니다.)")
                 return
 
-            await interaction.followup.send(f"🟡 Granted test role to {member.mention}.")
+            await interaction.followup.send(f"🟡 {member.mention}에게 테스트 역할이 부여되었습니다.")
 
         except discord.Forbidden:
             self.cog.logger.error(
-                f"❌ Missing permissions to assign roles. Please check bot permissions. {traceback.format_exc()}")
-            await interaction.followup.send("❌ Missing permissions to assign roles. Please check bot permissions.",
+                f"❌ 역할 할당 권한이 없습니다. 봇 권한을 확인하십시오. {traceback.format_exc()}")
+            await interaction.followup.send("❌ 역할 할당 권한이 없습니다. 봇 권한을 확인하십시오.",
                                             ephemeral=True)
         except Exception as e:
-            self.cog.logger.error(f"❌ Error during test processing: {e}\n{traceback.format_exc()}")
-            await interaction.followup.send(f"❌ An error occurred: {str(e)}", ephemeral=True)
+            self.cog.logger.error(f"❌ 테스트 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}", ephemeral=True)
 
     @discord.ui.button(label="불합격", style=discord.ButtonStyle.danger, custom_id="interview_fail")
     async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
 
         user_id = self._extract_user_id(interaction)
-        self.cog.logger.info(f"Reject button pressed. Extracted user ID: {user_id}")
+        self.cog.logger.info(f"불합격 버튼이 눌렸습니다. 추출된 사용자 ID: {user_id}")
         if not user_id:
             self.cog.logger.warning(
-                f"Could not find user_id during rejection process. Message ID: {interaction.message.id}")
+                f"거부 처리 중 user_id를 찾을 수 없습니다. 메시지 ID: {interaction.message.id}")
             return await interaction.followup.send(
-                "❌ Applicant information not found.",
+                "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
 
         member = interaction.guild.get_member(user_id)
         if not member:
-            self.cog.logger.warning(f"Could not find member during rejection process. User ID: {user_id}")
+            self.cog.logger.warning(f"거부 처리 중 멤버를 찾을 수 없습니다. 사용자 ID: {user_id}")
             return await interaction.followup.send(
-                "❌ Applicant information not found.",
+                "❌ 지원자 정보를 찾을 수 없습니다.",
                 ephemeral=True
             )
         try:
@@ -352,9 +352,9 @@ class DecisionButtonView(discord.ui.View):
             )
             if not success_delete_testing_row:
                 self.cog.logger.warning(
-                    f"Failed to delete row for {user_id} from 'Testing' sheet during rejection (might not have existed or error).")
+                    f"거부 중 '테스트' 시트에서 {user_id}의 행을 삭제하지 못했습니다 (존재하지 않았거나 오류).")
             else:
-                self.cog.logger.info(f"Deleted row for {user_id} from 'Testing' sheet due to rejection.")
+                self.cog.logger.info(f"거부로 인해 '테스트' 시트에서 {user_id}의 행이 삭제되었습니다.")
 
             try:
                 await member.send(
@@ -369,24 +369,24 @@ class DecisionButtonView(discord.ui.View):
                     "감사합니다.\n\n"
                     "📌 *이 메시지는 자동 발송되었으며, 이 봇에게 직접 답장하셔도 운영진은 내용을 확인할 수 없습니다.*"
                 )
-                self.cog.logger.info(f"❌ Sent rejection DM to {member.display_name}.")
+                self.cog.logger.info(f"❌ {member.display_name}에게 거부 DM 전송됨.")
             except discord.Forbidden:
                 self.cog.logger.warning(
-                    f"❌ Could not send DM to {member.display_name} ({member.id}). (DM disabled or blocked)")
-                await interaction.followup.send(f"❌ Rejected {member.mention}. (DM failed: DM might be disabled.)")
+                    f"❌ {member.display_name} ({member.id})에게 DM을 보낼 수 없습니다. (DM 비활성화 또는 차단됨)")
+                await interaction.followup.send(f"❌ {member.mention}이(가) 거부되었습니다. (DM 실패: DM이 비활성화되었을 수 있습니다.)")
                 return
 
             applicant_role = interaction.guild.get_role(APPLICANT_ROLE_ID)
             if applicant_role and applicant_role in member.roles:
                 await member.remove_roles(applicant_role, reason="불합격 처리로 인한 지원자 역할 제거")
-                self.cog.logger.info(f"Removed applicant role '{applicant_role.name}' from {member.display_name}.")
+                self.cog.logger.info(f"{member.display_name}에서 지원자 역할 '{applicant_role.name}' 제거됨.")
 
-            await interaction.followup.send(f"❌ Rejected {member.mention}.")
-            self.cog.logger.info(f"❌ Rejected {member.display_name} ({member.id}).")
+            await interaction.followup.send(f"❌ {member.mention}이(가) 거부되었습니다.")
+            self.cog.logger.info(f"❌ {member.display_name} ({member.id})이(가) 거부되었습니다.")
 
         except Exception as e:
-            self.cog.logger.error(f"❌ Error during rejection process: {e}\n{traceback.format_exc()}")
-            await interaction.followup.send(f"❌ An error occurred: {str(e)}", ephemeral=True)
+            self.cog.logger.error(f"❌ 거부 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
+            await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}", ephemeral=True)
 
 
 class InterviewModal(Modal, title="인터뷰 사전 질문"):
@@ -473,22 +473,22 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 self.answers.get("지원 동기", ""),
                 "제출됨"  # Initial Status after submission
             ]
-            cog.logger.info(f"Attempting to append row to 'Testing' sheet for user: {interaction.user.id}")
+            cog.logger.info(f"사용자: {interaction.user.id}에 대한 행을 '테스트' 시트에 추가하려고 시도합니다.")
             success = await cog.gspread_client.append_row(
                 config.GSHEET_TESTING_SPREADSHEET_NAME, "Sheet1", data_row
             )
             if not success:
                 cog.logger.error(
-                    f"❌ Failed to add data to 'Testing' sheet from InterviewModal for user: {interaction.user.id}. GSpreadClient returned False.")
+                    f"❌ InterviewModal에서 사용자: {interaction.user.id}의 '테스트' 시트에 데이터를 추가하지 못했습니다. GSpreadClient에서 False를 반환했습니다.")
                 return await interaction.response.send_message(
                     "❌ 인터뷰 정보를 Google Sheet에 저장하는 데 실패했습니다. 다시 시도해주세요.",
                     ephemeral=True
                 )
-            cog.logger.info(f"✅ Interview data successfully saved to 'Testing' sheet: {interaction.user.id}")
+            cog.logger.info(f"✅ 인터뷰 데이터가 '테스트' 시트에 성공적으로 저장되었습니다: {interaction.user.id}")
 
         except Exception as e:
             cog.logger.error(
-                f"❌ Error while saving Google Sheet data from InterviewModal: {e}\n{traceback.format_exc()}")
+                f"❌ InterviewModal에서 Google Sheet 데이터를 저장하는 중 오류 발생: {e}\n{traceback.format_exc()}")
             return await interaction.response.send_message(
                 f"❌ 인터뷰 데이터를 처리하는 중 오류가 발생했습니다: {str(e)}",
                 ephemeral=True
@@ -553,25 +553,25 @@ class InterviewRequestCog(commands.Cog):
             self.CONGRATS_BG_PATH = getattr(config, 'CONGRATS_BG_PATH', os.path.join("assets", "congrats_bg.gif"))
             FONT_PATH_CONFIG = getattr(config, 'FONT_PATH', os.path.join("assets", "fonts", "NotoSansKR-Bold.ttf"))
             self.FONT = ImageFont.truetype(FONT_PATH_CONFIG, 72)
-            self.logger.info(f"Font loaded successfully: {FONT_PATH_CONFIG}")
+            self.logger.info(f"글꼴 로드 성공: {FONT_PATH_CONFIG}")
         except ImportError:
-            self.logger.warning("Pillow ImageFont not found. Using default font.")
+            self.logger.warning("Pillow ImageFont를 찾을 수 없습니다. 기본 글꼴을 사용합니다.")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
         except IOError:
-            self.logger.warning(f"Font file not found at '{FONT_PATH_CONFIG}'. Using default font.")
+            self.logger.warning(f"글꼴 파일을 찾을 수 없습니다: '{FONT_PATH_CONFIG}'. 기본 글꼴을 사용합니다.")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
         except Exception as e:
-            self.logger.error(f"Unknown error occurred while loading font: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"글꼴 로드 중 알 수 없는 오류 발생: {e}\n{traceback.format_exc()}")
             self.FONT = ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
     async def make_congrats_card(self, member: discord.Member) -> Optional[BytesIO]:
         try:
             bg = Image.open(self.CONGRATS_BG_PATH).convert("RGBA")
         except FileNotFoundError:
-            self.logger.error(f"Congratulatory background image not found: {self.CONGRATS_BG_PATH}")
+            self.logger.error(f"축하 배경 이미지를 찾을 수 없습니다: {self.CONGRATS_BG_PATH}")
             return None
         except Exception as e:
-            self.logger.error(f"Error loading background image: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"배경 이미지 로드 중 오류 발생: {e}\n{traceback.format_exc()}")
             return None
 
         draw = ImageDraw.Draw(bg)
@@ -580,11 +580,11 @@ class InterviewRequestCog(commands.Cog):
         try:
             avatar_bytes = await asyncio.wait_for(avatar_asset.read(), timeout=5)
         except asyncio.TimeoutError:
-            self.logger.error(f"❌ [congrats] Timeout fetching avatar for {member.display_name}.")
+            self.logger.error(f"❌ [축하] {member.display_name}의 아바타를 가져오는 중 시간 초과되었습니다.")
             avatar_bytes = None
         except Exception as e:
             self.logger.error(
-                f"❌ [congrats] Failed to fetch avatar for {member.display_name}: {e}\n{traceback.format_exc()}")
+                f"❌ [축하] {member.display_name}의 아바타를 가져오지 못했습니다: {e}\n{traceback.format_exc()}")
             avatar_bytes = None
 
         if avatar_bytes:
@@ -594,10 +594,10 @@ class InterviewRequestCog(commands.Cog):
                 avatar_y = (bg.height - avatar.height) // 2
                 bg.paste(avatar, (avatar_x, avatar_y), avatar)
             except Exception as e:
-                self.logger.error(f"Error processing avatar image: {e}\n{traceback.format_exc()}")
+                self.logger.error(f"아바타 이미지 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
         else:
             self.logger.warning(
-                f"Failed to fetch avatar, cannot add avatar to {member.display_name}'s congratulatory card.")
+                f"아바타를 가져오지 못하여 {member.display_name}님의 축하 카드에 아바타를 추가할 수 없습니다.")
 
         text = f"축하합니다, {member.display_name}님!"  # Reverted to Korean
 
@@ -619,11 +619,11 @@ class InterviewRequestCog(commands.Cog):
             buf.seek(0)
             return buf
         except Exception as e:
-            self.logger.error(f"Error saving congratulatory card image: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"축하 카드 이미지 저장 중 오류 발생: {e}\n{traceback.format_exc()}")
             return None
 
     async def send_welcome_message(self, member: discord.Member):
-        """Send welcome message to welcome channel"""
+        """환영 메시지를 환영 채널로 보냅니다"""
         channel = self.bot.get_channel(WELCOME_CHANNEL_ID)
         if not channel:
             self.logger.error(f"환영 채널 ID {WELCOME_CHANNEL_ID}을(를) 찾을 수 없습니다.")
@@ -659,128 +659,16 @@ class InterviewRequestCog(commands.Cog):
             embed.set_footer(text="Exceed • 합격 축하 메시지", icon_url=self.bot.user.display_avatar.url)  # Reverted to Korean
 
             await channel.send(
-                content=member.mention,
+                content=f"{member.mention}님, Exceed 클랜에 오신 것을 환영합니다!",
                 embed=embed,
-                file=file,
-                allowed_mentions=discord.AllowedMentions(users=True))
-            self.logger.info(f"환영 메시지 전송 완료: {member.display_name} ({member.id})")  # Reverted to Korean
-
+                file=file
+            )
+            self.logger.info(f"✅ {member.display_name}에게 환영 메시지가 전송되었습니다.")
         except Exception as e:
-            self.logger.error(f"환영 메시지 전송 실패: {str(e)}\n{traceback.format_exc()}")  # Reverted to Korean
-
-    async def send_interview_request_message(self):
-        channel = self.bot.get_channel(self.public_channel_id)
-        if not channel:
-            self.logger.error(f"공개 채널 ID {self.public_channel_id}를 찾을 수 없습니다.")  # Reverted to Korean
-            return
-
-        try:
-            await channel.purge(limit=None)
-            self.logger.info(f"채널 #{channel.name} ({channel.id})의 기존 메시지를 삭제했습니다.")  # Reverted to Korean
-
-            rules_embed = discord.Embed(
-                title="🎯 XCD 발로란트 클랜 가입 조건 안내",  # Reverted to Korean
-                description="📜 최종 업데이트: 2025.07.06",  # Reverted to Korean
-                color=discord.Color.orange()
-            )
-            rules_embed.add_field(
-                name="가입 전 아래 조건을 반드시 확인해 주세요.",  # Reverted to Korean
-                value=(
-                    "━━━━━━━━━━━━━━━━━━━━━\n"
-                    "🔞 1. 나이 조건\n"  # Reverted to Korean
-                    "・만 20세 이상 (2005년생 이전)\n"  # Reverted to Korean
-                    "・성숙한 커뮤니케이션과 책임감 있는 행동을 기대합니다.\n\n"  # Reverted to Korean
-                    "🎮 2. 실력 조건\n"  # Reverted to Korean
-                    "・현재 티어 골드 이상 (에피소드 기준)\n"  # Reverted to Korean
-                    "・트라이아웃(스크림 테스트)으로 실력 확인 가능\n"  # Reverted to Korean
-                    "・게임 이해도 & 팀워크도 함께 평가\n\n"  # Reverted to Korean
-                    "💬 3. 매너 & 소통\n"  # Reverted to Korean
-                    "・욕설/무시/조롱/반말 등 비매너 언행 금지\n"  # Reverted to Korean
-                    "・피드백을 받아들이고 긍정적인 태도로 게임 가능\n"  # Reverted to Korean
-                    "・디스코드 마이크 필수\n\n"  # Reverted to Korean
-                    "⏱️ 4. 활동성\n"  # Reverted to Korean
-                    "・주 3회 이상 접속 & 게임 참여 가능자\n"  # Reverted to Korean
-                    "・대회/스크림/내전 등 일정에 적극 참여할 의향 있는 분\n"  # Reverted to Korean
-                    "・30일 이상 미접속 시 자동 탈퇴 처리 가능\n\n"  # Reverted to Korean
-                    "🚫 5. 제한 대상\n"  # Reverted to Korean
-                    "・다른 클랜과 겹치는 활동 중인 유저\n"  # Reverted to Korean
-                    "・트롤, 욕설, 밴 이력 등 제재 기록 있는 유저\n"  # Reverted to Korean
-                    "・대리/부계정/계정 공유 등 비정상 활동\n"  # Reverted to Korean
-                    "━━━━━━━━━━━━━━━━━━━━━"
-                ),
-                inline=False
-            )
-            rules_embed.add_field(
-                name="📋 가입 절차",  # Reverted to Korean
-                value=(
-                    "1️⃣ 디스코드 서버 입장\n"  # Reverted to Korean
-                    "2️⃣ 가입 지원서 작성 or 인터뷰\n"  # Reverted to Korean
-                    "3️⃣ 트라이아웃 or 최근 경기 클립 확인\n"  # Reverted to Korean
-                    "4️⃣ 운영진 승인 → 역할 부여 후 가입 완료"  # Reverted to Korean
-                ),
-                inline=False
-            )
-            rules_embed.add_field(
-                name="🧠 FAQ",  # Reverted to Korean
-                value=(
-                    "Q. 마이크 없으면 가입 안 되나요?\n"  # Reverted to Korean
-                    "→ 네. 음성 소통은 필수입니다. 텍스트만으로는 활동이 어렵습니다.\n\n"  # Reverted to Korean
-                    "Q. 골드 미만인데 들어갈 수 있나요?\n"  # Reverted to Korean
-                    "→ 트라이아웃으로 팀워크/이해도 확인 후 예외 승인될 수 있습니다."  # Reverted to Korean
-                ),
-                inline=False
-            )
-            rules_embed.set_footer(
-                text="✅ 가입 후 일정 기간 적응 평가 기간이 있으며\n"  # Reverted to Korean
-                     "매너, 참여도 부족 시 경고 없이 탈퇴될 수 있습니다.\n\n"  # Reverted to Korean
-                     "📌 본 안내는 클랜 운영 상황에 따라 변경될 수 있습니다."  # Reverted to Korean
-            )
-
-            await channel.send(embed=rules_embed)
-
-            interview_embed = discord.Embed(
-                title="✨ 인터뷰 요청 안내 ✨",  # Reverted to Korean
-                description=(
-                    "Exceed 클랜에 지원하고 싶으신가요?\n"  # Reverted to Korean
-                    "아래 버튼을 눌러 인터뷰 요청을 시작하세요.\n"  # Reverted to Korean
-                    "신속하게 확인 후 연락드리겠습니다."  # Reverted to Korean
-                ),
-                color=discord.Color.blue(),
-                timestamp=datetime.now(timezone.utc)
-            )
-            interview_embed.set_thumbnail(url="https://cdn-icons-png.flaticon.com/512/1041/1041916.png")
-            interview_embed.set_footer(text="Exceed • 인터뷰 시스템")  # Reverted to Korean
-            interview_embed.set_author(
-                name="Exceed 인터뷰 안내",  # Reverted to Korean
-                icon_url="https://cdn-icons-png.flaticon.com/512/295/295128.png"
-            )
-
-            await channel.send(embed=interview_embed, view=InterviewView(self.private_channel_id, self))
-            self.logger.info("📨・지원서-제출 채널에 가입 조건 안내 및 인터뷰 버튼을 게시했습니다.")  # Reverted to Korean
-
-        except Exception as e:
-            self.logger.error(f"인터뷰 요청 메시지 전송 실패: {e}\n{traceback.format_exc()}")  # Reverted to Korean
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        self.bot.add_view(InterviewView(self.private_channel_id, self))
-        self.bot.add_view(DecisionButtonView(cog=self))
-        await self.send_interview_request_message()
-        self.logger.info("인터뷰 요청 메시지 및 영구 뷰 설정 완료.")  # Reverted to Korean
-
-    @discord.app_commands.command(
-        name="request_interview",
-        description="인터뷰 요청 메시지를 다시 보냅니다 (관리자용)"  # Reverted to Korean
-    )
-    @discord.app_commands.default_permissions(administrator=True)
-    async def slash_request_interview(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-        await self.send_interview_request_message()
-        await interaction.followup.send(
-            "인터뷰 요청 메시지를 갱신했습니다!",  # Reverted to Korean
-            ephemeral=True
-        )
+            self.logger.error(f"환영 메시지를 보내는 중 오류 발생: {e}\n{traceback.format_exc()}")
 
 
 async def setup(bot):
     await bot.add_cog(InterviewRequestCog(bot))
+    bot.add_view(InterviewView(INTERVIEW_PRIVATE_CHANNEL_ID, bot.get_cog("InterviewRequestCog")))
+    bot.add_view(DecisionButtonView(cog=bot.get_cog("InterviewRequestCog")))
