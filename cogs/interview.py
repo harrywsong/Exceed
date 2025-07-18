@@ -510,9 +510,7 @@ class InterviewView(View):
         await interaction.response.defer(ephemeral=True) # Ephemeral=True so only the user sees the "thinking" message
 
         modal = InterviewModal()
-        # After deferring, you can send the modal as a followup or direct response if it's the next expected interaction
-        # For modals triggered by buttons after a defer, `send_modal` typically works without `followup`.
-        await interaction.followup.send_modal(modal) # Use followup.send_modal after defer
+        await interaction.response.send_modal(modal)
 
 class InterviewRequestCog(commands.Cog):
     def __init__(self, bot):
