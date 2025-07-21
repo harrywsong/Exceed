@@ -11,7 +11,7 @@ class MessageLogCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # Get the log channel ID from the config module
-        self.log_channel_id = config.MESSAGE_LOG_CHANNEL_ID  # Corrected: Use MESSAGE_LOG_CHANNEL_ID for log channel
+        self.log_channel_id = config.LOG_CHANNEL_ID  # Corrected: Use MESSAGE_LOG_CHANNEL_ID for log channel
         # Use the centralized logger from utils.logger
         self.logger = get_logger(self.__class__.__name__)
         self.logger.info("MessageLogCog 초기화 완료.")
