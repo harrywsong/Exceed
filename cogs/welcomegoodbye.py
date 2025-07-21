@@ -39,6 +39,7 @@ class WelcomeCog(commands.Cog):
         try:
             bg = Image.open(BG_PATH).convert("RGBA")
             draw = ImageDraw.Draw(bg)
+            img_width, img_height = bg.size
 
             avatar_asset = member.display_avatar.with_size(128).with_format("png")
             try:
@@ -58,16 +59,23 @@ class WelcomeCog(commands.Cog):
                 mask = Image.new('L', (128, 128), 0)
                 draw_mask = ImageDraw.Draw(mask)
                 draw_mask.ellipse((0, 0, 128, 128), fill=255)
-                bg.paste(avatar, (40, bg.height // 2 - 64), mask)
+                avatar_size = 128
+                # 아바타를 가로 및 세로로 가운데 정렬
+                avatar_x = (img_width - avatar_size) // 2
+                avatar_y = (img_height // 2) - (avatar_size // 2) - 50  # 축하 카드와 동일하게 약간 위로 조정
 
+                # 마스크 적용 부분은 그대로 유지
+                bg.paste(avatar, (avatar_x, avatar_y), mask)
             font = FONT
             text = f"환영합니다, {member.display_name}님!"
             bbox = draw.textbbox((0, 0), text, font=font)
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
-            x = 200
-            y = (bg.height // 2) - (text_height // 2)
-            draw.text((x, y), text, font=font, fill="white")
+            # 텍스트를 아바타 아래에 가운데 정렬하거나 아바타가 없으면 이미지 중앙에 정렬
+            text_x = (img_width - text_width) // 2
+            text_y = avatar_y + avatar_size + 20  # 아바타 아래 20픽셀 간격
+
+            draw.text((text_x, text_y), text, font=font, fill="white", anchor="ms")
 
             buf = BytesIO()
             bg.save(buf, "PNG")

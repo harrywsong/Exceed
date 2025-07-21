@@ -575,6 +575,7 @@ class InterviewRequestCog(commands.Cog):
             return None
 
         draw = ImageDraw.Draw(bg)
+        img_width, img_height = bg.size  # Get the width and height of the background image
 
         avatar_asset = member.display_avatar.with_size(128).with_format("png")
         try:
@@ -590,9 +591,31 @@ class InterviewRequestCog(commands.Cog):
         if avatar_bytes:
             try:
                 avatar = Image.open(BytesIO(avatar_bytes)).resize((128, 128)).convert("RGBA")
-                avatar_x = 40
-                avatar_y = (bg.height - avatar.height) // 2
-                bg.paste(avatar, (avatar_x, avatar_y), avatar)
+                avatar_size = 128  # Define avatar size for consistent centering
+                avatar_x, avatar_y = None, None
+
+                if avatar_bytes:  # Keep the existing 'if avatar_bytes' check
+                    try:
+                        avatar = Image.open(BytesIO(avatar_bytes)).resize((avatar_size, avatar_size)).convert("RGBA")
+                        # Calculate avatar position to be centered horizontally within its "section"
+                        # For vertical centering, it will be in the middle of the image.
+                        avatar_x = (img_width - avatar_size) // 2
+                        avatar_y = (img_height // 2) - (avatar_size // 2) - 50  # Adjusted slightly higher for spacing
+
+                        # Create a circular mask for the avatar
+                        mask = Image.new("L", avatar.size, 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse((0, 0, avatar_size, avatar_size), fill=255)
+
+                        # Apply the mask
+                        masked_avatar = Image.composite(avatar, Image.new("RGBA", avatar.size, (0, 0, 0, 0)), mask)
+
+                        bg.paste(masked_avatar, (avatar_x, avatar_y), masked_avatar)
+                    except Exception as e:
+                        self.logger.error(f"아바타 이미지 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
+                else:
+                    self.logger.warning(
+                        f"아바타를 가져오지 못하여 {member.display_name}님의 축하 카드에 아바타를 추가할 수 없습니다.")
             except Exception as e:
                 self.logger.error(f"아바타 이미지 처리 중 오류 발생: {e}\n{traceback.format_exc()}")
         else:
@@ -603,15 +626,22 @@ class InterviewRequestCog(commands.Cog):
 
         current_font = self.FONT if self.FONT else ImageDraw.Draw(Image.new('RGBA', (1, 1))).getfont()
 
+        # Calculate text bounding box to get its width and height
         text_bbox = draw.textbbox((0, 0), text, font=current_font)
         text_width = text_bbox[2] - text_bbox[0]
         text_height = text_bbox[3] - text_bbox[1]
 
-        avatar_width_used = 128 if avatar_bytes else 0
-        text_x = 40 + avatar_width_used + 30
-        text_y = (bg.height - text_height) // 2
+        # Calculate text position to be centered below the avatar or in the middle if no avatar
+        text_x = (img_width - text_width) // 2
 
-        draw.text((text_x, text_y), text, font=current_font, fill="white")
+        # Position text below the avatar, with some padding, or in the middle if no avatar
+        if avatar_y is not None:
+            text_y = avatar_y + avatar_size + 20  # 20 pixels padding below avatar
+        else:
+            text_y = (img_height - text_height) // 2  # Center vertically if no avatar
+
+        draw.text((text_x, text_y), text, font=current_font, fill="white",
+                  anchor="ms")  # anchor="ms" aligns the text middle-bottom to the coordinate
 
         buf = BytesIO()
         try:
