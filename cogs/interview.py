@@ -669,8 +669,8 @@ class InterviewRequestCog(commands.Cog):
 
             embed = discord.Embed(
                 # START OF CHANGES
-                title=f"{member.display_name}님, 환영합니다!",  # Modified: Matches welcome message title
-                description="Exceed 클랜에 오신 것을 환영합니다! 함께 멋진 활동을 시작해요.",  # Modified: Matches welcome message description
+                title=f"{member.display_name}님, Exceed 클랜에 합격하셨습니다!",  # Modified: Matches welcome message title
+                description="축하드립니다! 공식 클랜 멤버가 되신 것을 진심으로 환영합니다.",  # Modified: Matches welcome message description
                 # END OF CHANGES
                 color=discord.Color.gold(),
                 timestamp=datetime.now(timezone.utc)
@@ -700,7 +700,7 @@ class InterviewRequestCog(commands.Cog):
             embed.set_footer(text="Exceed • 합격 축하 메시지", icon_url=self.bot.user.display_avatar.url)
 
             await channel.send(
-                content=f"{member.mention}님, Exceed 클랜에 오신 것을 환영합니다!",
+                content=f"{member.mention}",
                 embed=embed,
                 file=file
             )
