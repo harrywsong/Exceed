@@ -659,7 +659,7 @@ class MyBot(commands.Bot):
             'cogs.clear_messages',
             'cogs.interview',
             'cogs.leaderboard',
-            'cogs.message_history'
+            'cogs.message_history',
             'cogs.reaction_roles',
             'cogs.registration',
             'cogs.scraper',
