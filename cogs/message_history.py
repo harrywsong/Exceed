@@ -11,7 +11,7 @@ class MessageLogCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         # Get the log channel ID from the config module
-        self.log_channel_id = config.LOG_CHANNEL_ID
+        self.log_channel_id = config.MESSAGE_LOG_CHANNEL_ID  # Corrected: Use MESSAGE_LOG_CHANNEL_ID for log channel
         # Use the centralized logger from utils.logger
         self.logger = get_logger(self.__class__.__name__)
         self.logger.info("MessageLogCog 초기화 완료.")
@@ -85,24 +85,34 @@ class MessageLogCog(commands.Cog):
             return
 
         try:
+            # Store the original content before any potential fetching/reassignment of 'before'
+            original_content = before.content
+
             # 'before' 메시지가 부분 메시지인 경우 (예: 캐시에서), 완전히 가져옵니다.
-            # partial 속성은 discord.PartialMessage에만 존재하므로, 해당 속성에 접근하기 전에
-            # 먼저 before가 discord.PartialMessage의 인스턴스인지 확인해야 합니다.
-            # 'Message' 객체는 partial 속성을 가지지 않아 AttributeError가 발생할 수 있습니다.
-            # if isinstance(before, discord.PartialMessage): 이 부분이 이전에 누락되었고,
-            # `before.partial`이 바로 호출되어 `Message` 객체에 대해 에러가 발생했습니다.
             if isinstance(before, discord.PartialMessage):
                 try:
                     # 메시지를 가져오는 데 필요한 권한이 없는 경우를 대비한 try-except 블록
+                    # Note: fetching 'before' here will give you the *current* state of the message,
+                    # not its state *before* the edit. This is a common limitation for on_message_edit
+                    # if the original content isn't cached.
+                    # However, to avoid AttributeError, it's still good practice to fetch if it's partial
+                    # and you intend to use other attributes that partial messages might lack.
+                    # For the content specifically, we already stored it from the initial 'before' object.
                     before = await before.channel.fetch_message(before.id)
                 except discord.NotFound:
                     self.logger.warning(f"수정 로깅을 위한 원본 메시지 {before.id}을(를) 찾을 수 없습니다.")
-                    return
+                    # If original message not found, use the original_content captured
+                    pass  # Continue with the original_content captured earlier
                 except discord.Forbidden:
                     self.logger.warning(f"봇이 수정 로깅을 위한 메시지 {before.id}을(를) 가져올 권한이 없습니다.")
-                    return
-            # 이 지점에서 'before'는 이제 항상 완전한 'discord.Message' 객체이거나,
-            # 원래부터 완전한 메시지였기 때문에 'partial' 속성 문제가 해결됩니다.
+                    # If original message cannot be fetched, use the original_content captured
+                    pass  # Continue with the original_content captured earlier
+
+            # This ensures we use the content from the 'before' object as it was *before* any fetch,
+            # or as much as was available in the partial message.
+            # If `before` was a full `Message` object initially, `original_content` holds its content.
+            # If `before` was a `PartialMessage` initially, `original_content` holds its (potentially empty) content
+            # which is the best we can do without fetching more history (which discord.py doesn't easily provide for 'before' content).
 
             embed = discord.Embed(
                 title="✏️ 메시지 수정됨",
@@ -112,16 +122,17 @@ class MessageLogCog(commands.Cog):
             embed.add_field(name="작성자", value=f"{before.author.mention} ({before.author.id})", inline=False)
             embed.add_field(name="채널", value=f"{before.channel.mention} ({before.channel.id})", inline=False)
 
-            # 이전 내용과 새로운 내용이 너무 길 경우 자르기
-            old_content = before.content
-            if len(old_content) > 1024:
-                old_content = old_content[:1021] + "..."
-            embed.add_field(name="원본 내용", value=old_content if old_content else "*내용 없음*", inline=False)
+            # Use the stored original_content for '원본 내용'
+            old_content_display = original_content
+            if len(old_content_display) > 1024:
+                old_content_display = old_content_display[:1021] + "..."
+            embed.add_field(name="원본 내용", value=old_content_display if old_content_display else "*내용 없음*", inline=False)
 
-            new_content = after.content
-            if len(new_content) > 1024:
-                new_content = new_content[:1021] + "..."
-            embed.add_field(name="새로운 내용", value=new_content if new_content else "*내용 없음*", inline=False)
+            new_content_display = after.content
+            if len(new_content_display) > 1024:
+                new_content_display = new_content_display[:1021] + "..."
+            embed.add_field(name="새로운 내용", value=new_content_display if new_content_display else "*내용 없음*",
+                            inline=False)
 
             embed.set_footer(text=f"메시지 ID: {before.id}")
             embed.set_thumbnail(url=before.author.display_avatar.url)
