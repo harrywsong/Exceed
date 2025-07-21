@@ -71,11 +71,17 @@ class WelcomeCog(commands.Cog):
             bbox = draw.textbbox((0, 0), text, font=font)
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
-            # 텍스트를 아바타 아래에 가운데 정렬하거나 아바타가 없으면 이미지 중앙에 정렬
-            text_x = (img_width - text_width) // 2
-            text_y = avatar_y + avatar_size + 20  # 아바타 아래 20픽셀 간격
+            # Calculate text_x for perfect horizontal centering of the text
+            text_x = img_width // 2
 
-            draw.text((text_x, text_y), text, font=font, fill="white", anchor="ms")
+            # Position text below the avatar, with a fixed padding, or in the middle if no avatar
+            if avatar_y is not None:
+                text_y = avatar_y + avatar_size + 20  # 20 pixels padding below avatar
+            else:
+                text_y = img_height // 2  # Center vertically if no avatar
+
+            # Draw text with 'mm' (middle-middle) anchor for precise centering
+            draw.text((text_x, text_y), text, font=font, fill="white", anchor="mm")
 
             buf = BytesIO()
             bg.save(buf, "PNG")

@@ -632,7 +632,7 @@ class InterviewRequestCog(commands.Cog):
         text_height = text_bbox[3] - text_bbox[1]
 
         # Calculate text position to be centered below the avatar or in the middle if no avatar
-        text_x = (img_width - text_width) // 2
+        text_x = img_width // 2  # Changed to explicitly center horizontally
 
         # Position text below the avatar, with some padding, or in the middle if no avatar
         if avatar_y is not None:
@@ -641,7 +641,7 @@ class InterviewRequestCog(commands.Cog):
             text_y = (img_height - text_height) // 2  # Center vertically if no avatar
 
         draw.text((text_x, text_y), text, font=current_font, fill="white",
-                  anchor="ms")  # anchor="ms" aligns the text middle-bottom to the coordinate
+                  anchor="mm")  # anchor="mm" aligns the text middle-middle to the coordinate
 
         buf = BytesIO()
         try:
@@ -668,11 +668,14 @@ class InterviewRequestCog(commands.Cog):
                 self.logger.warning(f"{member.display_name}님의 환영 카드 생성에 실패했습니다. 파일 없이 메시지를 보냅니다.")
 
             embed = discord.Embed(
-                title=f"🎉 {member.display_name}님, Exceed 클랜에 합격하셨습니다!",  # Reverted to Korean
-                description="축하드립니다! 공식 클랜 멤버가 되신 것을 진심으로 환영합니다.",  # Reverted to Korean
+                title=f"🎉 {member.display_name}님, Exceed 클랜에 합격하셨습니다!",
+                description="축하드립니다! 공식 클랜 멤버가 되신 것을 진심으로 환영합니다.",
                 color=discord.Color.gold(),
                 timestamp=datetime.now(timezone.utc)
             )
+            embed.set_thumbnail(url=member.display_avatar.url) # Add this line
+            embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>",
+                            inline=False)
             embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>",
                             inline=False)  # Reverted to Korean
             embed.add_field(name="2️⃣ 역할지급 채널에서 원하는 역할을 선택해 주세요.", value=f"<#{config.ROLE_ASSIGN_CHANNEL_ID}>",
@@ -689,7 +692,7 @@ class InterviewRequestCog(commands.Cog):
             embed.set_footer(text="Exceed • 합격 축하 메시지", icon_url=self.bot.user.display_avatar.url)  # Reverted to Korean
 
             await channel.send(
-                content=f"{member.mention}님, Exceed 클랜에 오신 것을 환영합니다!",
+                content=f"{member.mention}",
                 embed=embed,
                 file=file
             )
