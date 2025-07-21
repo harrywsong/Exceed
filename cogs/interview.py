@@ -668,31 +668,39 @@ class InterviewRequestCog(commands.Cog):
                 self.logger.warning(f"{member.display_name}님의 환영 카드 생성에 실패했습니다. 파일 없이 메시지를 보냅니다.")
 
             embed = discord.Embed(
-                title=f"🎉 {member.display_name}님, Exceed 클랜에 합격하셨습니다!",
-                description="축하드립니다! 공식 클랜 멤버가 되신 것을 진심으로 환영합니다.",
+                # START OF CHANGES
+                title=f"{member.display_name}님, 환영합니다!",  # Modified: Matches welcome message title
+                description="Exceed 클랜에 오신 것을 환영합니다! 함께 멋진 활동을 시작해요.",  # Modified: Matches welcome message description
+                # END OF CHANGES
                 color=discord.Color.gold(),
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.set_thumbnail(url=member.display_avatar.url) # Add this line
+            # START OF CHANGES
+            embed.set_author(name=member.display_name,
+                             icon_url=member.display_avatar.url)  # Added: For top-left user icon
+            embed.set_thumbnail(url=member.display_avatar.url)  # Already existed, but included for context
+            # END OF CHANGES
+
             embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>",
                             inline=False)
-            embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>",
-                            inline=False)  # Reverted to Korean
+            # REMOVE THIS DUPLICATE LINE:
+            # embed.add_field(name="1️⃣ 클랜 규칙을 꼭 확인해 주세요!", value=f"<#{config.RULES_CHANNEL_ID}>",
+            #                 inline=False)  # Reverted to Korean
             embed.add_field(name="2️⃣ 역할지급 채널에서 원하는 역할을 선택해 주세요.", value=f"<#{config.ROLE_ASSIGN_CHANNEL_ID}>",
-                            # Reverted to Korean
                             inline=False)
             embed.add_field(name="3️⃣ 멤버 전용 채팅방을 확인해 보세요.", value=f"<#{config.MEMBER_CHAT_CHANNEL_ID}>",
-                            inline=False)  # Reverted to Korean
-            embed.add_field(name="4️⃣ 클랜 MMR 시스템을 기반으로 한 클랜 리더보드를 확인해 보세요.",  # Reverted to Korean
-                            value=f"<#{config.CLAN_LEADERBOARD_CHANNEL_ID}>", inline=False)
+                            inline=False)
+            embed.add_field(name="4️⃣ 클랜 MMR 시스템을 기반으로 한 클랜 리더보드를 확인해 보세요.",
+                            value=f"<#{config.CLAN_LEADERBOARD_CHANNEL_ID}>",
+                            inline=False)  # Complete this line if it was cut off
 
             if file:
                 embed.set_image(url="attachment://welcome.png")
 
-            embed.set_footer(text="Exceed • 합격 축하 메시지", icon_url=self.bot.user.display_avatar.url)  # Reverted to Korean
+            embed.set_footer(text="Exceed • 합격 축하 메시지", icon_url=self.bot.user.display_avatar.url)
 
             await channel.send(
-                content=f"{member.mention}",
+                content=f"{member.mention}님, Exceed 클랜에 오신 것을 환영합니다!",
                 embed=embed,
                 file=file
             )
