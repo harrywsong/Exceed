@@ -77,11 +77,11 @@ class MessageLogCog(commands.Cog):
         메시지가 삭제될 때 로그를 남기고, 첨부된 미디어를 저장합니다.
         봇 메시지와 로그 채널 자체의 메시지는 무시합니다.
         """
-        # Ignore bot's own messages
+        # 봇 자신의 메시지는 무시
         if message.author.bot:
             return
 
-        # Ignore messages in DMs or in the log channel itself
+        # DM 또는 로그 채널 자체의 메시지는 무시
         if message.guild is None or message.channel.id == self.log_channel_id:
             return
 
@@ -132,37 +132,54 @@ class MessageLogCog(commands.Cog):
         메시지가 수정될 때 로그를 남기고, 첨부 파일 변경 사항을 기록하며
         삭제되거나 변경된 첨부 파일도 저장합니다.
         """
-        # Ignore bot's own message edits
+        # 봇 자신의 메시지 수정은 무시
         if before.author.bot:
+            self.logger.debug(f"DEBUG: Ignoring bot's own message edit by {before.author.display_name}.")
             return
 
-        # Ignore messages in DMs or in the log channel itself
+        # DM 또는 로그 채널 자체의 메시지는 무시
         if before.guild is None or before.channel.id == self.log_channel_id:
+            self.logger.debug(f"DEBUG: Ignoring message edit in DM or log channel (ID: {before.channel.id}).")
             return
 
-        # Store original content and attachments from 'before' message
-        # This is critical for detecting changes accurately, especially with partial messages.
-        original_before_attachments = before.attachments
-        original_before_content = before.content
-
-        # If 'before' is a PartialMessage (not in cache), try to fetch the full message
-        if isinstance(before, discord.PartialMessage):
-            try:
+        # 'before' 메시지의 전체 내용을 가져오기 위해 시도
+        # 캐시에 없거나 PartialMessage인 경우 Discord API에서 가져옵니다.
+        # 이렇게 하면 'original_before_content'가 최대한 정확해집니다.
+        fetched_original_content = ""
+        fetched_original_attachments = []
+        try:
+            # PartialMessage이거나 content가 비어있는 경우(캐시 문제)에만 fetch 시도
+            if isinstance(before, discord.PartialMessage) or not before.content:
                 fetched_before = await before.channel.fetch_message(before.id)
-                original_before_attachments = fetched_before.attachments
-                original_before_content = fetched_before.content
-            except (discord.NotFound, discord.Forbidden):
-                self.logger.warning(f"수정 로깅을 위한 원본 메시지 {before.id}을(를) 가져올 수 없습니다. 캐시된 정보로 진행합니다.")
-                # Proceed with whatever information was available in the partial message if fetching fails
-                pass
+                fetched_original_content = fetched_before.content if fetched_before.content is not None else ""
+                fetched_original_attachments = fetched_before.attachments
+                self.logger.debug(f"DEBUG: Fetched full 'before' message {before.id}. Content: '{fetched_original_content[:50]}...'")
+            else:
+                fetched_original_content = before.content if before.content is not None else ""
+                fetched_original_attachments = before.attachments
+                self.logger.debug(f"DEBUG: 'before' message {before.id} from cache. Content: '{fetched_original_content[:50]}...'")
+        except (discord.NotFound, discord.Forbidden):
+            self.logger.warning(f"WARNING: 수정 로깅을 위한 원본 메시지 {before.id}을(를) 가져올 수 없습니다. 사용 가능한 정보로 진행합니다.")
+            # 실패 시, 'before' 객체에서 사용 가능한 정보를 사용합니다.
+            fetched_original_content = before.content if before.content is not None else ""
+            fetched_original_attachments = before.attachments
+        except Exception as e:
+            self.logger.error(f"ERROR: 원본 메시지 {before.id} fetch 중 예외 발생: {e}\n{traceback.format_exc()}")
+            fetched_original_content = before.content if before.content is not None else ""
+            fetched_original_attachments = before.attachments
 
-        # If neither content nor attachments changed, there's nothing to log
-        if original_before_content == after.content and original_before_attachments == after.attachments:
+        # 수정된 내용 (후)도 None일 경우 빈 문자열로 처리하여 비교 오류 방지
+        after_content = after.content if after.content is not None else ""
+
+        # 내용이나 첨부 파일이 변경되지 않았으면 로그하지 않음
+        # 두 문자열을 strip()하여 양 끝의 공백/개행 차이로 인한 불필요한 로그 방지
+        if fetched_original_content.strip() == after_content.strip() and fetched_original_attachments == after.attachments:
+            self.logger.debug(f"DEBUG: No content or attachment changes detected for message {before.id}. Returning.")
             return
 
         log_channel = self.bot.get_channel(self.log_channel_id)
         if not log_channel:
-            self.logger.error(f"로그 채널 ID {self.log_channel_id}을(를) 찾을 수 없습니다.")
+            self.logger.error(f"로그 채널 ID {self.log_channel_id}을(를) 찾을 수 없습니다. 메시지 수정 로그를 보낼 수 없습니다.")
             return
 
         try:
@@ -174,29 +191,28 @@ class MessageLogCog(commands.Cog):
             embed.add_field(name="작성자", value=f"{before.author.mention} ({before.author.id})", inline=False)
             embed.add_field(name="채널", value=f"{before.channel.mention} ({before.channel.id})", inline=False)
 
-            # Display original and new content, truncating if too long
-            old_content_display = original_before_content
+            # 원본 내용 및 새 내용 표시, 너무 길면 자름
+            old_content_display = fetched_original_content
             if len(old_content_display) > 1024:
                 old_content_display = old_content_display[:1021] + "..."
             embed.add_field(name="원본 내용", value=old_content_display if old_content_display else "*내용 없음*", inline=False)
 
-            new_content_display = after.content
+            new_content_display = after_content
             if len(new_content_display) > 1024:
                 new_content_display = new_content_display[:1021] + "..."
             embed.add_field(name="새로운 내용", value=new_content_display if new_content_display else "*내용 없음*",
                             inline=False)
 
             # --- 첨부 파일 변경 로깅 및 저장 ---
-            before_attachment_filenames = {a.filename for a in original_before_attachments}
+            before_attachment_filenames = {a.filename for a in fetched_original_attachments}
             after_attachment_filenames = {a.filename for a in after.attachments}
 
             added_attachments = [a for a in after.attachments if a.filename not in before_attachment_filenames]
-            removed_attachments = [a for a in original_before_attachments if
-                                   a.filename not in after_attachment_filenames]
+            removed_attachments = [a for a in fetched_original_attachments if a.filename not in after_attachment_filenames]
 
             attachment_changes_text = []
 
-            # Log and save removed attachments
+            # 삭제된 첨부 파일 로그 및 저장
             if removed_attachments:
                 removed_attachment_info = []
                 for attachment in removed_attachments:
@@ -204,26 +220,26 @@ class MessageLogCog(commands.Cog):
                     removed_attachment_info.append(result)
                 attachment_changes_text.append(f"**삭제됨:**\n" + '\n'.join(removed_attachment_info))
 
-            # Log added attachments (can also save them by calling _send_attachment_to_log)
+            # 추가된 첨부 파일 로그
             if added_attachments:
                 added_attachment_info = []
                 for attachment in added_attachments:
                     added_attachment_info.append(f"[`{attachment.filename}`]({attachment.url})")
                 attachment_changes_text.append(f"**추가됨:**\n" + '\n'.join(added_attachment_info))
 
-            # Add attachment changes field to embed
+            # 임베드에 첨부 파일 변경 필드 추가
             if attachment_changes_text:
                 embed.add_field(name="첨부 파일 변경", value="\n".join(attachment_changes_text), inline=False)
-            # Special case: all attachments removed
-            elif original_before_attachments and not after.attachments:
+            # 특수 경우: 모든 첨부 파일이 제거됨
+            elif fetched_original_attachments and not after.attachments:
                 all_removed_info = []
-                for attachment in original_before_attachments:
+                for attachment in fetched_original_attachments:
                     result = await self._send_attachment_to_log(log_channel, attachment, before.id, "모두 삭제된 첨부 파일: ")
                     all_removed_info.append(result)
                 embed.add_field(name="첨부 파일 변경", value=f"**모든 첨부 파일 삭제됨:**\n" + '\n'.join(all_removed_info),
                                 inline=False)
-            # Special case: all new attachments added
-            elif not original_before_attachments and after.attachments:
+            # 특수 경우: 모든 새로운 첨부 파일이 추가됨
+            elif not fetched_original_attachments and after.attachments:
                 all_added_info = []
                 for attachment in after.attachments:
                     all_added_info.append(f"[`{attachment.filename}`]({attachment.url})")
@@ -233,7 +249,7 @@ class MessageLogCog(commands.Cog):
 
             embed.set_footer(text=f"메시지 ID: {before.id}")
             embed.set_thumbnail(url=before.author.display_avatar.url)
-            embed.url = after.jump_url # Link to the edited message
+            embed.url = after.jump_url # 수정된 메시지로 연결되는 링크
 
             await log_channel.send(embed=embed)
             self.logger.info(f"{before.channel.name} 채널에서 {before.author.display_name}의 수정된 메시지 로그를 남겼습니다.")
@@ -246,4 +262,3 @@ class MessageLogCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(MessageLogCog(bot))
-    # Removed the print statement here, as on_ready will now handle bot online message
