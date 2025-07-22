@@ -441,7 +441,7 @@ class InterviewModal(Modal, title="인터뷰 사전 질문"):
                 ephemeral=True
             )
 
-        cog = interaction.client.get_cog("InterviewRequestCog")
+        cog = interaction.client.get_cog("인터뷰 시스템")
         if not cog:
             fallback_logger = get_logger("interview_modal_fallback")
             fallback_logger.error("❌ 인터뷰 코그를 찾을 수 없습니다. on_submit에서.")
@@ -711,5 +711,5 @@ class InterviewRequestCog(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(InterviewRequestCog(bot))
-    bot.add_view(InterviewView(INTERVIEW_PRIVATE_CHANNEL_ID, bot.get_cog("InterviewRequestCog")))
-    bot.add_view(DecisionButtonView(cog=bot.get_cog("InterviewRequestCog")))
+    bot.add_view(InterviewView(INTERVIEW_PRIVATE_CHANNEL_ID, bot.get_cog("인터뷰 시스템")))
+    bot.add_view(DecisionButtonView(cog=bot.get_cog("인터뷰 시스템")))
