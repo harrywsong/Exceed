@@ -14,8 +14,7 @@ class AutoRoleCog(commands.Cog):
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-        self.logger.info("AutoRoleCog initialized.")
-
+        self.logger.info("자동 역할 기능이 초기화되었습니다.")
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):

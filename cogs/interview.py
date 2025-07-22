@@ -540,7 +540,7 @@ class InterviewRequestCog(commands.Cog):
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
 
         self.logger = logger_module.get_logger(self.__class__.__name__)
-        self.logger.info("InterviewRequestCog 초기화 완료.")
+        self.logger.info("인터뷰 요청 기능이 초기화되었습니다.")
         self.logger = get_logger("interview_cog")
         self.private_channel_id = INTERVIEW_PRIVATE_CHANNEL_ID
         self.gspread_client = GSpreadClient(config.GSHEET_CREDENTIALS_PATH, self.logger)

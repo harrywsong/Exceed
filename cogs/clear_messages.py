@@ -14,8 +14,7 @@ class ClearMessages(commands.Cog):
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-        self.logger.info("ClearMessages cog initialized with logger 'clearmessages'.")
-
+        self.logger.info("메시지 정리 기능이 초기화되었습니다.")
 
     @app_commands.command(name="삭제", description="이 채널에서 최근 메시지를 삭제합니다.")
     @app_commands.describe(amount="삭제할 메시지 수 (최대 100개)")

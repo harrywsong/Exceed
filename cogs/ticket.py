@@ -361,7 +361,7 @@ class TicketSystem(commands.Cog):
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-        self.logger.info("TicketSystem Cog 초기화 완료.")
+        self.logger.info("티켓 시스템 기능이 초기화되었습니다.")
 
     async def send_ticket_request_message(self):
         channel = self.bot.get_channel(config.TICKET_CHANNEL_ID)

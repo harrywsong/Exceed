@@ -145,7 +145,7 @@ class ClanLeaderboard(commands.Cog):
             bot=bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID,
         )
-        self.logger.info("ClanLeaderboard cog initialized.")
+        self.logger.info("클랜 리더보드 기능이 초기화되었습니다.")
 
         self.leaderboard_channel = None
         self.current_message = None

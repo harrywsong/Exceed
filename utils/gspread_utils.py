@@ -26,7 +26,7 @@ class GSpreadClient:
                     "https://www.googleapis.com/auth/drive"
                 ]
             )
-            self.logger.info("✅ Google Sheets client authorized successfully using gspread.service_account().")
+            self.logger.info("Google Sheets 클라이언트가 성공적으로 인증되었습니다.")
             return True
         except Exception as e:
             self.logger.error(f"❌ Failed to authorize Google Sheets: {e}\n{traceback.format_exc()}")

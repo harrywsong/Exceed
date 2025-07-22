@@ -13,7 +13,7 @@ class MessageLogCog(commands.Cog):
         self.bot = bot
         self.log_channel_id = config.LOG_CHANNEL_ID
         self.logger = get_logger(self.__class__.__name__)
-        self.logger.info("MessageLogCog 초기화 완료.")
+        self.logger.info("메시지 로그 기능이 초기화되었습니다.")
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):

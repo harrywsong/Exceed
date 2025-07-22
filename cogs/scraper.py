@@ -20,7 +20,7 @@ class TrackerScraper(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.logger = get_logger("내전 스크레이퍼", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
-        self.logger.info("TrackerScraper cog initialized.")
+        self.logger.info("트래커 스크래퍼 기능이 초기화되었습니다.")
 
     @app_commands.command(
         name="내전등록",

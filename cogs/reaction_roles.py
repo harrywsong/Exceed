@@ -19,7 +19,7 @@ class ReactionRoles(commands.Cog):
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-        self.logger.info("ReactionRoles Cog 초기화 완료.")
+        self.logger.info("리액션 역할 기능이 초기화되었습니다.")
 
         # 👇 Schedule population after bot is fully ready
         self.bot.loop.create_task(self.wait_until_ready_then_populate())

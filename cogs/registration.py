@@ -9,9 +9,11 @@ class Registration(commands.Cog):
         self.bot = bot
         self.log = get_logger(
             "계정 연동",
-            bot=bot,
+            bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
+        self.logger = get_logger(self.__class__.__name__)
+        self.logger.info("등록 기능이 초기화되었습니다.")
 
     @app_commands.command(
         name="연동",

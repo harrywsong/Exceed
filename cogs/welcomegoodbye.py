@@ -33,7 +33,7 @@ class WelcomeCog(commands.Cog):
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
 
-        self.logger.info("WelcomeCog 초기화 완료.")
+        self.logger.info("환영 및 작별 메시지 기능이 초기화되었습니다.")
 
     async def make_welcome_card(self, member: discord.Member) -> BytesIO:
         try:

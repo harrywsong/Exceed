@@ -20,7 +20,7 @@ class TempVoice(commands.Cog):
         )
 
         self.cleanup_empty_channels.start()
-        self.logger.info("TempVoice Cog 초기화 완료.")
+        self.logger.info("임시 음성 채널 기능이 초기화되었습니다.")
 
     def cog_unload(self):
         self.cleanup_empty_channels.cancel()

@@ -40,7 +40,7 @@ class ValorantStats(commands.Cog):
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-        self.logger.info("ValorantStats cog initialized.")
+        self.logger.info("발로란트 통계 기능이 초기화되었습니다.")
 
     async def save_match_and_clan(self, data: dict, match_uuid: Optional[str] = None):
         # ... (rest of your save_match_and_clan function remains the same)
