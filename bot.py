@@ -593,6 +593,12 @@ def run_api_server():
 
 # --- End Flask API Setup ---
 
+intents = discord.Intents.default()
+intents.message_content = True  # <--- ABSOLUTELY ESSENTIAL FOR MESSAGE CONTENT
+intents.messages = True         # <--- Necessary for message-related events
+intents.members = True          # <--- Recommended for full functionality (e.g., getting full user objects)
+intents.presences = True        # <--- If you use presence updates (often helpful)
+intents.guilds = True           # <--- Guild events are also important
 
 class MyBot(commands.Bot):
     def __init__(self, command_prefix, intents):
