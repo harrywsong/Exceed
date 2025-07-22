@@ -84,14 +84,15 @@ class MessageLogCog(commands.Cog):
         메시지가 삭제될 때 로그를 남기고, 첨부된 미디어를 저장합니다.
         봇 메시지와 로그 채널 자체의 메시지는 무시합니다.
         """
-        self.logger.debug(f"DEBUG (on_message_delete): Event triggered for message ID {message.id}.")
+        self.logger.debug(
+            f"DEBUG (on_message_delete): Event triggered for message ID {message.id}. Author: {message.author}, Channel: {message.channel}")
         # Ignore bot's own messages
-        if message.author.bot:
+        if message.author and message.author.bot:  # Check if author exists before checking bot status
             self.logger.debug(f"DEBUG (on_message_delete): Ignoring bot's own message.")
             return
 
         # Ignore messages in DMs or in the log channel itself
-        if message.guild is None or message.channel.id == self.log_channel_id:
+        if message.guild is None or (message.channel and message.channel.id == self.log_channel_id):
             self.logger.debug(f"DEBUG (on_message_delete): Ignoring message in DM or log channel.")
             return
 
@@ -101,30 +102,29 @@ class MessageLogCog(commands.Cog):
                 f"ERROR (on_message_delete): 로그 채널 ID {self.log_channel_id}을(를) 찾을 수 없습니다. 메시지 삭제 로그를 보낼 수 없습니다.")
             return
 
-        # Try to fetch the full message content if it's a partial message
-        # This is critical for messages deleted when the bot was offline or not cached.
+        # Try to fetch the full message content if its content is None (common for older messages or messages not in cache)
         full_message = message  # Start with the given message object
 
-        # If the message is partial or its content is None (common for older messages)
-        if message.partial or message.content is None:
+        if full_message.content is None:
             self.logger.info(
-                f"INFO (on_message_delete): Message {message.id} is partial or content is None. Attempting to fetch full message.")
+                f"INFO (on_message_delete): Message {message.id} content is None. Attempting to fetch full message.")
             try:
                 # Attempt to fetch the full message object from Discord API
-                fetched_msg = await message.channel.fetch_message(message.id)
-                full_message = fetched_msg  # Use the fetched message
-                self.logger.info(
-                    f"INFO (on_message_delete): Successfully fetched full message {message.id}. Content length: {len(full_message.content) if full_message.content else 0}.")
+                # Ensure message.channel is not None before fetching
+                if message.channel:
+                    fetched_msg = await message.channel.fetch_message(message.id)
+                    full_message = fetched_msg  # Use the fetched message
+                    self.logger.info(
+                        f"INFO (on_message_delete): Successfully fetched full message {message.id}. Content length: {len(full_message.content) if full_message.content else 0}.")
+                else:
+                    self.logger.warning(
+                        f"WARNING (on_message_delete): Message {message.id} has no channel; cannot fetch content.")
             except (discord.NotFound, discord.Forbidden):
                 self.logger.warning(
                     f"WARNING (on_message_delete): Failed to fetch full message {message.id} (NotFound/Forbidden). Content might be inaccurate.")
-                # If fetch fails, we'll proceed with the partial info we have
-                # In this case, full_message remains the original 'message' object, which might have limited data.
-                # The content will be "*내용 없음*" or whatever was available.
             except Exception as e:
                 self.logger.error(
                     f"ERROR (on_message_delete): Unexpected error fetching message {message.id}: {e}\n{traceback.format_exc()}")
-                # If fetch fails, we'll proceed with the partial info we have
         else:
             self.logger.debug(
                 f"DEBUG (on_message_delete): Message {message.id} content available in event. Content length: {len(message.content) if message.content else 0}.")
@@ -135,12 +135,15 @@ class MessageLogCog(commands.Cog):
                 color=discord.Color.red(),
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.add_field(name="작성자",
-                            value=f"{full_message.author.mention} ({full_message.author.id})" if full_message.author else "알 수 없는 사용자",
-                            inline=False)
-            embed.add_field(name="채널",
-                            value=f"{full_message.channel.mention} ({full_message.channel.id})" if full_message.channel else "알 수 없는 채널",
-                            inline=False)
+            # Use data from full_message which might be fetched
+            author_display_name = full_message.author.display_name if full_message.author else "알 수 없는 사용자"
+            author_id = full_message.author.id if full_message.author else "N/A"
+            channel_mention = full_message.channel.mention if full_message.channel else "알 수 없는 채널"
+            channel_id = full_message.channel.id if full_message.channel else "N/A"
+            author_avatar_url = full_message.author.display_avatar.url if full_message.author and full_message.author.display_avatar else None
+
+            embed.add_field(name="작성자", value=f"{author_display_name} ({author_id})", inline=False)
+            embed.add_field(name="채널", value=f"{channel_mention} ({channel_id})", inline=False)
 
             # Ensure content is always a string for display and length check
             content_to_display = full_message.content if full_message.content is not None else "*내용 없음*"
@@ -160,12 +163,12 @@ class MessageLogCog(commands.Cog):
             # --- 첨부 파일 처리 끝 ---
 
             embed.set_footer(text=f"메시지 ID: {full_message.id}")
-            embed.set_thumbnail(
-                url=full_message.author.display_avatar.url if full_message.author and full_message.author.display_avatar else None)
+            if author_avatar_url:
+                embed.set_thumbnail(url=author_avatar_url)
 
             await log_channel.send(embed=embed)
             self.logger.info(
-                f"INFO (on_message_delete): Logged deleted message from {full_message.author.display_name if full_message.author else 'Unknown'} in {full_message.channel.name if full_message.channel else 'Unknown Channel'}.")
+                f"INFO (on_message_delete): Logged deleted message from {author_display_name} in {full_message.channel.name if full_message.channel else 'Unknown Channel'}.")
 
         except discord.Forbidden:
             self.logger.error(f"ERROR (on_message_delete): 봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다.")
@@ -178,15 +181,16 @@ class MessageLogCog(commands.Cog):
         메시지가 수정될 때 로그를 남기고, 첨부 파일 변경 사항을 기록하며
         삭제되거나 변경된 첨부 파일도 저장합니다.
         """
-        self.logger.debug(f"DEBUG (on_message_edit): Event triggered for message ID {before.id}.")
+        self.logger.debug(
+            f"DEBUG (on_message_edit): Event triggered for message ID {before.id}. Author: {before.author}, Channel: {before.channel}")
         # Ignore bot's own message edits
-        if before.author.bot:
+        if before.author and before.author.bot:  # Check if author exists before checking bot status
             self.logger.debug(
                 f"DEBUG (on_message_edit): Ignoring bot's own message edit by {before.author.display_name}.")
             return
 
         # Ignore messages in DMs or in the log channel itself
-        if before.guild is None or before.channel.id == self.log_channel_id:
+        if before.guild is None or (before.channel and before.channel.id == self.log_channel_id):
             self.logger.debug(
                 f"DEBUG (on_message_edit): Ignoring message edit in DM or log channel (ID: {before.channel.id}).")
             return
@@ -195,21 +199,25 @@ class MessageLogCog(commands.Cog):
         fetched_original_content = before.content
         fetched_original_attachments = before.attachments  # Initialize with what's available in 'before'
 
-        # If 'before' is a PartialMessage or its content is None (not in cache or content not provided by Discord)
-        if before.partial or fetched_original_content is None:
+        # If 'before' message content is None (not in cache or content not provided by Discord)
+        if fetched_original_content is None:
             self.logger.info(
-                f"INFO (on_message_edit): 'before' message {before.id} is partial or content is None. Attempting to fetch full message.")
+                f"INFO (on_message_edit): 'before' message {before.id} content is None. Attempting to fetch full message.")
             try:
-                # Fetch the full message object from Discord API
-                fetched_before_message = await before.channel.fetch_message(before.id)
-                fetched_original_content = fetched_before_message.content if fetched_before_message.content is not None else ""
-                fetched_original_attachments = fetched_before_message.attachments
-                self.logger.info(
-                    f"INFO (on_message_edit): Successfully fetched full 'before' message {before.id}. Content length: {len(fetched_original_content)}.")
+                # Attempt to fetch the full message object from Discord API
+                # Ensure before.channel is not None before fetching
+                if before.channel:
+                    fetched_before_message = await before.channel.fetch_message(before.id)
+                    fetched_original_content = fetched_before_message.content if fetched_before_message.content is not None else ""
+                    fetched_original_attachments = fetched_before_message.attachments
+                    self.logger.info(
+                        f"INFO (on_message_edit): Successfully fetched full 'before' message {before.id}. Content length: {len(fetched_original_content)}.")
+                else:
+                    self.logger.warning(
+                        f"WARNING (on_message_edit): 'before' message {before.id} has no channel; cannot fetch content.")
             except (discord.NotFound, discord.Forbidden):
                 self.logger.warning(
                     f"WARNING (on_message_edit): Failed to fetch full 'before' message {before.id} (NotFound/Forbidden). Original content might be inaccurate.")
-                # If fetch fails, default to empty string for content, keep available attachments from 'before'
                 fetched_original_content = "*캐시에 없거나 가져올 수 없는 내용*"
             except Exception as e:
                 self.logger.error(
@@ -226,7 +234,7 @@ class MessageLogCog(commands.Cog):
         # Use .strip() to ignore leading/trailing whitespace differences
         content_changed = (fetched_original_content.strip() != after_content.strip())
 
-        # Corrected: Compare the attachments lists obtained from the most complete 'before' and 'after' objects
+        # Compare the attachments lists obtained from the most complete 'before' and 'after' objects
         attachments_changed = (fetched_original_attachments != after.attachments)
 
         self.logger.debug(f"DEBUG (on_message_edit): Content changed: {content_changed}")
@@ -252,8 +260,15 @@ class MessageLogCog(commands.Cog):
                 color=discord.Color.blue(),
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.add_field(name="작성자", value=f"{before.author.mention} ({before.author.id})", inline=False)
-            embed.add_field(name="채널", value=f"{before.channel.mention} ({before.channel.id})", inline=False)
+            # Use author/channel info from 'before' message, as it's typically available
+            author_display_name = before.author.display_name if before.author else "알 수 없는 사용자"
+            author_id = before.author.id if before.author else "N/A"
+            channel_mention = before.channel.mention if before.channel else "알 수 없는 채널"
+            channel_id = before.channel.id if before.channel else "N/A"
+            author_avatar_url = before.author.display_avatar.url if before.author and before.author.display_avatar else None
+
+            embed.add_field(name="작성자", value=f"{author_display_name} ({author_id})", inline=False)
+            embed.add_field(name="채널", value=f"{channel_mention} ({channel_id})", inline=False)
 
             # Display original and new content, truncating if too long
             old_content_display = str(fetched_original_content)  # Ensure it's a string
@@ -313,12 +328,13 @@ class MessageLogCog(commands.Cog):
             # --- 첨부 파일 변경 로깅 및 저장 끝 ---
 
             embed.set_footer(text=f"메시지 ID: {before.id}")
-            embed.set_thumbnail(url=before.author.display_avatar.url)
+            if author_avatar_url:
+                embed.set_thumbnail(url=author_avatar_url)
             embed.url = after.jump_url  # Link to the edited message
 
             await log_channel.send(embed=embed)
             self.logger.info(
-                f"INFO (on_message_edit): Logged edited message from {before.author.display_name} in {before.channel.name}.")
+                f"INFO (on_message_edit): Logged edited message from {author_display_name} in {before.channel.name if before.channel else 'Unknown Channel'}.")
 
         except discord.Forbidden:
             self.logger.error(f"ERROR (on_message_edit): 봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다.")
