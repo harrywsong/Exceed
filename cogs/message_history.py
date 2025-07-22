@@ -15,6 +15,7 @@ class MessageLogCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.log_channel_id = config.MESSAGE_HISTORY_CHANNEL_ID
+        self.log_channel = config.LOG_CHANNEL_ID
         self.logger = get_logger("메세지 기록")
         self.logger.info("메시지 로그 기능이 초기화되었습니다.")
         # Flag to ensure the bot ready message is sent only once
@@ -52,7 +53,7 @@ class MessageLogCog(commands.Cog):
         """
         if not self._sent_ready_message:
             self.logger.info(f"{self.bot.user.name} 봇이 온라인 상태입니다!")
-            log_channel = self.bot.get_channel(self.log_channel_id)
+            log_channel = self.bot.get_channel(self.log_channel)
             if log_channel:
                 try:
                     embed = discord.Embed(
@@ -64,8 +65,8 @@ class MessageLogCog(commands.Cog):
                     embed.add_field(name="봇 ID", value=self.bot.user.id, inline=True)
                     # Current time in KST (Korean Standard Time)
                     embed.add_field(name="현재 시간",
-                                    value=datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=9))).strftime(
-                                        "%Y-%m-%d %H:%M:%S KST"), inline=True)
+                                    value=datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-5))).strftime(
+                                        "%Y-%m-%d %H:%M:%S EST"), inline=True)
                     embed.set_footer(text="메시지 로깅 기능 활성화됨")
                     embed.set_thumbnail(url=self.bot.user.display_avatar.url)
 
@@ -77,7 +78,7 @@ class MessageLogCog(commands.Cog):
                 except Exception as e:
                     self.logger.error(f"봇 시작 메시지 로깅 중 오류 발생: {e}\n{traceback.format_exc()}")
             else:
-                self.logger.error(f"로그 채널 ID {self.log_channel_id}을(를) 찾을 수 없어 봇 시작 메시지를 보낼 수 없습니다.")
+                self.logger.error(f"로그 채널 ID {self.log_channel}을(를) 찾을 수 없어 봇 시작 메시지를 보낼 수 없습니다.")
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
