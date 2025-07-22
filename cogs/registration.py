@@ -12,7 +12,7 @@ class Registration(commands.Cog):
             bot=self.bot,
             discord_log_channel_id=config.LOG_CHANNEL_ID
         )
-        self.logger = get_logger(self.__class__.__name__)
+        self.logger = get_logger("등록 기능")
         self.logger.info("등록 기능이 초기화되었습니다.")
 
     @app_commands.command(
