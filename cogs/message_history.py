@@ -173,8 +173,10 @@ class MessageLogCog(commands.Cog):
 
         # 내용이나 첨부 파일이 변경되지 않았으면 로그하지 않음
         # 두 문자열을 strip()하여 양 끝의 공백/개행 차이로 인한 불필요한 로그 방지
-        if fetched_original_content.strip() == after_content.strip() and fetched_original_attachments == after.attachments:
-            self.logger.debug(f"DEBUG: No content or attachment changes detected for message {before.id}. Returning.")
+        before_files = {a.filename for a in fetched_original_attachments}
+        after_files = {a.filename for a in after.attachments}
+
+        if fetched_original_content.strip() == after_content.strip() and before_files == after_files:
             return
 
         log_channel = self.bot.get_channel(self.log_channel_id)
