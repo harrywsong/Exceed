@@ -153,10 +153,9 @@ class ClanLeaderboard(commands.Cog):
     @commands.Cog.listener()
     async def on_ready(self):
         """Called when the bot is ready. Reposts the leaderboard."""
-        self.logger.info("Bot is ready. Attempting to post initial leaderboard.")
+        self.logger.info("봇이 준비되었습니다. 초기 리더보드 게시를 시도합니다.")
         await self.post_leaderboard()
-        self.logger.info("Initial leaderboard post attempt completed.")
-
+        self.logger.info("초기 리더보드 게시 시도가 완료되었습니다.")
 
     async def fetch_leaderboard_data(self) -> List[dict]:
         try:

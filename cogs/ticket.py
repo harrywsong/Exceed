@@ -417,7 +417,7 @@ class TicketSystem(commands.Cog):
         self.bot.add_view(HelpView(self.bot, self.logger))
         self.bot.add_view(CloseTicketView(self.bot, self.logger))
 
-        self.logger.info("Persistent views (HelpView, CloseTicketView) 등록 완료.")
+        self.logger.info("지속적인 뷰(HelpView, CloseTicketView)가 등록되었습니다.")
 
         await asyncio.sleep(2)
         await self.send_ticket_request_message()

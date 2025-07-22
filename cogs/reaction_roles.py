@@ -82,7 +82,7 @@ class ReactionRoles(commands.Cog):
                 await asyncio.sleep(0.5)
                 continue
             else:
-                self.logger.info(f"✅ 메시지 ID {message_id} ({message.jump_url})을(를) 성공적으로 가져왔습니다.")
+                self.logger.info(f"✅ 메시지 ID {message_id}을(를) 성공적으로 가져왔습니다.")
 
             existing_emoji_keys = {format_emoji_for_map_key(reaction.emoji) for reaction in message.reactions}
 
