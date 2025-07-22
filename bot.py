@@ -825,9 +825,10 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
 async def main():
     # Define intents required by your bot
     intents = discord.Intents.default()
-    intents.members = True          # Required for on_member_join, member caching
-    intents.message_content = True  # Required to read message content (for prefix commands)
-    intents.presences = True        # Required for presence updates (e.g., active users count)
+    intents.message_content = True  # REQUIRED for on_message_edit/delete to see content
+    intents.messages = True  # REQUIRED for message events
+    intents.members = True  # Often useful for member-related events/caching
+    intents.presences = True  # Often useful for presence updates
 
     # Create bot instance
     global bot_instance # Declare global to assign to it
