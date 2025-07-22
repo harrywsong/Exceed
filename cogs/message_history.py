@@ -65,7 +65,7 @@ class MessageLogCog(commands.Cog):
                     embed.add_field(name="봇 ID", value=self.bot.user.id, inline=True)
                     # Current time in KST (Korean Standard Time)
                     embed.add_field(name="현재 시간",
-                                    value=datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-5))).strftime(
+                                    value=datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=-4))).strftime(
                                         "%Y-%m-%d %H:%M:%S EST"), inline=True)
                     embed.set_footer(text="메시지 로깅 기능 활성화됨")
                     embed.set_thumbnail(url=self.bot.user.display_avatar.url)
