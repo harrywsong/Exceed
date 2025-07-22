@@ -14,7 +14,7 @@ from utils.logger import get_logger
 class MessageLogCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.log_channel_id = config.LOG_CHANNEL_ID
+        self.log_channel_id = config.MESSAGE_HISTORY_CHANNEL_ID
         self.logger = get_logger("메세지 기록")
         self.logger.info("메시지 로그 기능이 초기화되었습니다.")
         # Flag to ensure the bot ready message is sent only once
