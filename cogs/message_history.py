@@ -168,8 +168,7 @@ class MessageLogCog(commands.Cog):
                     # Save the removed attachment
                     result = await self._send_attachment_to_log(log_channel, attachment, before.id, "삭제된 첨부 파일: ")
                     removed_attachment_info.append(result)
-                attachment_changes_text.append(f"**삭제됨:**\n{'\n'.join(removed_attachment_info)}")
-
+                attachment_changes_text.append(f"**삭제됨:**\n{'\\n'.join(removed_attachment_info)}")
             if added_attachments:
                 added_attachment_info = []
                 for attachment in added_attachments:
