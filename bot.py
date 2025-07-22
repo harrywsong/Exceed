@@ -770,7 +770,7 @@ class MyBot(commands.Bot):
             await context.send("❌ 명령어 실행 중 예상치 못한 오류가 발생했습니다. 관리자에게 문의해주세요.", ephemeral=True)
 
     # --- NEW: Daily Log Uploader Task ---
-    @tasks.loop(time=dt_time(hour=0, minute=5)) # Run daily at 00:05 (12:05 AM) local time
+    @tasks.loop(time=dt_time(hour=4, minute=0))
     async def daily_log_uploader(self):
         log_dir = logger_module.LOG_FILE_PATH.parent
         self.logger.info("일일 로그 업로드 작업을 시작합니다.")
