@@ -168,7 +168,7 @@ class MessageLogCog(commands.Cog):
                     # Save the removed attachment
                     result = await self._send_attachment_to_log(log_channel, attachment, before.id, "삭제된 첨부 파일: ")
                     removed_attachment_info.append(result)
-                attachment_changes_text.append(f"**삭제됨:**\n{'\n'.join(removed_attachment_info)}")
+                attachment_changes_text.append(f"**삭제됨:**\n" + '\n'.join(removed_attachment_info))
             if added_attachments:
                 added_attachment_info = []
                 for attachment in added_attachments:
@@ -176,7 +176,7 @@ class MessageLogCog(commands.Cog):
                     # For now, we'll just log their presence. If you want to save them as well,
                     # you'd call _send_attachment_to_log here.
                     added_attachment_info.append(f"[`{attachment.filename}`]({attachment.url})")
-                attachment_changes_text.append(f"**추가됨:**\n{'\n'.join(added_attachment_info)}")
+                attachment_changes_text.append(f"**추가됨:**\n" + '\n'.join(added_attachment_info))
 
             if attachment_changes_text:
                 embed.add_field(name="첨부 파일 변경", value="\n".join(attachment_changes_text), inline=False)
@@ -185,14 +185,14 @@ class MessageLogCog(commands.Cog):
                 for attachment in original_before_attachments:
                     result = await self._send_attachment_to_log(log_channel, attachment, before.id, "모두 삭제된 첨부 파일: ")
                     all_removed_info.append(result)
-                embed.add_field(name="첨부 파일 변경", value=f"**모든 첨부 파일 삭제됨:**\n{'\n'.join(all_removed_info)}",
+                embed.add_field(name="첨부 파일 변경", value=f"**모든 첨부 파일 삭제됨:**\n" + '\n'.join(all_removed_info),
                                 inline=False)
             elif not original_before_attachments and after.attachments:  # All new attachments
                 all_added_info = []
                 for attachment in after.attachments:
                     all_added_info.append(f"[`{attachment.filename}`]({attachment.url})")
-                embed.add_field(name="첨부 파일 변경", value=f"**새로운 첨부 파일 추가됨:**\n{'\n'.join(all_added_info)}", inline=False)
-
+                embed.add_field(name="첨부 파일 변경", value=f"**새로운 첨부 파일 추가됨:**\n" + '\n'.join(all_added_info),
+                                inline=False)
             # --- 첨부 파일 변경 로깅 및 저장 끝 ---
 
             embed.set_footer(text=f"메시지 ID: {before.id}")
