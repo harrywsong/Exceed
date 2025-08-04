@@ -59,7 +59,8 @@ class TempVoice(commands.Cog):
 
 
     @commands.Cog.listener()
-    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState,
+                                    after: discord.VoiceState):
         if member.bot:
             return
 
@@ -71,11 +72,17 @@ class TempVoice(commands.Cog):
                     try:
                         await member.send("죄송합니다, 임시 채널을 생성할 수 없습니다. 관리자에게 문의해주세요.")
                     except discord.Forbidden:
-                        self.logger.warning(f"Cannot send DM to {member.display_name} regarding temp channel creation failure.")
+                        self.logger.warning(
+                            f"Cannot send DM to {member.display_name} regarding temp channel creation failure.")
                 return
 
             try:
                 guild = member.guild
+
+                #
+                # <--- CHANGE THE ROLE ID ON THIS LINE
+                #
+                allowed_role = guild.get_role(1389711143756501012)
 
                 overwrites = {
                     guild.default_role: discord.PermissionOverwrite(connect=False),
@@ -91,6 +98,13 @@ class TempVoice(commands.Cog):
                     ),
                 }
 
+                # 만약 역할이 존재한다면 overwrites에 추가합니다.
+                if allowed_role:
+                    overwrites[allowed_role] = discord.PermissionOverwrite(
+                        connect=True,
+                        view_channel=True
+                    )
+
                 new_channel = await category.create_voice_channel(
                     name=f"🎙️・{member.display_name}님의 채널",
                     overwrites=overwrites,
@@ -100,17 +114,21 @@ class TempVoice(commands.Cog):
 
                 await member.move_to(new_channel)
 
-                self.logger.info(f"➕ 사용자 {member.display_name} ({member.id})님을 위해 임시 음성 채널 '{new_channel.name}' (ID: {new_channel.id})을(를) 생성하고 이동시켰습니다.")
+                self.logger.info(
+                    f"➕ 사용자 {member.display_name} ({member.id})님을 위해 임시 음성 채널 '{new_channel.name}' (ID: {new_channel.id})을(를) 생성하고 이동시켰습니다.")
             except discord.Forbidden:
-                self.logger.error(f"❌ {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 권한이 없습니다. 봇 권한을 확인해주세요.\n{traceback.format_exc()}")
+                self.logger.error(
+                    f"❌ {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 권한이 없습니다. 봇 권한을 확인해주세요.\n{traceback.format_exc()}")
                 try:
                     await member.send("죄송합니다, 임시 채널을 생성하거나 이동할 권한이 없습니다. 봇 권한을 확인해주세요.")
-                except discord.Forbidden: pass
+                except discord.Forbidden:
+                    pass
             except Exception as e:
                 self.logger.error(f"❌ {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 실패: {e}\n{traceback.format_exc()}")
                 try:
                     await member.send("죄송합니다, 임시 채널 생성 중 알 수 없는 오류가 발생했습니다. 관리자에게 문의해주세요.")
-                except discord.Forbidden: pass
+                except discord.Forbidden:
+                    pass
 
         if before.channel and before.channel.id in self.temp_channels:
             if len(before.channel.members) == 0:
@@ -119,12 +137,13 @@ class TempVoice(commands.Cog):
                     self.temp_channels.pop(before.channel.id, None)
                     self.logger.info(f"🗑️ 빈 임시 음성 채널 삭제됨: '{before.channel.name}' (ID: {before.channel.id})")
                 except discord.Forbidden:
-                    self.logger.error(f"❌ 빈 임시 채널 {before.channel.name} ({before.channel.id}) 삭제 권한이 없습니다. 봇 권한을 확인해주세요.")
+                    self.logger.error(
+                        f"❌ 빈 임시 채널 {before.channel.name} ({before.channel.id}) 삭제 권한이 없습니다. 봇 권한을 확인해주세요.")
                 except Exception as e:
-                    self.logger.error(f"❌ 빈 임시 채널 '{before.channel.name}' ({before.channel.id}) 삭제 실패: {e}\n{traceback.format_exc()}")
+                    self.logger.error(
+                        f"❌ 빈 임시 채널 '{before.channel.name}' ({before.channel.id}) 삭제 실패: {e}\n{traceback.format_exc()}")
             else:
                 self.logger.debug(f"음성 채널 '{before.channel.name}' (ID: {before.channel.id})에 아직 멤버가 있어 삭제하지 않습니다.")
-
 
 async def setup(bot):
     await bot.add_cog(TempVoice(bot))
