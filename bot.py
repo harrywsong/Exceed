@@ -611,6 +611,17 @@ class MyBot(commands.Bot):
         # Initialize a basic logger immediately to ensure it always exists
         self.logger = logging.getLogger('discord') # This is a standard Python logger
 
+    @tasks.loop(minutes=10)  # Updates the presence every 10 minutes
+    async def update_presence(self):
+        # This will set the bot's status to 'Playing' and display a custom message.
+        # You can change the ActivityType to listening, watching, or streaming.
+        await self.change_presence(
+            status=discord.Status.online,
+            activity=discord.Activity(
+                type=discord.ActivityType.playing,
+                name=f"클랜원 관리 중 | {len(self.guilds)}개의 서버에 있음"  # 'Managing clan members' in Korean
+            )
+        )
 
     async def setup_hook(self):
         # Initialize database pool
@@ -722,7 +733,12 @@ class MyBot(commands.Bot):
         self.logger.info(f"현재 핑: {round(self.latency * 1000)}ms")
 
         # Set bot status
+        # This initial presence will be immediately overwritten by the task loop on its first run.
         await self.change_presence(activity=discord.Game(name="클랜원 모집 중!"))
+
+        # Start the presence update loop after the bot is ready
+        if not self.update_presence.is_running():
+            self.update_presence.start()
 
         # Set the global bot_instance for the Flask API
         global bot_instance
