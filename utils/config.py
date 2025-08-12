@@ -77,3 +77,35 @@ GSHEET_TESTING_SPREADSHEET_NAME = os.getenv("GSHEET_TESTING_SPREADSHEET_NAME", "
 GSHEET_MEMBER_LIST_SPREADSHEET_NAME = os.getenv("GSHEET_MEMBER_LIST_SPREADSHEET_NAME", "Member List")
 
 MESSAGE_HISTORY_CHANNEL_ID = int(os.getenv("MESSAGE_HISTORY_CHANNEL_ID", "0"))
+
+# Your bot's Discord user ID
+BOT_ID = 1389668557759189052
+
+# Achievement System Configuration
+ACHIEVEMENT_DATA_PATH = "data/achievements.json"
+GHOST_HUNTER_ID = 1365499246962540606
+PING_MASTER_ID = 1389668557759189052
+ACHIEVEMENT_CHANNEL_ID = 1404889663038029968
+ACHIEVEMENT_ALERT_CHANNEL_ID = 1404898177458376734
+HOLIDAYS = [
+    "january 1",   # New Year's Day (Canada & USA)
+    "february 14", # Valentine's Day (Canada & USA)
+    "february 19", # Family Day (Canada - 3rd Monday in Feb, varies by province)
+    "february 19", # Presidents' Day (USA - 3rd Monday in Feb)
+    "march 17",    # St. Patrick's Day (Canada & USA)
+    "april 1",     # April Fools' Day (Canada & USA)
+    "july 1",      # Canada Day (Canada)
+    "july 4",      # Independence Day (USA)
+    "september 2", # Labour Day (Canada & USA - 1st Monday in Sept)
+    "october 14",  # Thanksgiving (Canada - 2nd Monday in Oct)
+    "october 31",  # Halloween (Canada & USA)
+    "november 11", # Remembrance Day (Canada)
+    "november 28", # Thanksgiving (USA - 4th Thursday in Nov)
+    "december 25", # Christmas (Canada & USA)
+    "december 26", # Boxing Day (Canada)
+]
+
+ACHIEVEMENT_EMOJIS = {
+    "general": "🏆",
+    "hidden": "🤫",
+}

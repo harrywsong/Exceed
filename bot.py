@@ -671,6 +671,7 @@ class MyBot(commands.Bot):
 
         # Load cogs
         initial_extensions = [
+            'cogs.achievements',
             'cogs.autoguest',
             'cogs.clanstats',
             'cogs.clear_messages',
