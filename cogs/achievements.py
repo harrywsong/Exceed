@@ -112,6 +112,7 @@ class PersistentAchievementView(discord.ui.View):
             return
 
         try:
+            # 이전 메시지를 삭제합니다.
             async for message in channel.history(limit=50):
                 if message.author == self.bot.user and message.embeds and (
                         "업적 현황" in message.embeds[0].title or "업적 목록 및 힌트" in message.embeds[0].title
@@ -124,22 +125,27 @@ class PersistentAchievementView(discord.ui.View):
                     except discord.NotFound:
                         print("메시지를 찾을 수 없어 삭제를 건너뜁니다.")
 
+            # 새로운 임베드를 생성하고 지속적인 뷰와 함께 게시합니다.
+            cog = self.bot.get_cog("Achievements")
+            if not cog:
+                print("Achievements cog not found.")
+                return
+
             members = await self._get_sorted_members()
             if members:
-                cog = self.bot.get_cog("Achievements")
-                if cog:
-                    initial_embed = await self._create_achievements_embed(members[0], 1, len(members))
-                    await channel.send(embed=initial_embed, view=PersistentAchievementView(self.bot))
-                else:
-                    print("Achievements cog not found.")
+                # 뷰 객체 생성 시 봇 인스턴스만 전달합니다.
+                view = PersistentAchievementView(self.bot)
+
+                # 뷰의 get_current_embed 메서드를 사용하여 초기 임베드를 가져옵니다.
+                initial_embed = await view.get_current_embed(cog, members)
+
+                await channel.send(embed=initial_embed, view=view)
             else:
                 await channel.send(embed=discord.Embed(description="No members found with achievements."))
 
         except Exception as e:
             print(f"업적 메시지 생성 및 전송 실패: {e}")
             traceback.print_exc()
-
-
 class Achievements(commands.Cog):
     GENERAL_ACHIEVEMENTS = {
         "🎯 Achievement Hunter": "10개의 일반 업적을 달성하세요.",
@@ -437,8 +443,10 @@ class Achievements(commands.Cog):
 
             sorted_members = await self._get_sorted_members()
             if sorted_members:
-                view = PersistentAchievementView(sorted_members, self)
-                initial_embed = await view.get_current_embed()
+                view = PersistentAchievementView(self.bot)
+                # Pass cog and members to get_current_embed
+                cog = self.bot.get_cog("Achievements")
+                initial_embed = await view.get_current_embed(cog, sorted_members)
                 self.current_message = await channel.send(embed=initial_embed, view=view)
                 print(f"업적 현황 메시지 게시 완료.")
             else:
@@ -446,7 +454,6 @@ class Achievements(commands.Cog):
 
         except Exception as e:
             print(f"업적 현황 메시지 게시 실패: {e}\n{traceback.format_exc()}")
-
     async def _create_achievements_embed(self, member: discord.Member, rank: int, total_members: int) -> discord.Embed:
         user_id = member.id
         user_data = self.data.get(user_id, defaultdict(lambda: {"general_unlocked": [], "hidden_unlocked": []}))
