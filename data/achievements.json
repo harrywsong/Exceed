@@ -1,7 +1,6 @@
 {
     "318228043749523456": {
         "general_unlocked": [
-            "Team Player",
             "The Collector"
         ],
         "hidden_unlocked": [
@@ -22,15 +21,15 @@
         "reaction_count": 11,
         "different_reactions": [
             "\u2705",
-            "\u2709\ufe0f",
-            "\ud83c\uddf9",
-            "\ud83e\udd21",
             "\u2764\ufe0f",
-            "\ud83d\udc4d",
-            "\u2665\ufe0f",
             "\u26aa",
+            "\u26ab",
+            "\u2709\ufe0f",
+            "\ud83d\udc4d",
             "\ud83d\udcb0",
-            "\u26ab"
+            "\u2665\ufe0f",
+            "\ud83e\udd21",
+            "\ud83c\uddf9"
         ],
         "last_message_date": "2025-08-12T19:30:52.099785+00:00",
         "daily_streak": 1,
@@ -51,7 +50,6 @@
             1404905337353666723,
             1404905618753585244
         ],
-        "team_player_unlocked": false,
         "reaction_responder_count": 0,
         "last_edit_time": null,
         "bot_interactions": 0,
@@ -70,14 +68,11 @@
         ],
         "holidays_sent": [],
         "has_boosted": false,
-        "first_reaction": true,
         "bot_pinged": false,
         "voice_join_time": null
     },
     "1365499246962540606": {
-        "general_unlocked": [
-            "Team Player"
-        ],
+        "general_unlocked": [],
         "hidden_unlocked": [
             "Secret Admirer",
             "The Echo"
@@ -101,7 +96,6 @@
         "message_ids_reacted_to": [
             1403122916870066217
         ],
-        "team_player_unlocked": false,
         "reaction_responder_count": 0,
         "last_edit_time": null,
         "bot_interactions": 0,
@@ -114,7 +108,6 @@
         "edit_timestamps": [],
         "holidays_sent": [],
         "has_boosted": false,
-        "first_reaction": true,
         "bot_pinged": false,
         "voice_join_time": null
     }

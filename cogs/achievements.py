@@ -99,7 +99,6 @@ class Achievements(commands.Cog):
         "🎂 First Anniversary": "봇과 함께한 1주년을 맞이하세요.",
         "🎖️ Veteran": "서버에 가입한 지 365일이 지나고 메시지를 보내세요.",
         "✨ Boost Buddy": "서버를 부스팅하세요.",
-        "🤝 Team Player": "첫 번째 반응을 추가하세요.",
         "🎨 The Collector": "10개의 다른 이모티콘으로 반응하세요.",
         "💬 Reaction Responder": "50개의 다른 메시지에 반응하세요.",
         "👣 First Steps": "첫 번째 명령어를 사용하세요.",
@@ -143,7 +142,6 @@ class Achievements(commands.Cog):
         "First Anniversary": "🎂",
         "Veteran": "🎖️",
         "Boost Buddy": "✨",
-        "Team Player": "🤝",
         "The Collector": "🎨",
         "Reaction Responder": "💬",
         "First Steps": "👣",
@@ -188,7 +186,6 @@ class Achievements(commands.Cog):
             "last_dm_text": None,
             "channels_visited": set(),
             "message_ids_reacted_to": set(),
-            "team_player_unlocked": False,
             "reaction_responder_count": 0,
             "last_edit_time": None,
             "bot_interactions": 0,
@@ -201,7 +198,6 @@ class Achievements(commands.Cog):
             "edit_timestamps": [],
             "holidays_sent": set(),
             "has_boosted": False,
-            "first_reaction": False,
             "bot_pinged": False,
         })
         self.load_data()
@@ -255,7 +251,6 @@ class Achievements(commands.Cog):
             if not os.path.exists('data'):
                 os.makedirs('data')
             self.save_data()
-
     def save_data(self):
         with open(ACHIEVEMENT_DATA_PATH, 'w') as f:
             serializable_data = {}
@@ -296,7 +291,6 @@ class Achievements(commands.Cog):
                     ),
                 }
             json.dump(serializable_data, f, indent=4)
-
     def cog_unload(self):
         self.voice_update_task.cancel()
         self.daily_achievements_update.cancel()
@@ -308,7 +302,7 @@ class Achievements(commands.Cog):
                 print(f"Error: Achievement alert channel with ID {ACHIEVEMENT_ALERT_CHANNEL_ID} not found.")
                 return
 
-            emoji = ACHIEVEMENT_EMOJIS.get("general") if not is_hidden else ACHIEVEMENT_EMOJIS.get("hidden")
+            emoji = self.ACHIEVEMENT_EMOJI_MAP.get(achievement_name, '🏆' if not is_hidden else '🤫')
             title = f"{emoji} 새로운 업적 달성! {emoji}"
             description = (
                 f"{member.mention} 님이 **{achievement_name}** 업적을 달성했습니다!\n"
@@ -340,7 +334,7 @@ class Achievements(commands.Cog):
             self.save_data()
             print(f"Achievement Unlocked for {user_id}: {achievement_name}")
             self.bot.loop.create_task(self._send_achievement_notification(user, achievement_name, is_hidden))
-            self.bot.loop.create_task(self.post_achievements_display())  # Add this line
+            self.bot.loop.create_task(self.post_achievements_display())
 
             if not is_hidden and len(user_data["general_unlocked"]) >= 10:
                 self.unlock_achievement(user, "Achievement Hunter")
@@ -417,10 +411,8 @@ class Achievements(commands.Cog):
         if general_unlocked:
             general_list = ""
             for ach in general_unlocked:
-                # Use the new map to get the correct emoji
-                ach_name_only = ach.split(' ', 1)[1] if ' ' in ach else ach
-                emoji = self.ACHIEVEMENT_EMOJI_MAP.get(ach_name_only, '🏆')
-                general_list += f"{emoji} {ach_name_only}\n"
+                emoji = self.ACHIEVEMENT_EMOJI_MAP.get(ach, '🏆')
+                general_list += f"{emoji} {ach}\n"
             embed.add_field(name=f"🏆 일반 업적 ({len(general_unlocked)}/{total_general})",
                             value=general_list.strip() or "아직 달성한 일반 업적이 없습니다.", inline=False)
         else:
@@ -429,17 +421,14 @@ class Achievements(commands.Cog):
         if hidden_unlocked:
             hidden_list = ""
             for ach in hidden_unlocked:
-                # Use the new map to get the correct emoji
-                ach_name_only = ach.split(' ', 1)[1] if ' ' in ach else ach
-                emoji = self.ACHIEVEMENT_EMOJI_MAP.get(ach_name_only, '🤫')
-                hidden_list += f"{emoji} {ach_name_only}\n"
+                emoji = self.ACHIEVEMENT_EMOJI_MAP.get(ach, '🤫')
+                hidden_list += f"{emoji} {ach}\n"
             embed.add_field(name=f"🤫 히든 업적 ({len(hidden_unlocked)}/{total_hidden})",
                             value=hidden_list.strip() or "아직 달성한 히든 업적이 없습니다.", inline=False)
         else:
             embed.add_field(name=f"🤫 히든 업적 (0/{total_hidden})", value="아직 달성한 히든 업적이 없습니다.", inline=False)
 
         return embed
-
     async def _create_achievement_list_embed(self) -> discord.Embed:
         general_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.GENERAL_ACHIEVEMENTS.items())
         hidden_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.HIDDEN_ACHIEVEMENTS.items())
@@ -626,10 +615,6 @@ class Achievements(commands.Cog):
         user_data["reaction_count"] += 1
         user_data["different_reactions"].add(emoji_id)
         user_data["message_ids_reacted_to"].add(payload.message_id)
-
-        if not user_data.get("first_reaction") and user_data["reaction_count"] == 1:
-            self.unlock_achievement(self.bot.get_user(user_id), "Team Player")
-            user_data["first_reaction"] = True
 
         if len(user_data["different_reactions"]) >= 10:
             self.unlock_achievement(self.bot.get_user(user_id), "The Collector")
