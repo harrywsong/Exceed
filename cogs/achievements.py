@@ -389,7 +389,6 @@ class Achievements(commands.Cog):
             embed.add_field(name=f"🤫 히든 업적 (0/{total_hidden})", value="아직 달성한 히든 업적이 없습니다.", inline=False)
 
         return embed
-
     async def _create_achievement_list_embed(self) -> discord.Embed:
         general_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.GENERAL_ACHIEVEMENTS.items())
         hidden_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.HIDDEN_ACHIEVEMENTS.items())
