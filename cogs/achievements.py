@@ -18,14 +18,22 @@ from utils.config import ACHIEVEMENT_DATA_PATH, GHOST_HUNTER_ID, HOLIDAYS, ACHIE
 LOCAL_SERVER_TZ = pytz.timezone("US/Eastern")
 
 
-class AchievementView(discord.ui.View):
-    def __init__(self, members, cog):
-        super().__init__(timeout=300)
-        self.members = members
-        self.cog = cog
+class PersistentAchievementView(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
         self.current_page = 0
-        self.max_pages = len(self.members) - 1 if self.members else 0
+        self.max_pages = 0
+
+    async def _get_data(self):
+        cog = self.bot.get_cog("Achievements")
+        if not cog:
+            return None, None
+
+        members = await cog._get_sorted_members()
+        self.max_pages = len(members) - 1 if members else 0
         self.update_buttons()
+        return cog, members
 
     def update_buttons(self):
         self.first.disabled = self.current_page == 0
@@ -35,51 +43,101 @@ class AchievementView(discord.ui.View):
         self.next_5.disabled = self.current_page == self.max_pages
         self.last.disabled = self.current_page == self.max_pages
 
-    async def get_current_embed(self):
-        if not self.members:
+    async def get_current_embed(self, cog, members):
+        if not members:
             return discord.Embed(description="No members found with achievements.")
 
-        current_member = self.members[self.current_page]
-        return await self.cog._create_achievements_embed(current_member, self.current_page + 1, self.max_pages + 1)
+        current_member = members[self.current_page]
+        return await cog._create_achievements_embed(current_member, self.current_page + 1, self.max_pages + 1)
 
     async def update_response(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(embed=await self.get_current_embed(), view=self)
+        cog, members = await self._get_data()
+        if not cog or not members:
+            await interaction.response.edit_message(content="An error occurred while fetching achievement data.",
+                                                    view=None)
+            return
 
-    @discord.ui.button(label="« First", style=discord.ButtonStyle.blurple, custom_id="first_page_button")
+        embed = await self.get_current_embed(cog, members)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="« First", style=discord.ButtonStyle.blurple, custom_id="persistent_first_page_button")
     async def first(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page = 0
-        self.update_buttons()
         await self.update_response(interaction)
 
-    @discord.ui.button(label="« 5", style=discord.ButtonStyle.secondary, custom_id="prev_5_button")
+    @discord.ui.button(label="« 5", style=discord.ButtonStyle.secondary, custom_id="persistent_prev_5_button")
     async def prev_5(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page = max(0, self.current_page - 5)
-        self.update_buttons()
         await self.update_response(interaction)
 
-    @discord.ui.button(label="‹ Prev", style=discord.ButtonStyle.secondary, custom_id="prev_page_button")
+    @discord.ui.button(label="‹ Prev", style=discord.ButtonStyle.secondary, custom_id="persistent_prev_page_button")
     async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page = max(0, self.current_page - 1)
-        self.update_buttons()
         await self.update_response(interaction)
 
-    @discord.ui.button(label="Next ›", style=discord.ButtonStyle.secondary, custom_id="next_page_button")
+    @discord.ui.button(label="Next ›", style=discord.ButtonStyle.secondary, custom_id="persistent_next_page_button")
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page = min(self.max_pages, self.current_page + 1)
-        self.update_buttons()
+        cog, members = await self._get_data()
+        if not members:
+            await interaction.response.edit_message(content="An error occurred while fetching achievement data.",
+                                                    view=None)
+            return
+        self.current_page = min(len(members) - 1, self.current_page + 1)
         await self.update_response(interaction)
 
-    @discord.ui.button(label="5 »", style=discord.ButtonStyle.secondary, custom_id="next_5_button")
+    @discord.ui.button(label="5 »", style=discord.ButtonStyle.secondary, custom_id="persistent_next_5_button")
     async def next_5(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page = min(self.max_pages, self.current_page + 5)
-        self.update_buttons()
+        cog, members = await self._get_data()
+        if not members:
+            await interaction.response.edit_message(content="An error occurred while fetching achievement data.",
+                                                    view=None)
+            return
+        self.current_page = min(len(members) - 1, self.current_page + 5)
         await self.update_response(interaction)
 
-    @discord.ui.button(label="Last »", style=discord.ButtonStyle.blurple, custom_id="last_page_button")
+    @discord.ui.button(label="Last »", style=discord.ButtonStyle.blurple, custom_id="persistent_last_page_button")
     async def last(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.current_page = self.max_pages
-        self.update_buttons()
+        cog, members = await self._get_data()
+        if not members:
+            await interaction.response.edit_message(content="An error occurred while fetching achievement data.",
+                                                    view=None)
+            return
+        self.current_page = len(members) - 1
         await self.update_response(interaction)
+
+    async def post_achievements_display(self):
+        channel = self.bot.get_channel(ACHIEVEMENT_CHANNEL_ID)
+        if not channel:
+            print(f"Error: Leaderboard channel with ID {ACHIEVEMENT_CHANNEL_ID} not found.")
+            return
+
+        try:
+            async for message in channel.history(limit=50):
+                if message.author == self.bot.user and message.embeds and (
+                        "업적 현황" in message.embeds[0].title or "업적 목록 및 힌트" in message.embeds[0].title
+                ):
+                    try:
+                        await message.delete()
+                        print(f"이전 업적 메시지 삭제 완료 (ID: {message.id}).")
+                    except discord.Forbidden:
+                        print("삭제 권한이 없습니다.")
+                    except discord.NotFound:
+                        print("메시지를 찾을 수 없어 삭제를 건너뜁니다.")
+
+            members = await self._get_sorted_members()
+            if members:
+                cog = self.bot.get_cog("Achievements")
+                if cog:
+                    initial_embed = await self._create_achievements_embed(members[0], 1, len(members))
+                    await channel.send(embed=initial_embed, view=PersistentAchievementView(self.bot))
+                else:
+                    print("Achievements cog not found.")
+            else:
+                await channel.send(embed=discord.Embed(description="No members found with achievements."))
+
+        except Exception as e:
+            print(f"업적 메시지 생성 및 전송 실패: {e}")
+            traceback.print_exc()
 
 
 class Achievements(commands.Cog):
@@ -379,7 +437,7 @@ class Achievements(commands.Cog):
 
             sorted_members = await self._get_sorted_members()
             if sorted_members:
-                view = AchievementView(sorted_members, self)
+                view = PersistentAchievementView(sorted_members, self)
                 initial_embed = await view.get_current_embed()
                 self.current_message = await channel.send(embed=initial_embed, view=view)
                 print(f"업적 현황 메시지 게시 완료.")
@@ -686,7 +744,7 @@ class Achievements(commands.Cog):
         if member:
             try:
                 index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
-                view = AchievementView(sorted_members, self)
+                view = PersistentAchievementView(sorted_members, self)
                 view.current_page = index
                 initial_embed = await view.get_current_embed()
                 await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
@@ -698,7 +756,7 @@ class Achievements(commands.Cog):
                 await interaction.response.send_message("No members found with achievements.", ephemeral=True)
                 return
 
-            view = AchievementView(sorted_members, self)
+            view = PersistentAchievementView(sorted_members, self)
             initial_embed = await view.get_current_embed()
             await interaction.response.send_message(embed=initial_embed, view=view)
 

@@ -24,6 +24,7 @@ import subprocess # For git pull command
 
 import utils.config as config
 import utils.logger as logger_module # This module contains get_logger and _configure_root_handlers
+from cogs.achievements import PersistentAchievementView
 from utils import upload_to_drive # Ensure this import is correct and points to upload_to_drive.py
 
 # --- Database Functions (Moved from utils/database.py) ---
@@ -711,6 +712,8 @@ class MyBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"❌ 슬래시 명령어 동기화 실패: {e}", exc_info=True)
 
+        self.add_view(PersistentAchievementView(self))
+        self.logger.info("✅ Persistent AchievementView가 성공적으로 등록되었습니다.")
 
     async def reload_all_cogs(self):
         """Reloads all currently loaded cogs."""
@@ -748,6 +751,8 @@ class MyBot(commands.Bot):
 
         # Ensure crash log handling runs after logger is fully set up
         await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
+
+
 
         # --- NEW: Start the daily log upload task ---
         self.daily_log_uploader.start()
