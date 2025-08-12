@@ -756,7 +756,7 @@ class Achievements(commands.Cog):
                 await interaction.response.send_message("No members found with achievements.", ephemeral=True)
                 return
 
-            view = PersistentAchievementView(sorted_members, self)
+            view = PersistentAchievementView(self.bot)
             initial_embed = await view.get_current_embed()
             await interaction.response.send_message(embed=initial_embed, view=view)
 
