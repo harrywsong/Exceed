@@ -370,20 +370,27 @@ class Achievements(commands.Cog):
         )
         embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
 
+        # Dictionary to map achievement names to their emojis
+        achievement_emojis = {
+            **{name: name.split(' ')[0] for name in self.GENERAL_ACHIEVEMENTS.keys()},
+            **{name: name.split(' ')[0] for name in self.HIDDEN_ACHIEVEMENTS.keys()}
+        }
+
         if general_unlocked:
-            general_list = "\n".join(f"🏆 {ach}" for ach in general_unlocked)
-            embed.add_field(name=f"일반 업적 ({len(general_unlocked)}/{total_general})", value=general_list, inline=False)
+            # Use a trophy emoji for the field name
+            general_list = "\n".join(f"{achievement_emojis.get(ach, '🏆')} {ach}" for ach in general_unlocked)
+            embed.add_field(name=f"🏆 일반 업적 ({len(general_unlocked)}/{total_general})", value=general_list, inline=False)
         else:
-            embed.add_field(name=f"일반 업적 (0/{total_general})", value="아직 달성한 일반 업적이 없습니다.", inline=False)
+            embed.add_field(name=f"🏆 일반 업적 (0/{total_general})", value="아직 달성한 일반 업적이 없습니다.", inline=False)
 
         if hidden_unlocked:
-            hidden_list = "\n".join(f"🤫 {ach}" for ach in hidden_unlocked)
-            embed.add_field(name=f"히든 업적 ({len(hidden_unlocked)}/{total_hidden})", value=hidden_list, inline=False)
+            # Use a shh emoji for the field name
+            hidden_list = "\n".join(f"{achievement_emojis.get(ach, '🤫')} {ach}" for ach in hidden_unlocked)
+            embed.add_field(name=f"🤫 히든 업적 ({len(hidden_unlocked)}/{total_hidden})", value=hidden_list, inline=False)
         else:
-            embed.add_field(name=f"히든 업적 (0/{total_hidden})", value="아직 달성한 히든 업적이 없습니다.", inline=False)
+            embed.add_field(name=f"🤫 히든 업적 (0/{total_hidden})", value="아직 달성한 히든 업적이 없습니다.", inline=False)
 
         return embed
-
     async def _create_achievement_list_embed(self) -> discord.Embed:
         general_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.GENERAL_ACHIEVEMENTS.items())
         hidden_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.HIDDEN_ACHIEVEMENTS.items())
