@@ -19,21 +19,26 @@ LOCAL_SERVER_TZ = pytz.timezone("US/Eastern")
 
 
 class PersistentAchievementView(discord.ui.View):
-    def __init__(self, bot):
+    def __init__(self, bot, members=None):
         super().__init__(timeout=None)
         self.bot = bot
         self.current_page = 0
-        self.max_pages = 0
+        # If members are passed in, use them. Otherwise, the view will fetch them later.
+        self.members = members
+        self.max_pages = len(self.members) - 1 if self.members else 0
+        self.update_buttons()
 
     async def _get_data(self):
-        cog = self.bot.get_cog("Achievements")
-        if not cog:
-            return None, None
+        # ... (unchanged)
+        if not self.members:
+            cog = self.bot.get_cog("Achievements")
+            if not cog:
+                return None, None
+            self.members = await cog._get_sorted_members()
 
-        members = await cog._get_sorted_members()
-        self.max_pages = len(members) - 1 if members else 0
+        self.max_pages = len(self.members) - 1 if self.members else 0
         self.update_buttons()
-        return cog, members
+        return cog, self.members
 
     def update_buttons(self):
         self.first.disabled = self.current_page == 0
@@ -760,11 +765,14 @@ class Achievements(commands.Cog):
     @app_commands.command(name="achievements", description="Shows a member's achievements.")
     async def achievements_command(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         sorted_members = await self._get_sorted_members()
+        if not sorted_members:
+            await interaction.response.send_message("No members found with achievements.", ephemeral=True)
+            return
 
         if member:
             try:
                 index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
-                view = PersistentAchievementView(sorted_members, self)
+                view = PersistentAchievementView(self.bot, members=sorted_members)
                 view.current_page = index
                 initial_embed = await view.get_current_embed()
                 await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
@@ -772,11 +780,7 @@ class Achievements(commands.Cog):
                 await interaction.response.send_message(
                     f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
         else:
-            if not sorted_members:
-                await interaction.response.send_message("No members found with achievements.", ephemeral=True)
-                return
-
-            view = PersistentAchievementView(self.bot)
+            view = PersistentAchievementView(self.bot, members=sorted_members)
             initial_embed = await view.get_current_embed()
             await interaction.response.send_message(embed=initial_embed, view=view)
 
