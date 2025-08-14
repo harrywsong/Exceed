@@ -29,15 +29,19 @@ class PersistentAchievementView(discord.ui.View):
         self.update_buttons()
 
     async def _get_data(self):
-        # ... (unchanged)
+        # Get the cog instance at the top of the function.
+        cog = self.bot.get_cog("Achievements")
+        if not cog:
+            # If the cog can't be found for any reason, return safely.
+            return None, None
+
+        # Now, check if members need to be fetched.
         if not self.members:
-            cog = self.bot.get_cog("Achievements")
-            if not cog:
-                return None, None
             self.members = await cog._get_sorted_members()
 
         self.max_pages = len(self.members) - 1 if self.members else 0
         self.update_buttons()
+        # 'cog' is now guaranteed to exist here.
         return cog, self.members
 
     def update_buttons(self):
@@ -454,8 +458,8 @@ class Achievements(commands.Cog):
 
             sorted_members = await self._get_sorted_members()
             if sorted_members:
-                view = PersistentAchievementView(self.bot)
-                # Pass cog and members to get_current_embed
+                view = PersistentAchievementView(self.bot, members=sorted_members)
+
                 cog = self.bot.get_cog("Achievements")
                 initial_embed = await view.get_current_embed(cog, sorted_members)
                 self.current_message = await channel.send(embed=initial_embed, view=view)
@@ -751,8 +755,11 @@ class Achievements(commands.Cog):
         now = datetime.datetime.now()
         for member_id, user_data in self.data.items():
             member = guild.get_member(member_id)
-            if member and member.voice and member.voice.channel and "voice_join_time" in user_data:
-                duration = now - user_data["voice_join_time"]
+            # Check if the member is in a voice channel AND if voice_join_time is a valid datetime object
+            voice_join_time = user_data.get("voice_join_time")
+            if member and member.voice and member.voice.channel and voice_join_time:
+                # The rest of the logic remains the same
+                duration = now - voice_join_time
                 user_data["voice_time"] += duration.total_seconds()
                 user_data["voice_join_time"] = now
                 if user_data["voice_time"] >= 36000:
@@ -768,19 +775,24 @@ class Achievements(commands.Cog):
             await interaction.response.send_message("No members found with achievements.", ephemeral=True)
             return
 
+        # ⬇️ ADD THIS LINE: Get the cog instance.
+        cog = self.bot.get_cog("Achievements")
+
         if member:
             try:
                 index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
                 view = PersistentAchievementView(self.bot, members=sorted_members)
                 view.current_page = index
-                initial_embed = await view.get_current_embed()
+                # ⬇️ MODIFIED LINE: Pass cog and sorted_members.
+                initial_embed = await view.get_current_embed(cog, sorted_members)
                 await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
             except StopIteration:
                 await interaction.response.send_message(
                     f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
         else:
             view = PersistentAchievementView(self.bot, members=sorted_members)
-            initial_embed = await view.get_current_embed()
+            # ⬇️ MODIFIED LINE: Pass cog and sorted_members.
+            initial_embed = await view.get_current_embed(cog, sorted_members)
             await interaction.response.send_message(embed=initial_embed, view=view)
 
 
