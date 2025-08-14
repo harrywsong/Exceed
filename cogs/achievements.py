@@ -139,8 +139,7 @@ class PersistentAchievementView(discord.ui.View):
             members = await self._get_sorted_members()
             if members:
                 # 뷰 객체 생성 시 봇 인스턴스만 전달합니다.
-                view = PersistentAchievementView(self.bot, members=sorted_members)
-
+                view = PersistentAchievementView(self.bot, members=members)
                 # 뷰의 get_current_embed 메서드를 사용하여 초기 임베드를 가져옵니다.
                 initial_embed = await view.get_current_embed(cog, members)
 
