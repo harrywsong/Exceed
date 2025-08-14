@@ -415,8 +415,7 @@ class Achievements(commands.Cog):
             if not member.bot:
                 user_data = self.data.get(member.id, {"general_unlocked": [], "hidden_unlocked": []})
                 unlocked_count = len(user_data["general_unlocked"]) + len(user_data["hidden_unlocked"])
-                if unlocked_count > 0:
-                    member_achievements.append({'member': member, 'count': unlocked_count})
+                member_achievements.append({'member': member, 'count': unlocked_count})
 
         sorted_members = sorted(member_achievements, key=lambda x: x['count'], reverse=True)
         return [item['member'] for item in sorted_members]
@@ -605,9 +604,8 @@ class Achievements(commands.Cog):
                 user_data["holidays_sent"].add(today)
                 if len(user_data["holidays_sent"]) >= 5:
                     self.unlock_achievement(message.author, "Holiday Greeter")
-                self.unlock_achievement(message.author, "The Time Traveler", is_hidden=True)
 
-        now_local = now.astimezone(datetime.timezone(timedelta(hours=message.guild.id % 24)))
+        now_local = now.astimezone(LOCAL_SERVER_TZ)
         if 5 <= now_local.hour < 6: self.unlock_achievement(message.author, "Night Owl")
         if 9 <= now_local.hour < 10: self.unlock_achievement(message.author, "Early Bird")
         if now_local.hour == 0 and now_local.minute == 0: self.unlock_achievement(message.author, "Midnight Mystery",
