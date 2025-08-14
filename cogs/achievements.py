@@ -410,6 +410,15 @@ class Achievements(commands.Cog):
         if not guild:
             return []
 
+        # NEW: Force chunking if not already complete
+        if not guild.chunked:
+            print("Guild not fully chunked; requesting chunks...")  # Debug print (or use self.bot.logger)
+            await guild.chunk()
+
+        # NEW: Debug log to confirm total members fetched
+        total_members = len([m for m in guild.members if not m.bot])
+        print(f"Total non-bot members after chunking: {total_members}")
+
         member_achievements = []
         for member in guild.members:
             if not member.bot:
@@ -419,7 +428,6 @@ class Achievements(commands.Cog):
 
         sorted_members = sorted(member_achievements, key=lambda x: x['count'], reverse=True)
         return [item['member'] for item in sorted_members]
-
     async def post_achievements_display(self):
         channel = self.bot.get_channel(ACHIEVEMENT_CHANNEL_ID)
         if not channel:
