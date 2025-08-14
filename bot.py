@@ -825,8 +825,6 @@ class MyBot(commands.Bot):
         self.logger.info("일일 로그 업로더가 준비될 때까지 기다리는 중...")
     # --- END NEW ---
 
-bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents, chunk_guilds_at_startup=False)
-
 # --- Crash Log Handling ---
 CRASH_LOG_DIR = pathlib.Path(__file__).parent.parent / "logs"
 CRASH_LOG_FILE = CRASH_LOG_DIR / "crash_log.txt"
@@ -862,7 +860,7 @@ async def main():
 
     # Create bot instance
     global bot_instance # Declare global to assign to it
-    bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents)
+    bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents, chunk_guilds_at_startup=False)
 
     # For very early startup, before setup_hook runs, configure a basic console logger.
     # The full logger configuration with DiscordHandler will happen in setup_hook.
