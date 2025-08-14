@@ -860,7 +860,7 @@ async def main():
 
     # Create bot instance
     global bot_instance # Declare global to assign to it
-    bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents, chunk_guilds_at_startup=False)
+    bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents)
 
     # For very early startup, before setup_hook runs, configure a basic console logger.
     # The full logger configuration with DiscordHandler will happen in setup_hook.
