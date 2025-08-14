@@ -516,11 +516,18 @@ class Achievements(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Achievements cog loaded.")
+        print("Achievements cog loaded.")  # Existing
+
+        guild = self.bot.get_guild(GUILD_ID)
+        if guild:
+            print("Forcing guild chunking on startup...")  # Debug
+            await guild.chunk()  # NEW: Manual chunk here
+            print(f"Guild chunked. Total non-bot members: {len([m for m in guild.members if not m.bot])}")  # Debug
+
         if ACHIEVEMENT_CHANNEL_ID:
-            print("Bot starting up. Posting achievements display.")
+            print("Bot starting up. Posting achievements display.")  # Existing
             await self.post_achievements_display()
-            print("Initial achievements display posted.")
+            print("Initial achievements display posted.")  # Existing
 
     @tasks.loop(time=datetime.time(0, 0, 0, tzinfo=LOCAL_SERVER_TZ))
     async def daily_achievements_update(self):

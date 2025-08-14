@@ -601,6 +601,8 @@ intents.members = True          # <--- Recommended for full functionality (e.g.,
 intents.presences = True        # <--- If you use presence updates (often helpful)
 intents.guilds = True           # <--- Guild events are also important
 
+bot_instance = MyBot(command_prefix=config.COMMAND_PREFIX, intents=intents, chunk_guilds_at_startup=False)
+
 class MyBot(commands.Bot):
     def __init__(self, command_prefix, intents):
         super().__init__(command_prefix=command_prefix, intents=intents)
