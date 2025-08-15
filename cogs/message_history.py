@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 import traceback
 import aiohttp  # For downloading attachments
 import io  # Import io for BytesIO
+import os  # For local file saving
 
 from utils import config
 from utils.logger import get_logger
@@ -20,16 +21,25 @@ class MessageLogCog(commands.Cog):
         self.logger.info("메시지 로그 기능이 초기화되었습니다.")
         # Flag to ensure the bot ready message is sent only once
         self._sent_ready_message = False
+        # Media history folder
+        self.media_folder = "mediahistory"
+        os.makedirs(self.media_folder, exist_ok=True)
 
     async def _send_attachment_to_log(self, log_channel, attachment, message_id, description_prefix=""):
-        """Helper function to download and send an attachment to the log channel."""
+        """Helper function to download, save locally, and send an attachment to the log channel."""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(attachment.url) as resp:
                     if resp.status == 200:
                         file_bytes = await resp.read()
+                        # Save to local mediahistory folder
+                        save_path = os.path.join(self.media_folder, f"{message_id}_{attachment.filename}")
+                        with open(save_path, 'wb') as f:
+                            f.write(file_bytes)
+                        self.logger.debug(f"Successfully saved attachment {attachment.filename} to {save_path}.")
+
                         discord_file = discord.File(
-                            fp=io.BytesIO(file_bytes),
+                            save_path,
                             filename=attachment.filename,
                             description=f"{description_prefix}첨부 파일 (메시지 ID: {message_id})"
                         )
