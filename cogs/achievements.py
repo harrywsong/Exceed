@@ -5,17 +5,14 @@ import json
 import os
 from collections import defaultdict
 import datetime
-from datetime import timedelta
+from datetime import timedelta, time as dt_time
 import asyncio
-import pytz
 import traceback
 from typing import Optional
 
 from utils.config import ACHIEVEMENT_DATA_PATH, GHOST_HUNTER_ID, HOLIDAYS, ACHIEVEMENT_CHANNEL_ID, \
     ACHIEVEMENT_ALERT_CHANNEL_ID, GUILD_ID, \
     ACHIEVEMENT_EMOJIS
-
-LOCAL_SERVER_TZ = pytz.timezone("US/Eastern")
 
 
 class PersistentAchievementView(discord.ui.View):
@@ -154,6 +151,7 @@ class PersistentAchievementView(discord.ui.View):
         except Exception as e:
             print(f"업적 메시지 생성 및 전송 실패: {e}")
             traceback.print_exc()
+
 class Achievements(commands.Cog):
     GENERAL_ACHIEVEMENTS = {
         "🎯 Achievement Hunter": "10개의 일반 업적을 달성하세요.",
@@ -202,7 +200,7 @@ class Achievements(commands.Cog):
         "Achievement Hunter": "🎯",
         "Social Butterfly I": "🦋",
         "Social Butterfly II": "🦋",
-        "Social Butterfly III": "🦋",
+        "Social Butterfly III": "�",
         "Explorer": "🗺️",
         "Meme Maker": "😂",
         "Knowledge Keeper": "📚",
@@ -524,20 +522,20 @@ class Achievements(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Achievements cog loaded.")  # Existing
+        print("Achievements cog loaded.")
 
         guild = self.bot.get_guild(GUILD_ID)
         if guild:
-            print("Forcing guild chunking on startup...")  # Debug
-            await guild.chunk()  # NEW: Manual chunk here
-            print(f"Guild chunked. Total non-bot members: {len([m for m in guild.members if not m.bot])}")  # Debug
+            print("Forcing guild chunking on startup...")
+            await guild.chunk()
+            print(f"Guild chunked. Total non-bot members: {len([m for m in guild.members if not m.bot])}")
 
         if ACHIEVEMENT_CHANNEL_ID:
-            print("Bot starting up. Posting achievements display.")  # Existing
+            print("Bot starting up. Posting achievements display.")
             await self.post_achievements_display()
-            print("Initial achievements display posted.")  # Existing
+            print("Initial achievements display posted.")
 
-    @tasks.loop(time=datetime.time(0, 0, 0, tzinfo=LOCAL_SERVER_TZ))
+    @tasks.loop(time=dt_time(hour=0, minute=0))
     async def daily_achievements_update(self):
         try:
             print("Daily achievement update starting.")
@@ -545,6 +543,11 @@ class Achievements(commands.Cog):
             print("Daily achievement update completed.")
         except Exception as e:
             print(f"Daily achievement update failed: {e}\n{traceback.format_exc()}")
+
+    @daily_achievements_update.before_loop
+    async def before_daily_achievements_update(self):
+        await self.bot.wait_until_ready()
+        print("일일 업적 업데이터가 봇이 준비될 때까지 기다리는 중...")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
@@ -570,22 +573,13 @@ class Achievements(commands.Cog):
         user_data = self.data[user_id]
         now = datetime.datetime.now(datetime.timezone.utc)
 
-        # NEW CODE TO HANDLE "Error 404" ACHIEVEMENT FOR SLASH COMMANDS
-        # The code will check if a message starts with a slash and is not a valid registered command.
         if message.content.startswith('/') and message.guild:
             try:
-                # The first word after the slash is the command name.
                 command_name = message.content.split(' ')[0][1:].lower()
-
-                # We need to get a list of all registered slash commands.
-                # Since the command tree is per guild, we check the commands for the message's guild.
                 all_slash_commands = [c.name.lower() for c in self.bot.tree.get_commands(guild=message.guild)]
-
-                # Check if the command exists. If it doesn't, unlock the achievement.
                 if command_name not in all_slash_commands:
                     self.unlock_achievement(message.author, "Error 404", is_hidden=True)
             except IndexError:
-                # This handles cases where the message is just "/" with nothing else.
                 pass
 
         if isinstance(message.channel, discord.DMChannel):
@@ -628,7 +622,7 @@ class Achievements(commands.Cog):
                 if len(user_data["holidays_sent"]) >= 5:
                     self.unlock_achievement(message.author, "Holiday Greeter")
 
-        now_local = now.astimezone(LOCAL_SERVER_TZ)
+        now_local = now.astimezone()
         if 5 <= now_local.hour < 6: self.unlock_achievement(message.author, "Night Owl")
         if 9 <= now_local.hour < 10: self.unlock_achievement(message.author, "Early Bird")
         if now_local.hour == 0 and now_local.minute == 0: self.unlock_achievement(message.author, "Midnight Mystery",
@@ -755,10 +749,8 @@ class Achievements(commands.Cog):
         now = datetime.datetime.now()
         for member_id, user_data in self.data.items():
             member = guild.get_member(member_id)
-            # Check if the member is in a voice channel AND if voice_join_time is a valid datetime object
             voice_join_time = user_data.get("voice_join_time")
             if member and member.voice and member.voice.channel and voice_join_time:
-                # The rest of the logic remains the same
                 duration = now - voice_join_time
                 user_data["voice_time"] += duration.total_seconds()
                 user_data["voice_join_time"] = now
@@ -768,6 +760,11 @@ class Achievements(commands.Cog):
                     self.unlock_achievement(member, "Loyal Listener")
         self.save_data()
 
+    @voice_update_task.before_loop
+    async def before_voice_update_task(self):
+        await self.bot.wait_until_ready()
+        print("음성 업데이트 작업이 봇이 준비될 때까지 기다리는 중...")
+
     @app_commands.command(name="achievements", description="Shows a member's achievements.")
     async def achievements_command(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         sorted_members = await self._get_sorted_members()
@@ -775,7 +772,6 @@ class Achievements(commands.Cog):
             await interaction.response.send_message("No members found with achievements.", ephemeral=True)
             return
 
-        # ⬇️ ADD THIS LINE: Get the cog instance.
         cog = self.bot.get_cog("Achievements")
 
         if member:
@@ -783,7 +779,6 @@ class Achievements(commands.Cog):
                 index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
                 view = PersistentAchievementView(self.bot, members=sorted_members)
                 view.current_page = index
-                # ⬇️ MODIFIED LINE: Pass cog and sorted_members.
                 initial_embed = await view.get_current_embed(cog, sorted_members)
                 await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
             except StopIteration:
@@ -791,7 +786,6 @@ class Achievements(commands.Cog):
                     f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
         else:
             view = PersistentAchievementView(self.bot, members=sorted_members)
-            # ⬇️ MODIFIED LINE: Pass cog and sorted_members.
             initial_embed = await view.get_current_embed(cog, sorted_members)
             await interaction.response.send_message(embed=initial_embed, view=view)
 
