@@ -17,7 +17,8 @@ EASTERN_TZ = pytz.timezone("US/Eastern")
 
 class LeaderboardView(discord.ui.View):
     def __init__(self, cog, interaction: Optional[discord.Interaction], entries: List[dict]):
-        super().__init__(timeout=120)
+        # The view will no longer time out, preventing "interaction failed" errors on buttons.
+        super().__init__(timeout=None)
         self.cog = cog
         self.interaction = interaction
         self.entries = entries
