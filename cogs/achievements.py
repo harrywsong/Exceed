@@ -535,7 +535,7 @@ class Achievements(commands.Cog):
             await self.post_achievements_display()
             print("Initial achievements display posted.")
 
-    @tasks.loop(time=dt_time(hour=0, minute=0))
+    @tasks.loop(time=dt_time(hour=4, minute=0))
     async def daily_achievements_update(self):
         try:
             print("Daily achievement update starting.")
