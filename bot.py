@@ -978,11 +978,8 @@ async def main():
         startup_logger.info("🚀 봇 시작 중...")
 
         # Start bot with timeout
-        await asyncio.wait_for(bot.start(config.DISCORD_TOKEN), timeout=180.0)
+        await bot.start(config.DISCORD_TOKEN)
 
-    except asyncio.TimeoutError:
-        startup_logger.critical("❌ 봇 시작 시간 초과 (60초)")
-        sys.exit(1)
     except discord.LoginFailure:
         startup_logger.critical("❌ Discord 로그인 실패 - 토큰을 확인하세요")
         sys.exit(1)
