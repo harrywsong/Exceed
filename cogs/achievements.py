@@ -12,7 +12,8 @@ from typing import Optional
 
 from utils.config import ACHIEVEMENT_DATA_PATH, GHOST_HUNTER_ID, HOLIDAYS, ACHIEVEMENT_CHANNEL_ID, \
     ACHIEVEMENT_ALERT_CHANNEL_ID, GUILD_ID, \
-    ACHIEVEMENT_EMOJIS
+    ACHIEVEMENT_EMOJIS, LOG_CHANNEL_ID
+from utils.logger import get_logger
 
 
 class PersistentAchievementView(discord.ui.View):
@@ -30,6 +31,7 @@ class PersistentAchievementView(discord.ui.View):
         cog = self.bot.get_cog("Achievements")
         if not cog:
             # If the cog can't be found for any reason, return safely.
+            cog.logger.error("PersistentAchievementView: Achievements cog not found")
             return None, None
 
         # Now, check if members need to be fetched.
@@ -114,7 +116,9 @@ class PersistentAchievementView(discord.ui.View):
     async def post_achievements_display(self):
         channel = self.bot.get_channel(ACHIEVEMENT_CHANNEL_ID)
         if not channel:
-            print(f"Error: Leaderboard channel with ID {ACHIEVEMENT_CHANNEL_ID} not found.")
+            cog = self.bot.get_cog("Achievements")
+            if cog:
+                cog.logger.error(f"Achievement channel with ID {ACHIEVEMENT_CHANNEL_ID} not found.")
             return
 
         try:
@@ -125,16 +129,21 @@ class PersistentAchievementView(discord.ui.View):
                 ):
                     try:
                         await message.delete()
-                        print(f"이전 업적 메시지 삭제 완료 (ID: {message.id}).")
+                        cog = self.bot.get_cog("Achievements")
+                        if cog:
+                            cog.logger.info(f"이전 업적 메시지 삭제 완료 (ID: {message.id})")
                     except discord.Forbidden:
-                        print("삭제 권한이 없습니다.")
+                        cog = self.bot.get_cog("Achievements")
+                        if cog:
+                            cog.logger.error("삭제 권한이 없습니다.")
                     except discord.NotFound:
-                        print("메시지를 찾을 수 없어 삭제를 건너뜁니다.")
+                        cog = self.bot.get_cog("Achievements")
+                        if cog:
+                            cog.logger.warning("메시지를 찾을 수 없어 삭제를 건너뜁니다.")
 
             # 새로운 임베드를 생성하고 지속적인 뷰와 함께 게시합니다.
             cog = self.bot.get_cog("Achievements")
             if not cog:
-                print("Achievements cog not found.")
                 return
 
             members = await self._get_sorted_members()
@@ -145,12 +154,15 @@ class PersistentAchievementView(discord.ui.View):
                 initial_embed = await view.get_current_embed(cog, members)
 
                 await channel.send(embed=initial_embed, view=view)
+                cog.logger.info("업적 현황 메시지 게시 완료")
             else:
                 await channel.send(embed=discord.Embed(description="No members found with achievements."))
 
         except Exception as e:
-            print(f"업적 메시지 생성 및 전송 실패: {e}")
-            traceback.print_exc()
+            cog = self.bot.get_cog("Achievements")
+            if cog:
+                cog.logger.error(f"업적 메시지 생성 및 전송 실패: {e}\n{traceback.format_exc()}")
+
 
 class Achievements(commands.Cog):
     GENERAL_ACHIEVEMENTS = {
@@ -163,7 +175,7 @@ class Achievements(commands.Cog):
         "📚 Knowledge Keeper": "20개의 링크를 공유하세요.",
         "🎄 Holiday Greeter": "5개의 다른 공휴일에 메시지를 보내세요.",
         "🦉 Night Owl": "새벽 5시에서 6시 사이에 메시지를 보내세요.",
-        "🐦 Early Bird": "오전 9시에서 10시 사이에 메시지를 보내세요.",
+        "🦅 Early Bird": "오전 9시에서 10시 사이에 메시지를 보내세요.",
         "🗓️ Daily Devotee": "7일 연속으로 메시지를 보내세요.",
         "⚔️ Weekend Warrior": "10번의 주말에 메시지를 보내세요.",
         "🎂 First Anniversary": "봇과 함께한 1주년을 맞이하세요.",
@@ -190,23 +202,23 @@ class Achievements(commands.Cog):
         "✒️ Invisible Ink": "아무도 볼 수 없는 비밀 메시지를 만들어보세요.",
         "📢 Echo Chamber": "연속된 외침이 만들어내는 소리, 그 메아리를 들어보세요.",
         "🚶 Shadow Lurker": "그림자 속에 숨어 있다가 빛 속으로 걸어 나오세요.",
-        "✍️ Phantom Poster": "당신의 메시지는 유령처럼 재빨리 모습을 바꿉니다. 아무도 그 변화를 눈치채지 못하게 해보세요.",
+        "✏️ Phantom Poster": "당신의 메시지는 유령처럼 재빨리 모습을 바꿉니다. 아무도 그 변화를 눈치채지 못하게 해보세요.",
         "❤️ Secret Admirer": "봇의 마음에 불을 붙여보세요.",
-        "🔍 Error 404": "존재하지 않는 페이지를 찾아 헤매는 것처럼 명령어를 입력해보세요.",
-        "🔔 Ping Master": "봇에게 당신의 존재를 알리세요."
+        "📍 Error 404": "존재하지 않는 페이지를 찾아 헤매는 것처럼 명령어를 입력해보세요.",
+        "📟 Ping Master": "봇에게 당신의 존재를 알리세요."
     }
 
     ACHIEVEMENT_EMOJI_MAP = {
         "Achievement Hunter": "🎯",
         "Social Butterfly I": "🦋",
         "Social Butterfly II": "🦋",
-        "Social Butterfly III": "�",
+        "Social Butterfly III": "🦋",
         "Explorer": "🗺️",
         "Meme Maker": "😂",
         "Knowledge Keeper": "📚",
         "Holiday Greeter": "🎄",
         "Night Owl": "🦉",
-        "Early Bird": "🐦",
+        "Early Bird": "🦅",
         "Daily Devotee": "🗓️",
         "Weekend Warrior": "⚔️",
         "First Anniversary": "🎂",
@@ -230,14 +242,21 @@ class Achievements(commands.Cog):
         "Invisible Ink": "✒️",
         "Echo Chamber": "📢",
         "Shadow Lurker": "🚶",
-        "Phantom Poster": "✍️",
+        "Phantom Poster": "✏️",
         "Secret Admirer": "❤️",
-        "Error 404": "🔍",
-        "Ping Master": "🔔"
+        "Error 404": "📍",
+        "Ping Master": "📟"
     }
 
     def __init__(self, bot):
         self.bot = bot
+        self.logger = get_logger(
+            "업적 시스템",
+            bot=bot,
+            discord_log_channel_id=LOG_CHANNEL_ID,
+        )
+        self.logger.info("업적 시스템이 초기화되었습니다.")
+
         self.data = defaultdict(lambda: {
             "general_unlocked": [],
             "hidden_unlocked": [],
@@ -277,99 +296,111 @@ class Achievements(commands.Cog):
 
     def load_data(self):
         if os.path.exists(ACHIEVEMENT_DATA_PATH):
-            with open(ACHIEVEMENT_DATA_PATH, 'r') as f:
-                data = json.load(f)
-                for user_id, user_data in data.items():
-                    user_id = int(user_id)
-                    user_data["different_reactions"] = set(user_data["different_reactions"])
-                    user_data["channels_visited"] = set(user_data["channels_visited"])
-                    user_data["message_ids_reacted_to"] = set(user_data["message_ids_reacted_to"])
-                    user_data["holidays_sent"] = set(user_data["holidays_sent"])
+            try:
+                with open(ACHIEVEMENT_DATA_PATH, 'r') as f:
+                    data = json.load(f)
+                    for user_id, user_data in data.items():
+                        user_id = int(user_id)
+                        user_data["different_reactions"] = set(user_data["different_reactions"])
+                        user_data["channels_visited"] = set(user_data["channels_visited"])
+                        user_data["message_ids_reacted_to"] = set(user_data["message_ids_reacted_to"])
+                        user_data["holidays_sent"] = set(user_data["holidays_sent"])
 
-                    # Convert ISO strings back to datetime objects
-                    user_data["last_message_date"] = (
-                        datetime.datetime.fromisoformat(user_data["last_message_date"])
-                        if user_data["last_message_date"]
-                        else None
-                    )
-                    user_data["last_edit_time"] = (
-                        datetime.datetime.fromisoformat(user_data.get("last_edit_time"))
-                        if user_data.get("last_edit_time")
-                        else None
-                    )
-                    user_data["last_lurker_message"] = (
-                        datetime.datetime.fromisoformat(user_data.get("last_lurker_message"))
-                        if user_data.get("last_lurker_message")
-                        else None
-                    )
-                    user_data["last_weekend_date"] = (
-                        datetime.date.fromisoformat(user_data.get("last_weekend_date"))
-                        if user_data.get("last_weekend_date")
-                        else None
-                    )
-                    user_data["edit_timestamps"] = [
-                        datetime.datetime.fromisoformat(ts)
-                        for ts in user_data.get("edit_timestamps", [])
-                    ]
-                    user_data["voice_join_time"] = (
-                        datetime.datetime.fromisoformat(user_data.get("voice_join_time"))
-                        if user_data.get("voice_join_time")
-                        else None
-                    )
-                    self.data[user_id] = user_data
+                        # Convert ISO strings back to datetime objects
+                        user_data["last_message_date"] = (
+                            datetime.datetime.fromisoformat(user_data["last_message_date"])
+                            if user_data["last_message_date"]
+                            else None
+                        )
+                        user_data["last_edit_time"] = (
+                            datetime.datetime.fromisoformat(user_data.get("last_edit_time"))
+                            if user_data.get("last_edit_time")
+                            else None
+                        )
+                        user_data["last_lurker_message"] = (
+                            datetime.datetime.fromisoformat(user_data.get("last_lurker_message"))
+                            if user_data.get("last_lurker_message")
+                            else None
+                        )
+                        user_data["last_weekend_date"] = (
+                            datetime.date.fromisoformat(user_data.get("last_weekend_date"))
+                            if user_data.get("last_weekend_date")
+                            else None
+                        )
+                        user_data["edit_timestamps"] = [
+                            datetime.datetime.fromisoformat(ts)
+                            for ts in user_data.get("edit_timestamps", [])
+                        ]
+                        user_data["voice_join_time"] = (
+                            datetime.datetime.fromisoformat(user_data.get("voice_join_time"))
+                            if user_data.get("voice_join_time")
+                            else None
+                        )
+                        self.data[user_id] = user_data
+                self.logger.info(f"업적 데이터 로드 완료: {len(self.data)}명의 사용자 데이터")
+            except Exception as e:
+                self.logger.error(f"업적 데이터 로드 실패: {e}\n{traceback.format_exc()}")
         else:
             if not os.path.exists('data'):
                 os.makedirs('data')
             self.save_data()
+            self.logger.info("업적 데이터 파일이 없어서 새로 생성했습니다.")
+
     def save_data(self):
-        with open(ACHIEVEMENT_DATA_PATH, 'w') as f:
-            serializable_data = {}
-            for user_id, user_data in self.data.items():
-                serializable_data[user_id] = {
-                    **user_data,
-                    "different_reactions": list(user_data["different_reactions"]),
-                    "channels_visited": list(user_data["channels_visited"]),
-                    "message_ids_reacted_to": list(user_data["message_ids_reacted_to"]),
-                    "holidays_sent": list(user_data["holidays_sent"]),
-                    "last_message_date": (
-                        user_data["last_message_date"].isoformat()
-                        if user_data["last_message_date"]
-                        else None
-                    ),
-                    "last_edit_time": (
-                        user_data["last_edit_time"].isoformat()
-                        if user_data.get("last_edit_time")
-                        else None
-                    ),
-                    "last_lurker_message": (
-                        user_data["last_lurker_message"].isoformat()
-                        if user_data.get("last_lurker_message")
-                        else None
-                    ),
-                    "last_weekend_date": (
-                        user_data["last_weekend_date"].isoformat()
-                        if user_data.get("last_weekend_date")
-                        else None
-                    ),
-                    "edit_timestamps": [
-                        ts.isoformat() for ts in user_data.get("edit_timestamps", [])
-                    ],
-                    "voice_join_time": (
-                        user_data.get("voice_join_time").isoformat()
-                        if user_data.get("voice_join_time")
-                        else None
-                    ),
-                }
-            json.dump(serializable_data, f, indent=4)
+        try:
+            with open(ACHIEVEMENT_DATA_PATH, 'w') as f:
+                serializable_data = {}
+                for user_id, user_data in self.data.items():
+                    serializable_data[user_id] = {
+                        **user_data,
+                        "different_reactions": list(user_data["different_reactions"]),
+                        "channels_visited": list(user_data["channels_visited"]),
+                        "message_ids_reacted_to": list(user_data["message_ids_reacted_to"]),
+                        "holidays_sent": list(user_data["holidays_sent"]),
+                        "last_message_date": (
+                            user_data["last_message_date"].isoformat()
+                            if user_data["last_message_date"]
+                            else None
+                        ),
+                        "last_edit_time": (
+                            user_data["last_edit_time"].isoformat()
+                            if user_data.get("last_edit_time")
+                            else None
+                        ),
+                        "last_lurker_message": (
+                            user_data["last_lurker_message"].isoformat()
+                            if user_data.get("last_lurker_message")
+                            else None
+                        ),
+                        "last_weekend_date": (
+                            user_data["last_weekend_date"].isoformat()
+                            if user_data.get("last_weekend_date")
+                            else None
+                        ),
+                        "edit_timestamps": [
+                            ts.isoformat() for ts in user_data.get("edit_timestamps", [])
+                        ],
+                        "voice_join_time": (
+                            user_data.get("voice_join_time").isoformat()
+                            if user_data.get("voice_join_time")
+                            else None
+                        ),
+                    }
+                json.dump(serializable_data, f, indent=4)
+                self.logger.debug("업적 데이터 저장 완료")
+        except Exception as e:
+            self.logger.error(f"업적 데이터 저장 실패: {e}\n{traceback.format_exc()}")
+
     def cog_unload(self):
         self.voice_update_task.cancel()
         self.daily_achievements_update.cancel()
+        self.logger.info("업적 시스템 Cog 언로드됨")
 
     async def _send_achievement_notification(self, member, achievement_name, is_hidden):
         try:
             channel = self.bot.get_channel(ACHIEVEMENT_ALERT_CHANNEL_ID)
             if not channel:
-                print(f"Error: Achievement alert channel with ID {ACHIEVEMENT_ALERT_CHANNEL_ID} not found.")
+                self.logger.error(f"업적 알림 채널 ID {ACHIEVEMENT_ALERT_CHANNEL_ID}를 찾을 수 없습니다.")
                 return
 
             emoji = self.ACHIEVEMENT_EMOJI_MAP.get(achievement_name, '🏆' if not is_hidden else '🤫')
@@ -390,10 +421,10 @@ class Achievements(commands.Cog):
                 embed.set_thumbnail(url=member.avatar.url)
 
             await channel.send(embed=embed)
-            print(f"Achievement embed for {member.name} ({achievement_name}) sent to channel {channel.name}.")
+            self.logger.info(f"업적 알림 전송 완료: {member.name} ({achievement_name})")
 
         except Exception as e:
-            print(f"Failed to send achievement notification for {member.id} ({achievement_name}): {e}")
+            self.logger.error(f"업적 알림 전송 실패 - 사용자: {member.id}, 업적: {achievement_name}: {e}\n{traceback.format_exc()}")
 
     def unlock_achievement(self, user, achievement_name, is_hidden=False):
         user_id = user.id
@@ -402,7 +433,8 @@ class Achievements(commands.Cog):
         if achievement_name not in unlocked_list:
             unlocked_list.append(achievement_name)
             self.save_data()
-            print(f"Achievement Unlocked for {user_id}: {achievement_name}")
+            achievement_type = "히든" if is_hidden else "일반"
+            self.logger.info(f"업적 달성: {user.name} (ID: {user_id}) - {achievement_name} ({achievement_type})")
             self.bot.loop.create_task(self._send_achievement_notification(user, achievement_name, is_hidden))
             self.bot.loop.create_task(self.post_achievements_display())
 
@@ -414,16 +446,17 @@ class Achievements(commands.Cog):
     async def _get_sorted_members(self):
         guild = self.bot.get_guild(GUILD_ID)
         if not guild:
+            self.logger.error(f"길드 ID {GUILD_ID}를 찾을 수 없습니다.")
             return []
 
-        # NEW: Force chunking if not already complete
+        # Force chunking if not already complete
         if not guild.chunked:
-            print("Guild not fully chunked; requesting chunks...")  # Debug print (or use self.bot.logger)
+            self.logger.info("길드가 완전히 청크되지 않음. 청크 요청 중...")
             await guild.chunk()
 
-        # NEW: Debug log to confirm total members fetched
+        # Debug log to confirm total members fetched
         total_members = len([m for m in guild.members if not m.bot])
-        print(f"Total non-bot members after chunking: {total_members}")
+        self.logger.info(f"청크 완료 후 총 비봇 멤버 수: {total_members}")
 
         member_achievements = []
         for member in guild.members:
@@ -434,25 +467,32 @@ class Achievements(commands.Cog):
 
         sorted_members = sorted(member_achievements, key=lambda x: x['count'], reverse=True)
         return [item['member'] for item in sorted_members]
+
     async def post_achievements_display(self):
         channel = self.bot.get_channel(ACHIEVEMENT_CHANNEL_ID)
         if not channel:
-            print(f"Error: Leaderboard channel with ID {ACHIEVEMENT_CHANNEL_ID} not found.")
+            self.logger.error(f"업적 채널 ID {ACHIEVEMENT_CHANNEL_ID}를 찾을 수 없습니다.")
             return
 
         try:
+            # Delete previous messages
+            deleted_count = 0
             async for message in channel.history(limit=50):
                 if message.author == self.bot.user and message.embeds and (
                         "업적 현황" in message.embeds[0].title or "업적 목록 및 힌트" in message.embeds[0].title):
                     try:
                         await message.delete()
-                        print(f"이전 업적 메시지 삭제 완료 (ID: {message.id})")
+                        deleted_count += 1
+                        self.logger.debug(f"이전 업적 메시지 삭제 (ID: {message.id})")
                     except discord.NotFound:
                         pass
 
+            if deleted_count > 0:
+                self.logger.info(f"{deleted_count}개의 이전 업적 메시지 삭제 완료")
+
             list_embed = await self._create_achievement_list_embed()
             await channel.send(embed=list_embed)
-            print("업적 목록 및 힌트 메시지 게시 완료.")
+            self.logger.info("업적 목록 및 힌트 메시지 게시 완료")
 
             sorted_members = await self._get_sorted_members()
             if sorted_members:
@@ -461,12 +501,14 @@ class Achievements(commands.Cog):
                 cog = self.bot.get_cog("Achievements")
                 initial_embed = await view.get_current_embed(cog, sorted_members)
                 self.current_message = await channel.send(embed=initial_embed, view=view)
-                print(f"업적 현황 메시지 게시 완료.")
+                self.logger.info(f"업적 현황 메시지 게시 완료 (ID: {self.current_message.id})")
             else:
                 await channel.send("업적을 달성한 멤버가 없습니다.")
+                self.logger.warning("업적을 달성한 멤버가 없습니다.")
 
         except Exception as e:
-            print(f"업적 현황 메시지 게시 실패: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"업적 현황 메시지 게시 실패: {e}\n{traceback.format_exc()}")
+
     async def _create_achievements_embed(self, member: discord.Member, rank: int, total_members: int) -> discord.Embed:
         user_id = member.id
         user_data = self.data.get(user_id, defaultdict(lambda: {"general_unlocked": [], "hidden_unlocked": []}))
@@ -507,6 +549,7 @@ class Achievements(commands.Cog):
             embed.add_field(name=f"🤫 히든 업적 (0/{total_hidden})", value="아직 달성한 히든 업적이 없습니다.", inline=False)
 
         return embed
+
     async def _create_achievement_list_embed(self) -> discord.Embed:
         general_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.GENERAL_ACHIEVEMENTS.items())
         hidden_list = "\n".join(f"**{name}**: {desc}" for name, desc in self.HIDDEN_ACHIEVEMENTS.items())
@@ -522,38 +565,41 @@ class Achievements(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Achievements cog loaded.")
+        self.logger.info("업적 시스템 준비 완료")
 
         guild = self.bot.get_guild(GUILD_ID)
         if guild:
-            print("Forcing guild chunking on startup...")
+            self.logger.info("봇 시작 시 길드 청킹 강제 실행 중...")
             await guild.chunk()
-            print(f"Guild chunked. Total non-bot members: {len([m for m in guild.members if not m.bot])}")
+            total_members = len([m for m in guild.members if not m.bot])
+            self.logger.info(f"길드 청킹 완료. 총 비봇 멤버 수: {total_members}")
 
         if ACHIEVEMENT_CHANNEL_ID:
-            print("Bot starting up. Posting achievements display.")
+            self.logger.info("봇 시작 중. 업적 디스플레이 게시 시작.")
             await self.post_achievements_display()
-            print("Initial achievements display posted.")
+            self.logger.info("초기 업적 디스플레이 게시 완료.")
 
     @tasks.loop(time=dt_time(hour=4, minute=0))
     async def daily_achievements_update(self):
         try:
-            print("Daily achievement update starting.")
+            self.logger.info("일일 업적 업데이트 시작.")
             await self.post_achievements_display()
-            print("Daily achievement update completed.")
+            self.logger.info("일일 업적 업데이트 완료.")
         except Exception as e:
-            print(f"Daily achievement update failed: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"일일 업적 업데이트 실패: {e}\n{traceback.format_exc()}")
 
     @daily_achievements_update.before_loop
     async def before_daily_achievements_update(self):
         await self.bot.wait_until_ready()
-        print("일일 업적 업데이터가 봇이 준비될 때까지 기다리는 중...")
+        self.logger.info("일일 업적 업데이터가 봇이 준비될 때까지 기다리는 중...")
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        if member.bot: return
+        if member.bot:
+            return
         self.data[member.id]["join_date"] = member.joined_at.isoformat()
         self.save_data()
+        self.logger.info(f"새 멤버 가입 기록: {member.name} (ID: {member.id})")
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
@@ -563,6 +609,7 @@ class Achievements(commands.Cog):
                 self.unlock_achievement(after, "Boost Buddy")
                 user_data["has_boosted"] = True
                 self.save_data()
+                self.logger.info(f"서버 부스팅 업적 달성: {after.name} (ID: {after.id})")
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -573,6 +620,7 @@ class Achievements(commands.Cog):
         user_data = self.data[user_id]
         now = datetime.datetime.now(datetime.timezone.utc)
 
+        # Error 404 achievement check
         if message.content.startswith('/') and message.guild:
             try:
                 command_name = message.content.split(' ')[0][1:].lower()
@@ -582,39 +630,53 @@ class Achievements(commands.Cog):
             except IndexError:
                 pass
 
+        # Handle DM messages
         if isinstance(message.channel, discord.DMChannel):
             if "안녕" in message.content:
                 self.unlock_achievement(message.author, "The Echo", is_hidden=True)
             self.save_data()
             return
 
+        # Set join date if not already set
         if not user_data.get("join_date"):
             user_data["join_date"] = message.author.joined_at.isoformat()
 
+        # First Anniversary check
         join_date = datetime.datetime.fromisoformat(user_data["join_date"])
         if now.month == join_date.month and now.day == join_date.day:
             self.unlock_achievement(message.author, "First Anniversary")
 
+        # Veteran achievement
         if (now - join_date).days >= 365:
             self.unlock_achievement(message.author, "Veteran")
 
+        # Message count and related achievements
         user_data["message_count"] += 1
         user_data["channels_visited"].add(message.channel.id)
+
         if len(user_data["channels_visited"]) >= 10:
             self.unlock_achievement(message.author, "Explorer")
 
-        if user_data["message_count"] >= 100: self.unlock_achievement(message.author, "Social Butterfly I")
-        if user_data["message_count"] >= 500: self.unlock_achievement(message.author, "Social Butterfly II")
-        if user_data["message_count"] >= 1000: self.unlock_achievement(message.author, "Social Butterfly III")
+        if user_data["message_count"] >= 100:
+            self.unlock_achievement(message.author, "Social Butterfly I")
+        if user_data["message_count"] >= 500:
+            self.unlock_achievement(message.author, "Social Butterfly II")
+        if user_data["message_count"] >= 1000:
+            self.unlock_achievement(message.author, "Social Butterfly III")
 
+        # Meme Maker achievement
         if message.attachments or message.embeds:
             user_data["meme_count"] = user_data.get("meme_count", 0) + 1
-            if user_data["meme_count"] >= 50: self.unlock_achievement(message.author, "Meme Maker")
+            if user_data["meme_count"] >= 50:
+                self.unlock_achievement(message.author, "Meme Maker")
 
+        # Knowledge Keeper achievement
         if "http" in message.content or "www" in message.content:
             user_data["link_count"] = user_data.get("link_count", 0) + 1
-            if user_data["link_count"] >= 20: self.unlock_achievement(message.author, "Knowledge Keeper")
+            if user_data["link_count"] >= 20:
+                self.unlock_achievement(message.author, "Knowledge Keeper")
 
+        # Holiday Greeter achievement
         today = now.strftime("%B %d").lower()
         if today in HOLIDAYS:
             if today not in user_data["holidays_sent"]:
@@ -622,32 +684,42 @@ class Achievements(commands.Cog):
                 if len(user_data["holidays_sent"]) >= 5:
                     self.unlock_achievement(message.author, "Holiday Greeter")
 
+        # Time-based achievements
         now_local = now.astimezone()
-        if 5 <= now_local.hour < 6: self.unlock_achievement(message.author, "Night Owl")
-        if 9 <= now_local.hour < 10: self.unlock_achievement(message.author, "Early Bird")
-        if now_local.hour == 0 and now_local.minute == 0: self.unlock_achievement(message.author, "Midnight Mystery",
-                                                                                  is_hidden=True)
+        if 5 <= now_local.hour < 6:
+            self.unlock_achievement(message.author, "Night Owl")
+        if 9 <= now_local.hour < 10:
+            self.unlock_achievement(message.author, "Early Bird")
+        if now_local.hour == 0 and now_local.minute == 0:
+            self.unlock_achievement(message.author, "Midnight Mystery", is_hidden=True)
 
+        # Daily streak calculation
         last_message_date = user_data["last_message_date"]
         if last_message_date and now.date() == last_message_date.date() + timedelta(days=1):
             user_data["daily_streak"] = user_data.get("daily_streak", 0) + 1
         elif not last_message_date or now.date() != last_message_date.date():
             user_data["daily_streak"] = 1
         user_data["last_message_date"] = now
-        if user_data["daily_streak"] >= 7: self.unlock_achievement(message.author, "Daily Devotee")
 
+        if user_data["daily_streak"] >= 7:
+            self.unlock_achievement(message.author, "Daily Devotee")
+
+        # Weekend Warrior achievement
         if now.weekday() >= 5:
             if not user_data.get("last_weekend_date") or (now.date() - user_data["last_weekend_date"]).days > 2:
                 user_data["weekend_streak"] = 1
             else:
                 user_data["weekend_streak"] = user_data.get("weekend_streak", 0) + 1
             user_data["last_weekend_date"] = now.date()
-            if user_data["weekend_streak"] >= 10: self.unlock_achievement(message.author, "Weekend Warrior")
+            if user_data["weekend_streak"] >= 10:
+                self.unlock_achievement(message.author, "Weekend Warrior")
 
+        # Zero Gravity achievement (only person online)
         online_members = [m for m in message.guild.members if m.status != discord.Status.offline and not m.bot]
         if len(online_members) == 1 and online_members[0].id == message.author.id:
             self.unlock_achievement(message.author, "Zero Gravity", is_hidden=True)
 
+        # Time Capsule achievement (replying to old message)
         if message.reference:
             try:
                 referenced_message = await message.channel.fetch_message(message.reference.message_id)
@@ -656,9 +728,11 @@ class Achievements(commands.Cog):
             except discord.NotFound:
                 pass
 
+        # Hidden achievements based on content
         cleaned_content = ''.join(char.lower() for char in message.content if char.isalnum())
         if cleaned_content and cleaned_content == cleaned_content[::-1] and len(cleaned_content) > 2:
             self.unlock_achievement(message.author, "Palindrome Pro", is_hidden=True)
+
         if "사랑해" in message.content:
             self.unlock_achievement(message.author, "The Unmentionable", is_hidden=True)
         if "멸망전" in message.content:
@@ -670,6 +744,7 @@ class Achievements(commands.Cog):
         if '||' in message.content:
             self.unlock_achievement(message.author, "Invisible Ink", is_hidden=True)
 
+        # Echo Chamber achievement (consecutive identical messages)
         if user_data.get("last_message_text") == message.content:
             user_data["consecutive_messages"] = user_data.get("consecutive_messages", 0) + 1
             if user_data["consecutive_messages"] >= 3:
@@ -678,6 +753,7 @@ class Achievements(commands.Cog):
             user_data["consecutive_messages"] = 1
         user_data["last_message_text"] = message.content
 
+        # Shadow Lurker achievement (returning after 7 days)
         if user_data.get("last_lurker_message") and (now - user_data["last_lurker_message"]).days >= 7:
             self.unlock_achievement(message.author, "Shadow Lurker", is_hidden=True)
         user_data["last_lurker_message"] = now
@@ -696,17 +772,23 @@ class Achievements(commands.Cog):
         user_data["different_reactions"].add(emoji_id)
         user_data["message_ids_reacted_to"].add(payload.message_id)
 
-        if len(user_data["different_reactions"]) >= 10:
-            self.unlock_achievement(self.bot.get_user(user_id), "The Collector")
+        user = self.bot.get_user(user_id)
+        if user:
+            if len(user_data["different_reactions"]) >= 10:
+                self.unlock_achievement(user, "The Collector")
 
-        if len(user_data["message_ids_reacted_to"]) >= 50:
-            self.unlock_achievement(self.bot.get_user(user_id), "Reaction Responder")
+            if len(user_data["message_ids_reacted_to"]) >= 50:
+                self.unlock_achievement(user, "Reaction Responder")
 
-        if payload.emoji.name == '❤️':
-            channel = self.bot.get_channel(payload.channel_id)
-            message = await channel.fetch_message(payload.message_id)
-            if message.author.id == self.bot.user.id:
-                self.unlock_achievement(self.bot.get_user(user_id), "Secret Admirer", is_hidden=True)
+            # Secret Admirer achievement (reacting with heart to bot messages)
+            if payload.emoji.name == '❤️':
+                try:
+                    channel = self.bot.get_channel(payload.channel_id)
+                    message = await channel.fetch_message(payload.message_id)
+                    if message.author.id == self.bot.user.id:
+                        self.unlock_achievement(user, "Secret Admirer", is_hidden=True)
+                except:
+                    pass
 
         self.save_data()
 
@@ -717,7 +799,9 @@ class Achievements(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message_edit(self, before, after):
-        if after.author.bot: return
+        if after.author.bot:
+            return
+
         user_id = after.author.id
         user_data = self.data[user_id]
 
@@ -732,13 +816,19 @@ class Achievements(commands.Cog):
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member, before, after):
-        if member.bot: return
+        if member.bot:
+            return
+
         if before.channel is None and after.channel is not None:
+            # Member joined voice channel
             self.data[member.id]["voice_join_time"] = datetime.datetime.now()
+            self.logger.debug(f"음성 채널 입장: {member.name}")
         elif before.channel is not None and after.channel is None and "voice_join_time" in self.data[member.id]:
+            # Member left voice channel
             duration = datetime.datetime.now() - self.data[member.id]["voice_join_time"]
             self.data[member.id]["voice_time"] += duration.total_seconds()
             del self.data[member.id]["voice_join_time"]
+            self.logger.debug(f"음성 채널 퇴장: {member.name}, 세션 시간: {duration.total_seconds():.1f}초")
             self.save_data()
 
     @tasks.loop(minutes=1)
@@ -746,7 +836,10 @@ class Achievements(commands.Cog):
         guild = self.bot.get_guild(GUILD_ID)
         if not guild:
             return
+
         now = datetime.datetime.now()
+        updated_count = 0
+
         for member_id, user_data in self.data.items():
             member = guild.get_member(member_id)
             voice_join_time = user_data.get("voice_join_time")
@@ -754,40 +847,54 @@ class Achievements(commands.Cog):
                 duration = now - voice_join_time
                 user_data["voice_time"] += duration.total_seconds()
                 user_data["voice_join_time"] = now
-                if user_data["voice_time"] >= 36000:
+                updated_count += 1
+
+                # Check for voice achievements
+                if user_data["voice_time"] >= 36000:  # 10 hours
                     self.unlock_achievement(member, "Voice Veteran")
-                if user_data["voice_time"] >= 180000:
+                if user_data["voice_time"] >= 180000:  # 50 hours
                     self.unlock_achievement(member, "Loyal Listener")
-        self.save_data()
+
+        if updated_count > 0:
+            self.save_data()
+            self.logger.debug(f"음성 시간 업데이트: {updated_count}명")
 
     @voice_update_task.before_loop
     async def before_voice_update_task(self):
         await self.bot.wait_until_ready()
-        print("음성 업데이트 작업이 봇이 준비될 때까지 기다리는 중...")
+        self.logger.info("음성 업데이트 작업이 봇이 준비될 때까지 기다리는 중...")
 
     @app_commands.command(name="achievements", description="Shows a member's achievements.")
     async def achievements_command(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
-        sorted_members = await self._get_sorted_members()
-        if not sorted_members:
-            await interaction.response.send_message("No members found with achievements.", ephemeral=True)
-            return
+        try:
+            sorted_members = await self._get_sorted_members()
+            if not sorted_members:
+                await interaction.response.send_message("No members found with achievements.", ephemeral=True)
+                return
 
-        cog = self.bot.get_cog("Achievements")
+            cog = self.bot.get_cog("Achievements")
 
-        if member:
-            try:
-                index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
+            if member:
+                try:
+                    index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
+                    view = PersistentAchievementView(self.bot, members=sorted_members)
+                    view.current_page = index
+                    initial_embed = await view.get_current_embed(cog, sorted_members)
+                    await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
+                    self.logger.info(f"업적 명령어 실행 (특정 멤버): {member.name}")
+                except StopIteration:
+                    await interaction.response.send_message(
+                        f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
+            else:
                 view = PersistentAchievementView(self.bot, members=sorted_members)
-                view.current_page = index
                 initial_embed = await view.get_current_embed(cog, sorted_members)
-                await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
-            except StopIteration:
-                await interaction.response.send_message(
-                    f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
-        else:
-            view = PersistentAchievementView(self.bot, members=sorted_members)
-            initial_embed = await view.get_current_embed(cog, sorted_members)
-            await interaction.response.send_message(embed=initial_embed, view=view)
+                await interaction.response.send_message(embed=initial_embed, view=view)
+                self.logger.info("업적 명령어 실행 (전체 리더보드)")
+
+        except Exception as e:
+            self.logger.error(f"업적 명령어 실행 실패: {e}\n{traceback.format_exc()}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("업적 데이터를 불러오는 중 오류가 발생했습니다.", ephemeral=True)
 
 
 async def setup(bot):

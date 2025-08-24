@@ -6,13 +6,12 @@ import traceback
 
 from utils import config
 from utils.logger import get_logger
-from datetime import time
+from datetime import datetime, time
 import pytz
 import asyncio
 import urllib.parse
 
 LEADERBOARD_PAGE_SIZE = 5
-EASTERN_TZ = pytz.timezone("US/Eastern")
 
 
 class LeaderboardView(discord.ui.View):
@@ -55,7 +54,7 @@ class LeaderboardView(discord.ui.View):
         for i, entry in enumerate(page_entries, start=start_idx + 1):
             medal = medal_emojis.get(i, f"`#{i}`")
 
-            user_mention = f"<@{entry['discord_id']}>" if entry.get("discord_id") else "❔"
+            user_mention = f"<@{entry['discord_id']}>" if entry.get("discord_id") else "❓"
             riot_name = entry.get("name", "알 수 없음")
 
             encoded_name = urllib.parse.quote(riot_name)
@@ -74,8 +73,8 @@ class LeaderboardView(discord.ui.View):
                     f"{medal}\n"
                     f"{user_mention}\n"
                     f"Riot ID: {riot_id_link}\n"
-                    f"📊 점수: `{score:.1f}`  ⚔️ K/D: `{kd_ratio:.2f}`\n"
-                    f"🟥 Kills: `{kills}`  🟦 Deaths: `{deaths}`\n"
+                    f"📊 점수: `{score:.1f}`   ⚔️ K/D: `{kd_ratio:.2f}`\n"
+                    f"🟥 Kills: `{kills}`   🟦 Deaths: `{deaths}`\n"
                     f"🧮 매치 수: `{matches_played}`"
                 ),
                 inline=False,
@@ -110,11 +109,6 @@ class LeaderboardView(discord.ui.View):
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if self.interaction is None:
             return True
-        if interaction.user.id != self.interaction.user.id:
-            await interaction.response.send_message(
-                "이 버튼을 사용할 권한이 없습니다.", ephemeral=True
-            )
-            return False
         return True
 
     @discord.ui.button(label="이전", style=discord.ButtonStyle.secondary)
@@ -257,7 +251,8 @@ class ClanLeaderboard(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         await self.post_leaderboard(interaction)
 
-    @tasks.loop(time=time(0, 0, 0, tzinfo=EASTERN_TZ))
+    # Fixed timezone handling - runs at midnight Eastern Time
+    @tasks.loop(time=time(hour=5, minute=0))  # 5 AM UTC = midnight EST (UTC-5) / 1 AM EDT (UTC-4)
     async def daily_leaderboard_update(self):
         try:
             self.logger.info("일일 리더보드 업데이트 시작 (정시 실행).")
@@ -270,6 +265,7 @@ class ClanLeaderboard(commands.Cog):
     async def before_daily_leaderboard_update(self):
         await self.bot.wait_until_ready()
         self.logger.info("일일 리더보드 업데이트 루프 시작 대기 중...")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ClanLeaderboard(bot))
