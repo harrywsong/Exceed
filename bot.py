@@ -977,9 +977,6 @@ async def main():
     try:
         startup_logger.info("🚀 봇 시작 중...")
 
-        # Start bot with timeout
-        await asyncio.wait_for(bot.start(config.DISCORD_TOKEN), timeout=60.0)
-
     except asyncio.TimeoutError:
         startup_logger.critical("❌ 봇 시작 시간 초과 (60초)")
         sys.exit(1)
