@@ -15,6 +15,13 @@ import inspect
 from datetime import datetime, time as dt_time, timedelta
 import re
 
+# Fix for py-cord 2.6.1 enum import issue
+import discord.enums
+if not hasattr(discord.enums, 'AppCommandOptionType'):
+    discord.enums.AppCommandOptionType = discord.enums.SlashCommandOptionType
+    if 'AppCommandOptionType' not in discord.enums.__all__:
+        discord.enums.__all__ = discord.enums.__all__ + ('AppCommandOptionType',)
+
 # --- Flask API Imports ---
 from flask import Flask, jsonify, request
 from threading import Thread
