@@ -630,6 +630,7 @@ class MyBot(commands.Bot):
             'cogs.registration',
             'cogs.reaction_roles',
             'cogs.ticket',
+            'cogs.audiorecord'
         ] if self.pool else []
 
         # API-dependent extensions
