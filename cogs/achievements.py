@@ -864,11 +864,11 @@ class Achievements(commands.Cog):
         self.logger.info("음성 업데이트 작업이 봇이 준비될 때까지 기다리는 중...")
 
     @discord.slash_command(name="achievements", description="Shows a member's achievements.")
-    async def achievements_command(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
+    async def achievements_command(self, ctx, member: Optional[discord.Member] = None):
         try:
             sorted_members = await self._get_sorted_members()
             if not sorted_members:
-                await interaction.response.send_message("No members found with achievements.", ephemeral=True)
+                await ctx.respond("No members found with achievements.", ephemeral=True)
                 return
 
             cog = self.bot.get_cog("Achievements")
@@ -879,21 +879,20 @@ class Achievements(commands.Cog):
                     view = PersistentAchievementView(self.bot, members=sorted_members)
                     view.current_page = index
                     initial_embed = await view.get_current_embed(cog, sorted_members)
-                    await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
+                    await ctx.respond(embed=initial_embed, view=view, ephemeral=True)
                     self.logger.info(f"업적 명령어 실행 (특정 멤버): {member.name}")
                 except StopIteration:
-                    await interaction.response.send_message(
+                    await ctx.respond(
                         f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
             else:
                 view = PersistentAchievementView(self.bot, members=sorted_members)
                 initial_embed = await view.get_current_embed(cog, sorted_members)
-                await interaction.response.send_message(embed=initial_embed, view=view)
+                await ctx.respond(embed=initial_embed, view=view)
                 self.logger.info("업적 명령어 실행 (전체 리더보드)")
 
         except Exception as e:
             self.logger.error(f"업적 명령어 실행 실패: {e}\n{traceback.format_exc()}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message("업적 데이터를 불러오는 중 오류가 발생했습니다.", ephemeral=True)
+            await ctx.respond("업적 데이터를 불러오는 중 오류가 발생했습니다.", ephemeral=True)
 
 
 async def setup(bot):
