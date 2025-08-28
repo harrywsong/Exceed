@@ -757,18 +757,18 @@ class MyBot(commands.Bot):
             self.logger.error(f"❌ 명령어 완료 추적 실패: {e}", exc_info=True)
 
     @commands.Cog.listener()
-    async def on_app_command_completion(self, interaction: discord.Interaction, command: discord.app_commands.Command):
-        """Enhanced slash command completion tracking"""
+    async def on_application_command_completion(self, ctx):
+        """Enhanced slash command completion tracking for py-cord"""
         try:
-            command_name = command.name if command else "unknown"
-            user_name = interaction.user.display_name if interaction.user else "Unknown User"
-            user_id = interaction.user.id if interaction.user else "Unknown ID"
+            command_name = ctx.command.name if ctx.command else "unknown"
+            user_name = ctx.author.display_name if ctx.author else "Unknown User"
+            user_id = ctx.author.id if ctx.author else "Unknown ID"
 
             self.command_counts[command_name] = self.command_counts.get(command_name, 0) + 1
             self.total_commands_today += 1
             self.logger.info(f"사용자 {user_name} ({user_id})님이 슬래시 명령어 '/{command_name}'을(를) 사용했습니다.")
         except Exception as e:
-            self.logger.error(f"❌ 슬래시 명령어 완료 추적 실패: {e}", exc_info=True)
+            self.logger.error(f"슬래시 명령어 완료 추적 실패: {e}", exc_info=True)
 
     async def on_command_error(self, context, error):
         """Enhanced global command error handler with detailed logging"""
