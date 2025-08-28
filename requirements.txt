@@ -1,5 +1,5 @@
 # Replace discord.py with py-cord
-py-cord>=2.6.0
+py-cord[voice]==2.6.1
 asyncpg>=0.30.0
 pillow>=11.3.0
 pytz>=2025.2

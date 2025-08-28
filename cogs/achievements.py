@@ -864,7 +864,7 @@ class Achievements(commands.Cog):
         await self.bot.wait_until_ready()
         self.logger.info("음성 업데이트 작업이 봇이 준비될 때까지 기다리는 중...")
 
-    @app_commands.command(name="achievements", description="Shows a member's achievements.")
+    @discord.slash_command(name="achievements", description="Shows a member's achievements.")
     async def achievements_command(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         try:
             sorted_members = await self._get_sorted_members()
