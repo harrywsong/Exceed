@@ -10,7 +10,6 @@ import json
 from typing import Dict, Optional, List
 import traceback
 import io
-import struct
 
 from utils.logger import get_logger
 from utils import config
@@ -51,8 +50,9 @@ class AudioSink(discord.sinks.WaveSink):
             if not packets:
                 continue
 
-            # Create filename
-            filename = f"{session_id}_{user.display_name}_{user.id}.wav"
+            # Create filename with safe characters
+            safe_username = "".join(c for c in user.display_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            filename = f"{session_id}_{safe_username}_{user.id}.wav"
             filepath = os.path.join(recording_dir, filename)
 
             try:
@@ -60,7 +60,7 @@ class AudioSink(discord.sinks.WaveSink):
                 audio_data = b''.join(packets)
 
                 if audio_data:
-                    # Save as WAV file
+                    # Save as WAV file with proper Discord audio specs
                     with wave.open(filepath, 'wb') as wav_file:
                         wav_file.setnchannels(2)  # Stereo
                         wav_file.setsampwidth(2)  # 16-bit
@@ -124,7 +124,7 @@ class RecordingSession:
 
 
 class AudioRecording(commands.Cog):
-    """Voice recording functionality"""
+    """Voice recording functionality using py-cord"""
 
     def __init__(self, bot):
         self.bot = bot
@@ -140,6 +140,14 @@ class AudioRecording(commands.Cog):
         # Recording storage directory
         self.recording_dir = "recordings"
         os.makedirs(self.recording_dir, exist_ok=True)
+
+        # Check if py-cord is available
+        try:
+            hasattr(discord.sinks, 'WaveSink')
+            self.logger.info("py-cord 음성 녹음 기능이 감지되었습니다.")
+        except AttributeError:
+            self.logger.error("py-cord가 설치되지 않았습니다. 음성 녹음이 불가능합니다.")
+            raise
 
         self.logger.info("음성 녹음 기능이 초기화되었습니다.")
 
@@ -181,6 +189,15 @@ class AudioRecording(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         try:
+            # Check voice permissions
+            permissions = voice_channel.permissions_for(interaction.guild.me)
+            if not permissions.connect or not permissions.speak:
+                await interaction.followup.send(
+                    "❌ 음성 채널에 연결하거나 말할 권한이 없습니다. 봇 권한을 확인해주세요.",
+                    ephemeral=True
+                )
+                return
+
             # Connect to voice channel
             if interaction.guild.voice_client:
                 if interaction.guild.voice_client.channel != voice_channel:
@@ -188,6 +205,9 @@ class AudioRecording(commands.Cog):
                 voice_client = interaction.guild.voice_client
             else:
                 voice_client = await voice_channel.connect()
+
+            # Wait a moment for connection to stabilize
+            await asyncio.sleep(1)
 
             # Create recording session
             session_id = f"{guild_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -330,7 +350,7 @@ class AudioRecording(commands.Cog):
                         inline=False
                     )
 
-                embed.set_footer(text="/녹음목록 명령어로 녹음 기록을 확인할 수 있습니다")
+                embed.set_footer(text="서버의 recordings/ 폴더에 파일이 저장되었습니다")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
             else:
@@ -420,7 +440,7 @@ class AudioRecording(commands.Cog):
 
             if not metadata_files:
                 embed = discord.Embed(
-                    title="📁 녹음 기록",
+                    title="📂 녹음 기록",
                     description="아직 완료된 녹음이 없습니다.",
                     color=discord.Color.blue()
                 )
@@ -433,7 +453,7 @@ class AudioRecording(commands.Cog):
             limit = max(1, min(limit, 10))  # Limit between 1 and 10
 
             embed = discord.Embed(
-                title="📁 최근 녹음 기록",
+                title="📂 최근 녹음 기록",
                 description=f"최근 {min(limit, len(metadata_files))}개의 녹음",
                 color=discord.Color.blue()
             )
@@ -448,7 +468,7 @@ class AudioRecording(commands.Cog):
                     participants = metadata.get('participants', [])
 
                     embed.add_field(
-                        name=f"📼 {metadata['session_id']}",
+                        name=f"🎤 {metadata['session_id']}",
                         value=(
                             f"**시작:** <t:{int(start_time.timestamp())}:R>\n"
                             f"**지속:** {duration}\n"
@@ -482,7 +502,7 @@ class AudioRecording(commands.Cog):
                 session.voice_client.stop_recording()
 
                 # Wait a bit for recording to finish
-                await asyncio.sleep(2)
+                await asyncio.sleep(3)
 
                 # Disconnect from voice
                 await session.voice_client.disconnect()
