@@ -15,13 +15,6 @@ import inspect
 from datetime import datetime, time as dt_time, timedelta
 import re
 
-# Fix for py-cord 2.6.1 enum import issue
-import discord.enums
-if not hasattr(discord.enums, 'AppCommandOptionType'):
-    discord.enums.AppCommandOptionType = discord.enums.SlashCommandOptionType
-    if 'AppCommandOptionType' not in discord.enums.__all__:
-        discord.enums.__all__ = discord.enums.__all__ + ('AppCommandOptionType',)
-
 # --- Flask API Imports ---
 from flask import Flask, jsonify, request
 from threading import Thread
@@ -637,7 +630,6 @@ class MyBot(commands.Bot):
             'cogs.registration',
             'cogs.reaction_roles',
             'cogs.ticket',
-            'cogs.audiorecord'
         ] if self.pool else []
 
         # API-dependent extensions
@@ -757,18 +749,18 @@ class MyBot(commands.Bot):
             self.logger.error(f"❌ 명령어 완료 추적 실패: {e}", exc_info=True)
 
     @commands.Cog.listener()
-    async def on_application_command_completion(self, ctx):
-        """Enhanced slash command completion tracking for py-cord"""
+    async def on_app_command_completion(self, interaction: discord.Interaction, command: discord.app_commands.Command):
+        """Enhanced slash command completion tracking"""
         try:
-            command_name = ctx.command.name if ctx.command else "unknown"
-            user_name = ctx.author.display_name if ctx.author else "Unknown User"
-            user_id = ctx.author.id if ctx.author else "Unknown ID"
+            command_name = command.name if command else "unknown"
+            user_name = interaction.user.display_name if interaction.user else "Unknown User"
+            user_id = interaction.user.id if interaction.user else "Unknown ID"
 
             self.command_counts[command_name] = self.command_counts.get(command_name, 0) + 1
             self.total_commands_today += 1
             self.logger.info(f"사용자 {user_name} ({user_id})님이 슬래시 명령어 '/{command_name}'을(를) 사용했습니다.")
         except Exception as e:
-            self.logger.error(f"슬래시 명령어 완료 추적 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ 슬래시 명령어 완료 추적 실패: {e}", exc_info=True)
 
     async def on_command_error(self, context, error):
         """Enhanced global command error handler with detailed logging"""
@@ -986,11 +978,8 @@ async def main():
         startup_logger.info("🚀 봇 시작 중...")
 
         # Start bot with timeout
-        await asyncio.wait_for(bot.start(config.DISCORD_TOKEN), timeout=180.0)
+        await bot.start(config.DISCORD_TOKEN)
 
-    except asyncio.TimeoutError:
-        startup_logger.critical("❌ 봇 시작 시간 초과 (60초)")
-        sys.exit(1)
     except discord.LoginFailure:
         startup_logger.critical("❌ Discord 로그인 실패 - 토큰을 확인하세요")
         sys.exit(1)

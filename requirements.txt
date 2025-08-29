@@ -1,5 +1,4 @@
-# Replace discord.py with py-cord
-py-cord[voice]==2.6.1
+discord.py>=2.6.2
 asyncpg>=0.30.0
 pillow>=11.3.0
 pytz>=2025.2
@@ -11,7 +10,3 @@ protobuf>=6.31.1
 google-api-python-client>=2.176.0
 Flask>=3.1.1
 google-auth-oauthlib>=1.2.2
-
-# Voice recording dependencies - FIXED
-PyNaCl>=1.5.0
-opuslib>=3.0.1
