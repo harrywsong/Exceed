@@ -12,6 +12,9 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
+// Add state file management
+const STATE_FILE = path.join(process.cwd(), 'recording_state.json');
+
 class VoiceRecorder {
     constructor(token) {
         this.client = new Client({
@@ -24,6 +27,63 @@ class VoiceRecorder {
         this.activeRecording = null;
         this.isReady = false;
         this.shouldExit = false;
+    }
+
+    // Load state from file
+    loadState() {
+        try {
+            if (fs.existsSync(STATE_FILE)) {
+                const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+                console.log('Loaded existing state:', state);
+                return state;
+            }
+        } catch (error) {
+            console.warn('Error loading state:', error.message);
+        }
+        return null;
+    }
+
+    // Save state to file
+    saveState(recording) {
+        try {
+            const state = recording ? {
+                guildId: recording.guildId,
+                channelId: recording.channelId,
+                outputDir: recording.outputDir,
+                startTime: recording.startTime,
+                pid: process.pid
+            } : null;
+
+            if (state) {
+                fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+                console.log('State saved:', state);
+            } else {
+                // Remove state file when no recording
+                if (fs.existsSync(STATE_FILE)) {
+                    fs.unlinkSync(STATE_FILE);
+                    console.log('State file removed');
+                }
+            }
+        } catch (error) {
+            console.warn('Error saving state:', error.message);
+        }
+    }
+
+    // Check if another process is recording
+    checkExistingRecording() {
+        const state = this.loadState();
+        if (!state) return null;
+
+        // Check if the process is still running
+        try {
+            process.kill(state.pid, 0); // Signal 0 just checks if process exists
+            console.log(`Found existing recording process (PID: ${state.pid})`);
+            return state;
+        } catch (error) {
+            console.log('Previous recording process no longer exists');
+            this.saveState(null); // Clean up stale state
+            return null;
+        }
     }
 
     async init() {
@@ -62,6 +122,13 @@ class VoiceRecorder {
     async startRecording(guildId, channelId, outputDir) {
         try {
             console.log(`Attempting to start recording for guild ${guildId}, channel ${channelId}`);
+
+            // Check if there's already a recording
+            const existingState = this.checkExistingRecording();
+            if (existingState) {
+                console.log('Recording already in progress by another process');
+                return false;
+            }
 
             if (!this.isReady) {
                 console.error('Client is not ready');
@@ -138,6 +205,7 @@ class VoiceRecorder {
             };
 
             this.activeRecording = recording;
+            this.saveState(recording); // Save state to file
             this.setupRecording(recording);
 
             console.log('Recording setup complete - now listening for audio');
@@ -269,6 +337,7 @@ class VoiceRecorder {
         recording.connection.on(VoiceConnectionStatus.Destroyed, () => {
             console.log('Voice connection destroyed');
             this.activeRecording = null;
+            this.saveState(null); // Clear state when connection destroyed
         });
 
         recording.connection.on('error', (error) => {
@@ -280,8 +349,49 @@ class VoiceRecorder {
     }
 
     async stopRecording(guildId) {
-        if (!this.activeRecording || this.activeRecording.guildId !== guildId) {
+        // First check if this process has an active recording
+        if (this.activeRecording && this.activeRecording.guildId === guildId) {
+            console.log('Stopping recording in current process...');
+            return await this._stopCurrentRecording();
+        }
+
+        // Check if another process has the recording
+        const existingState = this.loadState();
+        if (!existingState || existingState.guildId !== guildId) {
             console.log('No active recording found for guild', guildId);
+            return false;
+        }
+
+        // Try to stop the other process
+        console.log(`Found recording in process ${existingState.pid}, sending stop signal...`);
+        try {
+            // Send SIGUSR1 to signal the recording process to stop
+            process.kill(existingState.pid, 'SIGUSR1');
+
+            // Wait a bit for the process to handle the signal
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Check if state was cleared (indicating successful stop)
+            const newState = this.loadState();
+            if (!newState || newState.guildId !== guildId) {
+                console.log('Recording stopped successfully by other process');
+                return true;
+            } else {
+                console.log('Other process did not stop recording, trying SIGTERM...');
+                process.kill(existingState.pid, 'SIGTERM');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                this.saveState(null); // Force clear state
+                return true;
+            }
+        } catch (error) {
+            console.warn('Error stopping other process:', error.message);
+            this.saveState(null); // Clear stale state
+            return false;
+        }
+    }
+
+    async _stopCurrentRecording() {
+        if (!this.activeRecording) {
             return false;
         }
 
@@ -317,6 +427,7 @@ class VoiceRecorder {
         }
 
         this.activeRecording = null;
+        this.saveState(null); // Clear state file
         console.log('Recording stopped');
         return true;
     }
@@ -325,7 +436,7 @@ class VoiceRecorder {
         console.log('Cleaning up recorder...');
 
         if (this.activeRecording) {
-            await this.stopRecording(this.activeRecording.guildId);
+            await this._stopCurrentRecording();
         }
 
         if (this.client && this.client.isReady()) {
@@ -371,6 +482,15 @@ if (require.main === module) {
         await recorder.cleanup();
         process.exit(0);
     };
+
+    // Handle stop signal from other processes
+    process.on('SIGUSR1', async () => {
+        console.log('Received stop signal from another process');
+        if (recorder.activeRecording) {
+            await recorder._stopCurrentRecording();
+        }
+        console.log('Recording stopped by external signal');
+    });
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
