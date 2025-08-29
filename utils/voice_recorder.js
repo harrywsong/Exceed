@@ -36,7 +36,7 @@ class VoiceRecorder {
     async init() {
         return new Promise((resolve, reject) => {
             // Set up event listeners before login
-            this.client.once('ready', () => {
+            this.client.once('clientReady', () => {
                 console.log(`Voice recorder logged in as ${this.client.user.tag}`);
                 if (this.isRaspberryPi) {
                     console.log('🥧 Raspberry Pi detected - using optimized settings');

@@ -135,39 +135,63 @@ class Recording(commands.Cog):
             env['DISCORD_BOT_TOKEN'] = self.bot.http.token
             env['NODE_ENV'] = 'production'
 
-            # Start the recorder process
-            process = subprocess.Popen([
+            # Start the recorder process with asyncio subprocess
+            self.bot.logger.info("Starting Node.js recorder process...")
+
+            # Use asyncio subprocess to avoid blocking
+            process = await asyncio.create_subprocess_exec(
                 'node', 'utils/voice_recorder.js', 'start',
-                str(interaction.guild.id), str(channel.id), recording_dir
-            ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                str(interaction.guild.id), str(channel.id), recording_dir,
+                env=env,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
 
-            # Give the Node.js process more time to initialize and connect
+            # Wait a reasonable time for initialization
             self.bot.logger.info("Waiting for Node.js recorder to initialize...")
-            await asyncio.sleep(8)  # Increased from 3 to 8 seconds
 
-            # Check if process is still running
-            if process.poll() is not None:
-                stdout, stderr = process.communicate()
-                self.bot.logger.error(f"Recorder process output: {stdout}")
-                self.bot.logger.error(f"Recorder process errors: {stderr}")
-                raise Exception(f"Recorder failed to start: {stderr}")
+            # Wait up to 20 seconds, checking every 2 seconds
+            for i in range(10):  # 10 * 2 = 20 seconds
+                await asyncio.sleep(2)
 
-            # Check for any immediate errors by reading a bit of stderr
-            try:
-                import select
-                if hasattr(select, 'select'):  # Unix systems
-                    ready, _, _ = select.select([process.stderr], [], [], 1)
-                    if ready:
-                        error_output = process.stderr.read(1024)
-                        if error_output and 'error' in error_output.lower():
-                            self.bot.logger.error(f"Node.js recorder error: {error_output}")
-                            raise Exception(f"Recorder error: {error_output}")
-            except Exception as e:
-                self.bot.logger.warning(f"Could not check for immediate errors: {e}")
+                # Check if process is still running
+                if process.returncode is not None:
+                    # Process has ended, get output
+                    stdout, stderr = await process.communicate()
+                    stdout_text = stdout.decode('utf-8', errors='ignore') if stdout else ""
+                    stderr_text = stderr.decode('utf-8', errors='ignore') if stderr else ""
+
+                    self.bot.logger.error(f"Recorder process ended after {(i + 1) * 2}s")
+                    self.bot.logger.error(f"Process output: {stdout_text}")
+                    self.bot.logger.error(f"Process errors: {stderr_text}")
+                    raise Exception(f"Recorder failed: {stderr_text[:200]}")
+
+                self.bot.logger.info(f"Node.js process still running... ({(i + 1) * 2}s elapsed)")
+
+            # After 20 seconds, assume it's working if still running
+            if process.returncode is None:
+                self.bot.logger.info("Node.js recorder appears to be running successfully")
+
+            # Store the process (convert asyncio subprocess to regular subprocess for compatibility)
+            import subprocess as sync_subprocess
+            # Create a wrapper that mimics the old interface
+            class ProcessWrapper:
+                def __init__(self, async_process):
+                    self._async_process = async_process
+
+                def poll(self):
+                    return self._async_process.returncode
+
+                def terminate(self):
+                    self._async_process.terminate()
+
+                def kill(self):
+                    self._async_process.kill()
 
             self.recordings[interaction.guild.id] = {
                 'id': recording_id,
-                'process': process,
+                'process': ProcessWrapper(process),
+                'async_process': process,  # Keep reference to actual async process
                 'channel': channel,
                 'start_time': datetime.now(),
                 'dir': recording_dir
@@ -192,7 +216,6 @@ class Recording(commands.Cog):
                 f"Error details: {str(e)[:100]}...",
                 ephemeral=True
             )
-
     async def _stop_recording(self, interaction):
         if interaction.guild.id not in self.recordings:
             await interaction.response.send_message("❌ No active recording in this server!", ephemeral=True)
