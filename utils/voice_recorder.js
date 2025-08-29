@@ -208,11 +208,7 @@ class VoiceRecorder {
             const fileStream = fs.createWriteStream(filename);
 
             // Optimized opus decoder settings
-            const decoderOptions = this.isRaspberryPi ? {
-                frameSize: 960,
-                channels: 1,
-                rate: 48000
-            } : {
+            const decoderOptions = {
                 frameSize: 960,
                 channels: 2,
                 rate: 48000
