@@ -14,7 +14,7 @@ import zipfile
 
 class RecordingView(discord.ui.View):
     def __init__(self, recording_id, recording_dir, bot_logger):
-        super().__init__(timeout=None)  # No timeout for persistent buttons
+        super().__init__(timeout=None)
         self.recording_id = recording_id
         self.recording_dir = recording_dir
         self.bot_logger = bot_logger
@@ -24,11 +24,10 @@ class RecordingView(discord.ui.View):
         await interaction.response.defer(ephemeral=True)
 
         try:
-            # Find all audio files (both .wav and .pcm)
             audio_files = []
             if os.path.exists(self.recording_dir):
                 for file in os.listdir(self.recording_dir):
-                    if file.endswith(('.wav', '.pcm')):
+                    if file.endswith(('.wav', '.mp3', '.m4a')):
                         audio_files.append(os.path.join(self.recording_dir, file))
 
             if not audio_files:
@@ -36,9 +35,8 @@ class RecordingView(discord.ui.View):
                 return
 
             if len(audio_files) == 1:
-                # Single file - send directly
                 file_path = audio_files[0]
-                if os.path.getsize(file_path) > 25 * 1024 * 1024:  # 25MB Discord limit
+                if os.path.getsize(file_path) > 25 * 1024 * 1024:
                     await interaction.followup.send("File too large for Discord. Please use the zip option.",
                                                     ephemeral=True)
                     return
@@ -46,21 +44,20 @@ class RecordingView(discord.ui.View):
                 file = discord.File(file_path)
                 await interaction.followup.send("Here's your audio file:", file=file, ephemeral=True)
             else:
-                # Multiple files - create zip
                 zip_path = os.path.join(self.recording_dir, f"recording_{self.recording_id}.zip")
 
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for file_path in audio_files:
                         zipf.write(file_path, os.path.basename(file_path))
 
-                if os.path.getsize(zip_path) > 25 * 1024 * 1024:  # 25MB limit
+                if os.path.getsize(zip_path) > 25 * 1024 * 1024:
                     await interaction.followup.send("Archive too large for Discord download.", ephemeral=True)
                     os.remove(zip_path)
                     return
 
                 file = discord.File(zip_path)
                 await interaction.followup.send("Here are your audio files:", file=file, ephemeral=True)
-                os.remove(zip_path)  # Clean up zip file
+                os.remove(zip_path)
 
         except Exception as e:
             self.bot_logger.error(f"Download error: {e}")
@@ -69,7 +66,6 @@ class RecordingView(discord.ui.View):
 
     @discord.ui.button(label="Delete Recording", style=discord.ButtonStyle.danger, emoji="🗑️")
     async def delete_recording(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Create confirmation view
         confirm_view = ConfirmDeleteView(self.recording_id, self.recording_dir, self.bot_logger)
         await interaction.response.send_message(
             f"Are you sure you want to delete recording `{self.recording_id}`? This cannot be undone.",
@@ -101,7 +97,6 @@ class ConfirmDeleteView(discord.ui.View):
             self.bot_logger.error(f"Manual delete error: {e}")
             await interaction.followup.send("Error deleting recording.", ephemeral=True)
 
-        # Disable all buttons
         for item in self.children:
             item.disabled = True
         await interaction.edit_original_response(view=self)
@@ -116,17 +111,13 @@ class Recording(commands.Cog):
         self.bot = bot
         self.recordings = {}
         self.recordings_path = "./recordings"
-        self.max_concurrent_recordings = 1  # Limit for Pi
+        self.max_concurrent_recordings = 1
         os.makedirs(self.recordings_path, exist_ok=True)
 
-        # Start cleanup task
         self.cleanup_old_recordings.start()
-
-        # Cleanup any existing node processes on startup
         self._cleanup_node_processes()
 
     def cog_unload(self):
-        """Cleanup when cog is unloaded"""
         self.cleanup_old_recordings.cancel()
         self.bot.logger.info("Cleaning up Recording cog...")
         for guild_id, recording in self.recordings.items():
@@ -136,9 +127,8 @@ class Recording(commands.Cog):
                 pass
         self._cleanup_node_processes()
 
-    @tasks.loop(hours=24)  # Run daily
+    @tasks.loop(hours=24)
     async def cleanup_old_recordings(self):
-        """Delete recordings older than 7 days"""
         try:
             cutoff_date = datetime.now() - timedelta(days=7)
             deleted_count = 0
@@ -147,7 +137,6 @@ class Recording(commands.Cog):
                 item_path = os.path.join(self.recordings_path, item)
                 if os.path.isdir(item_path):
                     try:
-                        # Check directory creation time
                         creation_time = datetime.fromtimestamp(os.path.getctime(item_path))
                         if creation_time < cutoff_date:
                             shutil.rmtree(item_path)
@@ -167,14 +156,12 @@ class Recording(commands.Cog):
         await self.bot.wait_until_ready()
 
     def _cleanup_node_processes(self):
-        """Clean up any orphaned node processes"""
         try:
             subprocess.run(['pkill', '-f', 'voice_recorder.js'], check=False)
         except:
             pass
 
     def _check_system_resources(self):
-        """Check if system can handle recording"""
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
             memory = psutil.virtual_memory()
@@ -202,7 +189,7 @@ class Recording(commands.Cog):
     @discord.app_commands.command(name="record-status", description="Check current recording status")
     async def recording_status(self, interaction: discord.Interaction):
         if interaction.guild.id not in self.recordings:
-            await interaction.response.send_message("📹 No active recording in this server.")
+            await interaction.response.send_message("🔹 No active recording in this server.")
             return
 
         recording = self.recordings[interaction.guild.id]
@@ -238,9 +225,8 @@ class Recording(commands.Cog):
                 for item in os.listdir(self.recordings_path):
                     item_path = os.path.join(self.recordings_path, item)
                     if os.path.isdir(item_path):
-                        # Count audio files
                         audio_count = len([f for f in os.listdir(item_path)
-                                           if f.endswith(('.wav', '.pcm'))])
+                                           if f.endswith(('.wav', '.mp3', '.m4a'))])
 
                         creation_time = datetime.fromtimestamp(os.path.getctime(item_path))
                         recordings_found.append({
@@ -254,7 +240,6 @@ class Recording(commands.Cog):
                 await interaction.followup.send("No recordings found.")
                 return
 
-            # Sort by date (newest first)
             recordings_found.sort(key=lambda x: x['date'], reverse=True)
 
             embed = discord.Embed(
@@ -263,7 +248,7 @@ class Recording(commands.Cog):
                 timestamp=datetime.now()
             )
 
-            for recording in recordings_found[:10]:  # Show last 10
+            for recording in recordings_found[:10]:
                 age = datetime.now() - recording['date']
                 age_str = f"{age.days}d {age.seconds // 3600}h ago" if age.days > 0 else f"{age.seconds // 3600}h {(age.seconds // 60) % 60}m ago"
 
@@ -273,7 +258,6 @@ class Recording(commands.Cog):
                     inline=False
                 )
 
-            # Create persistent view for each recent recording
             if recordings_found:
                 latest_recording = recordings_found[0]
                 view = RecordingView(latest_recording['id'], latest_recording['path'], self.bot.logger)
@@ -287,23 +271,19 @@ class Recording(commands.Cog):
             await interaction.followup.send("Error listing recordings.")
 
     async def _start_recording(self, interaction):
-        # Check if user is in voice channel
         if not interaction.user.voice:
             await interaction.response.send_message("❌ You need to be in a voice channel!", ephemeral=True)
             return
 
-        # Check if already recording
         if interaction.guild.id in self.recordings:
             await interaction.response.send_message("❌ Already recording in this server!", ephemeral=True)
             return
 
-        # Check system resources
         can_record, reason = self._check_system_resources()
         if not can_record:
             await interaction.response.send_message(f"❌ Cannot start recording: {reason}", ephemeral=True)
             return
 
-        # Limit concurrent recordings on Pi
         if len(self.recordings) >= self.max_concurrent_recordings:
             await interaction.response.send_message("❌ Maximum recordings reached for this system", ephemeral=True)
             return
@@ -333,14 +313,13 @@ class Recording(commands.Cog):
             # Start Node.js recorder process
             env = os.environ.copy()
             env['DISCORD_BOT_TOKEN'] = self.bot.http.token
-            env['NODE_ENV'] = 'production'
 
             process = subprocess.Popen([
                 'node', 'utils/voice_recorder.js', 'start',
                 str(interaction.guild.id), str(channel.id), recording_dir
             ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-            # Store recording info immediately
+            # Store recording info
             self.recordings[interaction.guild.id] = {
                 'id': recording_id,
                 'process': process,
@@ -349,25 +328,17 @@ class Recording(commands.Cog):
                 'dir': recording_dir
             }
 
-            # Wait for process initialization
-            self.bot.logger.info("Waiting for Node.js recorder to initialize...")
-            max_wait_time = 30
-            check_interval = 2
-            waited_time = 0
+            # Wait for process to start properly
+            self.bot.logger.info("Waiting for recorder to initialize...")
+            await asyncio.sleep(3)
 
-            while waited_time < max_wait_time:
-                await asyncio.sleep(check_interval)
-                waited_time += check_interval
-
-                if process.poll() is not None:
-                    stdout, stderr = process.communicate()
-                    self.bot.logger.error(f"Recorder process crashed: {stderr}")
-                    del self.recordings[interaction.guild.id]
-                    raise Exception(f"Recorder crashed: {stderr}")
-
-                if waited_time >= 15:
-                    self.bot.logger.info("Assuming Node.js recorder is ready")
-                    break
+            # Check if process is still running
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                self.bot.logger.error(f"Recorder process failed: {stderr}")
+                del self.recordings[interaction.guild.id]
+                await interaction.followup.send(f"❌ Failed to start recording: {stderr[:100]}", ephemeral=True)
+                return
 
             embed = discord.Embed(
                 title="✅ Recording Started",
@@ -398,54 +369,36 @@ class Recording(commands.Cog):
         try:
             self.bot.logger.info(f"Stopping recording for guild {interaction.guild.id}")
 
-            # Terminate the recording process gracefully
+            # Send stop command to the recorder process
             if recording['process'].poll() is None:
-                self.bot.logger.info("Terminating recording process")
-                recording['process'].terminate()
+                self.bot.logger.info("Sending stop command to recorder")
 
-                # Wait for termination
-                for _ in range(10):
-                    await asyncio.sleep(1)
-                    if recording['process'].poll() is not None:
-                        break
-                else:
-                    self.bot.logger.warning("Force killing recording process")
-                    recording['process'].kill()
-                    await asyncio.sleep(2)
+                # Send stop command
+                stop_env = dict(os.environ, DISCORD_BOT_TOKEN=self.bot.http.token)
+                stop_process = subprocess.Popen([
+                    'node', 'utils/voice_recorder.js', 'stop', str(interaction.guild.id)
+                ], env=stop_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-            # Run stop command for cleanup
-            stop_env = dict(os.environ, DISCORD_BOT_TOKEN=self.bot.http.token)
-            stop_process = subprocess.Popen([
-                'node', 'utils/voice_recorder.js', 'stop', str(interaction.guild.id)
-            ], env=stop_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    stdout, stderr = await asyncio.wait_for(
+                        asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
+                        timeout=10.0
+                    )
+                    self.bot.logger.info(f"Stop command output: {stdout}")
+                    if stderr:
+                        self.bot.logger.warning(f"Stop command stderr: {stderr}")
+                except asyncio.TimeoutError:
+                    stop_process.terminate()
+                    self.bot.logger.warning("Stop command timed out")
 
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
-                    timeout=15.0  # Increased timeout for conversion
-                )
+            # Wait for files to be processed
+            await asyncio.sleep(3)
 
-                # Log any conversion issues
-                if stderr and ("FFmpeg" in stderr or "conversion" in stderr.lower()):
-                    self.bot.logger.warning(f"Conversion issues detected: {stderr[:200]}")
-
-            except asyncio.TimeoutError:
-                stop_process.terminate()
-                self.bot.logger.warning("Stop process timed out")
-
-            # Wait longer for file processing, especially conversions
-            await asyncio.sleep(5)  # Increased wait time
-
-            # Count and categorize audio files
+            # Count audio files
             files_created = []
-            wav_files = []
-            pcm_files = []
-
             if os.path.exists(recording['dir']):
                 all_files = os.listdir(recording['dir'])
-                files_created = [f for f in all_files if f.endswith(('.wav', '.pcm'))]
-                wav_files = [f for f in all_files if f.endswith('.wav')]
-                pcm_files = [f for f in all_files if f.endswith('.pcm')]
+                files_created = [f for f in all_files if f.endswith(('.wav', '.mp3', '.m4a'))]
 
             duration = datetime.now() - recording['start_time']
             duration_str = str(duration).split('.')[0]
@@ -461,43 +414,23 @@ class Recording(commands.Cog):
             embed.add_field(name="Total Files", value=f"{len(files_created)} audio files", inline=True)
             embed.add_field(name="Location", value=f"`./recordings/{recording['id']}/`", inline=False)
 
-            # Provide detailed file breakdown
-            if wav_files and pcm_files:
-                file_status = f"✅ {len(wav_files)} WAV files\n⚠️ {len(pcm_files)} PCM files (conversion issues)"
-                embed.color = discord.Color.orange()
-            elif wav_files:
-                file_status = f"✅ {len(wav_files)} WAV files"
-                embed.color = discord.Color.green()
-            elif pcm_files:
-                file_status = f"⚠️ {len(pcm_files)} PCM files only (conversion failed)"
-                embed.color = discord.Color.red()
-                embed.add_field(
-                    name="⚠️ Conversion Issue",
-                    value="Files are in PCM format. FFmpeg may not be installed or available.",
-                    inline=False
-                )
-            else:
-                file_status = "❌ No audio files created"
-                embed.color = discord.Color.red()
-
-            embed.add_field(name="File Status", value=file_status, inline=True)
-
             if files_created:
                 file_list = '\n'.join([f"• {f}" for f in files_created[:10]])
                 if len(files_created) > 10:
                     file_list += f"\n• ... and {len(files_created) - 10} more"
                 embed.add_field(name="Audio Files", value=f"```{file_list}```", inline=False)
-
-            # Add conversion help if only PCM files exist
-            if pcm_files and not wav_files:
+                embed.color = discord.Color.green()
+            else:
+                embed.add_field(name="Status", value="❌ No audio files were created", inline=False)
+                embed.color = discord.Color.red()
                 embed.add_field(
-                    name="💡 Manual Conversion",
-                    value="You can convert PCM to WAV manually:\n`ffmpeg -f s16le -ar 48000 -ac 2 -i file.pcm file.wav`",
+                    name="Possible Issues",
+                    value="• No one spoke during recording\n• FFmpeg not installed\n• Permission issues",
                     inline=False
                 )
 
-            # Create persistent view for download/delete options
-            view = RecordingView(recording['id'], recording['dir'], self.bot.logger)
+            # Create view for download/delete options if files exist
+            view = RecordingView(recording['id'], recording['dir'], self.bot.logger) if files_created else None
 
             del self.recordings[interaction.guild.id]
             await interaction.followup.send(embed=embed, view=view)
@@ -512,6 +445,7 @@ class Recording(commands.Cog):
                 del self.recordings[interaction.guild.id]
             await interaction.followup.send("⚠️ Recording stopped but there may have been processing errors.",
                                             ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(Recording(bot))
