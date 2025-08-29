@@ -427,8 +427,8 @@ class Recording(commands.Cog):
                     self.bot.logger.warning("Stop command timed out")
 
             # Wait longer for continuous tracks to be processed
-            max_wait_time = 30  # Increased from 15 to 30 seconds
-            check_interval = 2
+            max_wait_time = 60
+            check_interval = 5
             files_created = []
 
             for i in range(0, max_wait_time, check_interval):

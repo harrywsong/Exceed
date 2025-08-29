@@ -47,13 +47,13 @@ class Silence extends Readable {
 class SilenceGenerator extends Readable {
   constructor(options = {}) {
     super(options);
-    this.bytesPerFrame = FRAME_SIZE * CHANNELS * 2; // 20ms of 16-bit stereo PCM
-    this.silenceBuffer = Buffer.alloc(this.bytesPerFrame);
+    this.bytesPerSecond = 48000 * 2 * 2; // 48kHz, 2 channels, 16-bit = 192000 bytes per second
   }
 
-  _read() {
-    // Push 20ms of silence continuously
-    this.push(this.silenceBuffer);
+  _read(size) {
+    // Generate silence in chunks
+    const silenceBuffer = Buffer.alloc(Math.min(size, this.bytesPerSecond));
+    this.push(silenceBuffer);
   }
 }
 
@@ -87,12 +87,20 @@ class UserTrackManager {
   }
 
   _setupFFmpeg() {
-    const args = ['-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0'];
+    const args = [
+      '-f', 's16le',
+      '-ar', '48000',
+      '-ac', '2',
+      '-i', 'pipe:0'
+    ];
+
     if (this.format === 'mp3') {
-      args.push('-b:a', this.bitrate, '-f', 'mp3', '-y', this.filename);
+      args.push('-b:a', this.bitrate, '-f', 'mp3');
     } else {
-      args.push('-acodec', 'pcm_s16le', '-f', 'wav', '-y', this.filename);
+      args.push('-acodec', 'pcm_s16le', '-f', 'wav');
     }
+
+    args.push('-y', this.filename);
 
     console.log(`[track] Starting FFmpeg for user ${this.userId}: ${args.join(' ')}`);
     this.ffmpegProcess = spawn('ffmpeg', args, {
@@ -114,12 +122,20 @@ class UserTrackManager {
 
   _startSilenceGeneration() {
     this.silenceGenerator = new SilenceGenerator();
-    this.silenceGenerator.on('data', (chunk) => {
-      // Only write silence if we're not currently receiving audio
+
+    // Create a buffer with 1 second of silence (48000 samples * 2 channels * 2 bytes)
+    const oneSecondSilence = Buffer.alloc(48000 * 2 * 2);
+
+    // Interval to push silence every second
+    this.silenceInterval = setInterval(() => {
       if (!this.isReceivingAudio && this.mixerStream.writable) {
-        this.mixerStream.write(chunk);
+        try {
+          this.mixerStream.write(oneSecondSilence);
+        } catch (err) {
+          console.warn(`[track] Error writing silence for user ${this.userId}:`, err.message);
+        }
       }
-    });
+    }, 1000);
   }
 
   userJoined(joinTime = Date.now()) {
@@ -204,6 +220,38 @@ class UserTrackManager {
     }
   }
 
+  // Add this cleanup method to the UserTrackManager class
+  cleanup() {
+    console.log(`[track] Cleaning up user ${this.userId}`);
+
+    this._stopCurrentAudioStream();
+
+    // Clear silence interval
+    if (this.silenceInterval) {
+      clearInterval(this.silenceInterval);
+      this.silenceInterval = null;
+    }
+
+    if (this.silenceGenerator) {
+      try { this.silenceGenerator.destroy(); } catch (_) {}
+    }
+
+    if (this.mixerStream && !this.mixerStream.destroyed) {
+      try {
+        this.mixerStream.end();
+      } catch (_) {}
+    }
+
+    // Give FFmpeg a moment to finish processing
+    setTimeout(() => {
+      if (this.ffmpegProcess && !this.ffmpegProcess.killed) {
+        try {
+          this.ffmpegProcess.stdin.end(); // Properly end the stdin
+        } catch (_) {}
+      }
+    }, 2000);
+  }
+
   _insertSilence(durationMs) {
     console.log(`[track] Inserting ${durationMs}ms of silence for user ${this.userId}`);
 
@@ -212,7 +260,11 @@ class UserTrackManager {
     const silenceBuffer = Buffer.alloc(bytesNeeded);
 
     if (this.mixerStream.writable) {
-      this.mixerStream.write(silenceBuffer);
+      try {
+        this.mixerStream.write(silenceBuffer);
+      } catch (err) {
+        console.warn(`[track] Error inserting silence for user ${this.userId}:`, err.message);
+      }
     }
   }
 
