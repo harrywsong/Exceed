@@ -353,7 +353,16 @@ if (require.main === module) {
                     await recorder.cleanup();
                     process.exit(1);
                 }
-                console.log('Recording is now active. Press Ctrl+C to stop.');
+                console.log('Recording is now active. Keeping process alive...');
+
+                // Keep the process alive for continuous recording
+                setInterval(() => {
+                    // Check if recording is still active
+                    if (!recorder.recordings.has(guildId)) {
+                        console.log('No active recordings, exiting...');
+                        process.exit(0);
+                    }
+                }, 5000);
                 break;
 
             case 'stop':

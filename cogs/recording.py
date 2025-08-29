@@ -335,9 +335,13 @@ class Recording(commands.Cog):
             # Check if process is still running
             if process.poll() is not None:
                 stdout, stderr = process.communicate()
-                self.bot.logger.error(f"Recorder process failed: {stderr}")
+                self.bot.logger.error(f"Recorder process failed immediately:")
+                self.bot.logger.error(f"Exit code: {process.returncode}")
+                self.bot.logger.error(f"Stdout: {stdout}")
+                self.bot.logger.error(f"Stderr: {stderr}")
                 del self.recordings[interaction.guild.id]
-                await interaction.followup.send(f"❌ Failed to start recording: {stderr[:100]}", ephemeral=True)
+                await interaction.followup.send(f"❌ Recording process failed to start. Check bot logs for details.",
+                                                ephemeral=True)
                 return
 
             embed = discord.Embed(
@@ -430,10 +434,11 @@ class Recording(commands.Cog):
                 )
 
             # Create view for download/delete options if files exist
-            view = RecordingView(recording['id'], recording['dir'], self.bot.logger) if files_created else None
-
-            del self.recordings[interaction.guild.id]
-            await interaction.followup.send(embed=embed, view=view)
+            if files_created:
+                view = RecordingView(recording['id'], recording['dir'], self.bot.logger)
+                await interaction.followup.send(embed=embed, view=view)
+            else:
+                await interaction.followup.send(embed=embed)
 
         except Exception as e:
             self.bot.logger.error(f"Recording stop error: {e}", exc_info=True)
