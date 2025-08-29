@@ -1,14 +1,12 @@
-// voice_recorder.js — Windows-safe, per-user recording (FFmpeg + prism)
+// voice_recorder.js — Enhanced with synchronized per-user continuous tracks
 //
-// Features
-// - Per-user recordings from a Discord voice channel
-// - Windows-safe stop (no POSIX signals) via a stop.flag file
-// - Robust Opus → PCM decode using prism-media, then FFmpeg → WAV/MP3
-// - State persistence to prevent double-recording across processes
-// - Reconnect handling and graceful cleanup
-// - CLI: start <guildId> <channelId> <outputDir> [--format wav|mp3] [--bitrate 192k]
+// New Features:
+// - One continuous track per user (no splitting on speaking events)
+// - Synchronized tracks with silent audio for absent users
+// - Users joining late get silence inserted from recording start
+// - Users leaving/rejoining get silence during absence periods
 //
-// Requirements
+// Requirements:
 //   npm i discord.js @discordjs/voice prism-media
 //   FFmpeg installed and on PATH
 //   DISCORD_BOT_TOKEN in env
@@ -25,7 +23,7 @@ const {
   StreamType,
 } = require('@discordjs/voice');
 const prism = require('prism-media');
-const { Readable } = require('stream');
+const { Readable, PassThrough } = require('stream');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -33,11 +31,231 @@ const { spawn } = require('child_process');
 // --- Constants ---
 const STATE_FILE = path.join(process.cwd(), 'recording_state.json');
 const STOP_FILENAME = 'stop.flag';
+const SAMPLE_RATE = 48000;
+const CHANNELS = 2;
+const FRAME_SIZE = 960; // 20ms at 48kHz
+const SILENCE_FRAME = Buffer.alloc(FRAME_SIZE * CHANNELS * 2); // 20ms of 16-bit stereo silence
 
-// Keep alive with a single Opus silence frame (Craig-style)
+// Keep alive with a single Opus silence frame
 class Silence extends Readable {
   _read() {
     this.push(Buffer.from([0xf8, 0xff, 0xfe]));
+  }
+}
+
+// Generates continuous silence stream
+class SilenceGenerator extends Readable {
+  constructor(options = {}) {
+    super(options);
+    this.bytesPerFrame = FRAME_SIZE * CHANNELS * 2; // 20ms of 16-bit stereo PCM
+    this.silenceBuffer = Buffer.alloc(this.bytesPerFrame);
+  }
+
+  _read() {
+    // Push 20ms of silence continuously
+    this.push(this.silenceBuffer);
+  }
+}
+
+class UserTrackManager {
+  constructor(userId, outputDir, format, bitrate, recordingStartTime) {
+    this.userId = userId;
+    this.outputDir = outputDir;
+    this.format = format;
+    this.bitrate = bitrate;
+    this.recordingStartTime = recordingStartTime;
+
+    // Track user presence and audio state
+    this.isPresent = false;
+    this.isReceivingAudio = false;
+    this.joinTime = null;
+    this.leaveTime = null;
+
+    // Audio processing components
+    this.mixerStream = new PassThrough();
+    this.currentOpusStream = null;
+    this.currentDecoder = null;
+    this.ffmpegProcess = null;
+
+    // Output file
+    const timestamp = Date.now();
+    const base = path.join(outputDir, `user_${userId}_continuous`);
+    this.filename = format === 'mp3' ? `${base}.mp3` : `${base}.wav`;
+
+    this._setupFFmpeg();
+    this._startSilenceGeneration();
+  }
+
+  _setupFFmpeg() {
+    const args = ['-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0'];
+    if (this.format === 'mp3') {
+      args.push('-b:a', this.bitrate, '-f', 'mp3', '-y', this.filename);
+    } else {
+      args.push('-acodec', 'pcm_s16le', '-f', 'wav', '-y', this.filename);
+    }
+
+    console.log(`[track] Starting FFmpeg for user ${this.userId}: ${args.join(' ')}`);
+    this.ffmpegProcess = spawn('ffmpeg', args, {
+      stdio: ['pipe', 'inherit', 'inherit']
+    });
+
+    this.ffmpegProcess.on('error', (err) => {
+      console.error(`[track] FFmpeg error for user ${this.userId}:`, err.message);
+    });
+
+    this.ffmpegProcess.on('close', (code) => {
+      console.log(`[track] FFmpeg closed for user ${this.userId} (code: ${code})`);
+      this._checkOutputFile();
+    });
+
+    // Pipe mixer stream to FFmpeg
+    this.mixerStream.pipe(this.ffmpegProcess.stdin);
+  }
+
+  _startSilenceGeneration() {
+    this.silenceGenerator = new SilenceGenerator();
+    this.silenceGenerator.on('data', (chunk) => {
+      // Only write silence if we're not currently receiving audio
+      if (!this.isReceivingAudio && this.mixerStream.writable) {
+        this.mixerStream.write(chunk);
+      }
+    });
+  }
+
+  userJoined(joinTime = Date.now()) {
+    console.log(`[track] User ${this.userId} joined at ${joinTime}`);
+    this.isPresent = true;
+    this.joinTime = joinTime;
+
+    // If user joined after recording started, we need to fill the gap with silence
+    const silenceDuration = joinTime - this.recordingStartTime;
+    if (silenceDuration > 0) {
+      this._insertSilence(silenceDuration);
+    }
+  }
+
+  userLeft(leaveTime = Date.now()) {
+    console.log(`[track] User ${this.userId} left at ${leaveTime}`);
+    this.isPresent = false;
+    this.leaveTime = leaveTime;
+    this._stopCurrentAudioStream();
+  }
+
+  startReceivingAudio(opusStream) {
+    console.log(`[track] Starting audio reception for user ${this.userId}`);
+    this.isReceivingAudio = true;
+
+    // Stop any existing audio stream
+    this._stopCurrentAudioStream();
+
+    this.currentOpusStream = opusStream;
+    this.currentDecoder = new prism.opus.Decoder({
+      rate: SAMPLE_RATE,
+      channels: CHANNELS,
+      frameSize: FRAME_SIZE
+    });
+
+    // Handle stream events
+    opusStream.on('data', (chunk) => {
+      // Forward opus data to decoder
+    });
+
+    opusStream.on('end', () => {
+      console.log(`[track] Opus stream ended for user ${this.userId}`);
+      this._stopCurrentAudioStream();
+    });
+
+    opusStream.on('error', (err) => {
+      console.warn(`[track] Opus stream error for user ${this.userId}:`, err.message);
+      this._stopCurrentAudioStream();
+    });
+
+    this.currentDecoder.on('data', (pcmChunk) => {
+      if (this.mixerStream.writable) {
+        this.mixerStream.write(pcmChunk);
+      }
+    });
+
+    this.currentDecoder.on('error', (err) => {
+      console.warn(`[track] Decoder error for user ${this.userId}:`, err.message);
+      this._stopCurrentAudioStream();
+    });
+
+    // Connect streams
+    opusStream.pipe(this.currentDecoder);
+  }
+
+  stopReceivingAudio() {
+    console.log(`[track] Stopping audio reception for user ${this.userId}`);
+    this._stopCurrentAudioStream();
+  }
+
+  _stopCurrentAudioStream() {
+    this.isReceivingAudio = false;
+
+    if (this.currentOpusStream) {
+      try { this.currentOpusStream.destroy(); } catch (_) {}
+      this.currentOpusStream = null;
+    }
+
+    if (this.currentDecoder) {
+      try { this.currentDecoder.end(); } catch (_) {}
+      this.currentDecoder = null;
+    }
+  }
+
+  _insertSilence(durationMs) {
+    console.log(`[track] Inserting ${durationMs}ms of silence for user ${this.userId}`);
+
+    const samplesNeeded = Math.floor((durationMs / 1000) * SAMPLE_RATE);
+    const bytesNeeded = samplesNeeded * CHANNELS * 2; // 16-bit stereo
+    const silenceBuffer = Buffer.alloc(bytesNeeded);
+
+    if (this.mixerStream.writable) {
+      this.mixerStream.write(silenceBuffer);
+    }
+  }
+
+  cleanup() {
+    console.log(`[track] Cleaning up user ${this.userId}`);
+
+    this._stopCurrentAudioStream();
+
+    if (this.silenceGenerator) {
+      try { this.silenceGenerator.destroy(); } catch (_) {}
+    }
+
+    if (this.mixerStream && !this.mixerStream.destroyed) {
+      try {
+        this.mixerStream.end();
+      } catch (_) {}
+    }
+
+    // Give FFmpeg a moment to finish processing
+    setTimeout(() => {
+      if (this.ffmpegProcess && !this.ffmpegProcess.killed) {
+        try {
+          this.ffmpegProcess.kill('SIGTERM');
+        } catch (_) {}
+      }
+    }, 2000);
+  }
+
+  _checkOutputFile() {
+    try {
+      if (fs.existsSync(this.filename)) {
+        const size = fs.statSync(this.filename).size;
+        console.log(`[track] Final file for user ${this.userId}: ${path.basename(this.filename)} (${size} bytes)`);
+
+        if (size < 1000) { // Less than 1KB is probably empty
+          console.warn(`[track] File too small for user ${this.userId}, keeping anyway for sync`);
+        }
+      } else {
+        console.warn(`[track] Output file missing for user ${this.userId}: ${this.filename}`);
+      }
+    } catch (e) {
+      console.warn(`[track] Error checking output file for user ${this.userId}:`, e.message);
+    }
   }
 }
 
@@ -95,12 +313,11 @@ class VoiceRecorder {
     }
   }
 
-  // If another process is recording, return its state; clean up stale state otherwise
   checkExistingRecording() {
     const state = this.loadState();
     if (!state) return null;
     try {
-      process.kill(state.pid, 0); // check liveness (on Windows this throws if dead)
+      process.kill(state.pid, 0);
       return state;
     } catch (_) {
       this.saveState(null);
@@ -120,9 +337,7 @@ class VoiceRecorder {
         resolve();
       };
 
-      // discord.js v14+ uses 'clientReady'
       this.client.once('clientReady', onReady);
-      // Back-compat just in case user runs older minor
       this.client.once('ready', onReady);
 
       this.client.on('error', (err) => {
@@ -143,7 +358,7 @@ class VoiceRecorder {
   // --------- Recording core ---------
   async startRecording(guildId, channelId, outputDir, opts = {}) {
     const format = (opts.format || 'wav').toLowerCase();
-    const bitrate = opts.bitrate || '192k'; // for mp3
+    const bitrate = opts.bitrate || '192k';
 
     if (!this.isReady) {
       console.error('[start] client not ready');
@@ -174,7 +389,6 @@ class VoiceRecorder {
       return false;
     }
 
-    // 2 is GuildVoice (in discord.js v14, ChannelType.GuildVoice = 2)
     if (channel.type !== 2) {
       console.error(`[start] channel is not a voice channel (type=${channel.type})`);
       return false;
@@ -192,7 +406,6 @@ class VoiceRecorder {
       return false;
     }
 
-    // Join voice — selfDeaf must be false to receive
     console.log('[voice] joining channel...');
     const connection = joinVoiceChannel({
       channelId: channelId,
@@ -218,26 +431,35 @@ class VoiceRecorder {
     connection.subscribe(player);
     player.play(resource);
 
+    const recordingStartTime = Date.now();
     const rec = {
       connection,
       outputDir,
-      startTime: Date.now(),
-      userStreams: new Map(),
+      startTime: recordingStartTime,
+      userTracks: new Map(), // userId -> UserTrackManager
       guildId,
       channelId,
       player,
       format,
       bitrate,
       stopFlagPath: path.join(outputDir, STOP_FILENAME),
+      recordingStartTime,
     };
     this.activeRecording = rec;
 
-    // Ensure output directory exists
     fs.mkdirSync(outputDir, { recursive: true });
 
     this.saveState(rec);
     this._setupReceiver(rec);
+    this._setupVoiceStateTracking(rec);
     this._monitorStopFlag(rec);
+
+    // Initialize tracks for users already in the channel
+    channel.members.forEach(member => {
+      if (!member.user.bot) {
+        this._initializeUserTrack(rec, member.user.id);
+      }
+    });
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
       console.log('[voice] disconnected, attempting to recover...');
@@ -255,167 +477,99 @@ class VoiceRecorder {
       }
     });
 
-    console.log('[start] recording setup complete; listening for audio');
+    console.log('[start] recording setup complete; listening for audio and tracking users');
     return true;
   }
 
-// Add this enhanced debugging to your _setupReceiver method
+  _initializeUserTrack(rec, userId) {
+    if (!rec.userTracks.has(userId)) {
+      console.log(`[recorder] Initializing track for user ${userId}`);
+      const trackManager = new UserTrackManager(
+        userId,
+        rec.outputDir,
+        rec.format,
+        rec.bitrate,
+        rec.recordingStartTime
+      );
+      rec.userTracks.set(userId, trackManager);
+
+      // Mark user as joined (they were present when recording started)
+      trackManager.userJoined(rec.recordingStartTime);
+    }
+  }
+
+  _setupVoiceStateTracking(rec) {
+    this.client.on('voiceStateUpdate', (oldState, newState) => {
+      // Only track changes in our recording channel
+      if (oldState.channelId !== rec.channelId && newState.channelId !== rec.channelId) {
+        return;
+      }
+
+      const userId = newState.member.user.id;
+      if (newState.member.user.bot) return; // Skip bots
+
+      const now = Date.now();
+
+      // User joined the channel
+      if (!oldState.channelId && newState.channelId === rec.channelId) {
+        console.log(`[voice] User ${userId} joined recording channel`);
+        this._initializeUserTrack(rec, userId);
+        const track = rec.userTracks.get(userId);
+        if (track && !track.isPresent) {
+          track.userJoined(now);
+        }
+      }
+      // User left the channel
+      else if (oldState.channelId === rec.channelId && !newState.channelId) {
+        console.log(`[voice] User ${userId} left recording channel`);
+        const track = rec.userTracks.get(userId);
+        if (track && track.isPresent) {
+          track.userLeft(now);
+        }
+      }
+    });
+  }
+
   _setupReceiver(rec) {
     const receiver = rec.connection.receiver;
     console.log('[receiver] setting up speaking listeners');
 
-    // Debug: List all current users in voice channel
-    const channel = rec.connection.joinConfig.channelId;
-    const guild = this.client.guilds.cache.get(rec.guildId);
-    const voiceChannel = guild.channels.cache.get(channel);
-
-    console.log(`[receiver] Voice channel members: ${voiceChannel.members.size}`);
-    voiceChannel.members.forEach(member => {
-      console.log(`[receiver] - ${member.user.username} (${member.user.id}) - Bot: ${member.user.bot}`);
-    });
-
-    // Debug: Monitor speaking events more verbosely
     receiver.speaking.on('start', (userId) => {
-      console.log(`[receiver] SPEAKING START detected for user ${userId}`);
+      console.log(`[receiver] User ${userId} started speaking`);
 
-      // Get user info
-      const user = this.client.users.cache.get(userId);
-      if (user) {
-        console.log(`[receiver] User: ${user.username}#${user.discriminator}`);
-      }
+      if (this.client.users.cache.get(userId)?.bot) return; // Skip bots
 
-      // Guard: already recording this user
-      if (rec.userStreams.has(userId)) {
-        console.log(`[receiver] user ${userId} already being recorded, skipping`);
+      // Initialize track if needed
+      this._initializeUserTrack(rec, userId);
+      const trackManager = rec.userTracks.get(userId);
+
+      if (!trackManager) {
+        console.warn(`[receiver] No track manager for user ${userId}`);
         return;
       }
 
-      const ts = Date.now();
-      const base = path.join(rec.outputDir, `user_${userId}_${ts}`);
-      const filename = rec.format === 'mp3' ? `${base}.mp3` : `${base}.wav`;
-      console.log(`[receiver] Creating file: ${filename}`);
-
       try {
-        // Subscribe to Opus packets with more verbose logging
-        console.log(`[receiver] Subscribing to audio stream for user ${userId}`);
         const opusStream = receiver.subscribe(userId, {
-          end: { behavior: EndBehaviorType.AfterSilence, duration: 2000 },
+          end: { behavior: EndBehaviorType.AfterSilence, duration: 1000 },
         });
 
-        // Add immediate data listener to see if we're getting any data
-        opusStream.on('data', (chunk) => {
-          if (streamData.bytes === 0) {
-            console.log(`[receiver] First audio data received for user ${userId}: ${chunk.length} bytes`);
-          }
-          streamData.bytes += chunk.length;
-        });
-
-        // Decode Opus → PCM s16le 48kHz stereo
-        const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
-
-        // Spawn FFmpeg to encode PCM → WAV/MP3
-        const args = ['-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0'];
-        if (rec.format === 'mp3') {
-          args.push('-b:a', rec.bitrate, '-f', 'mp3', '-y', filename);
-        } else {
-          args.push('-acodec', 'pcm_s16le', '-f', 'wav', '-y', filename);
-        }
-
-        console.log(`[ffmpeg] Starting FFmpeg for ${userId}: ${args.join(' ')}`);
-        const ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'inherit', 'inherit'] });
-
-        opusStream.pipe(decoder).pipe(ffmpeg.stdin);
-
-        const streamData = { opusStream, decoder, ffmpeg, filename, startTime: ts, bytes: 0, pcmBytes: 0 };
-        rec.userStreams.set(userId, streamData);
-
-        decoder.on('data', (buf) => {
-          if (streamData.pcmBytes === 0) {
-            console.log(`[receiver] First PCM data decoded for user ${userId}: ${buf.length} bytes`);
-          }
-          streamData.pcmBytes += buf.length;
-        });
-
-        const endAll = () => {
-          console.log(`[receiver] Ending stream for ${userId} - Total Opus: ${streamData.bytes}b, PCM: ${streamData.pcmBytes}b`);
-          try { opusStream.destroy(); } catch (_) {}
-          try { decoder.end(); } catch (_) {}
-          if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
-            try {
-              ffmpeg.stdin.end();
-              console.log(`[ffmpeg] FFmpeg stdin ended for ${userId}`);
-            } catch (_) {}
-          }
-        };
-
-        opusStream.on('end', () => {
-          console.log(`[receiver] OpusStream ended for ${userId}`);
-          endAll();
-        });
-
-        opusStream.on('close', () => {
-          console.log(`[receiver] OpusStream closed for ${userId}`);
-          endAll();
-        });
-
-        opusStream.on('error', (e) => {
-          console.warn(`[receiver] OpusStream error ${userId}:`, e.message);
-          endAll();
-        });
-
-        decoder.on('error', (e) => {
-          console.warn(`[receiver] Decoder error ${userId}:`, e.message);
-          endAll();
-        });
-
-        ffmpeg.on('close', (code) => {
-          console.log(`[ffmpeg] Process closed for ${userId} (exit code: ${code})`);
-          console.log(`[ffmpeg] Final stats for ${userId} - Opus: ${streamData.bytes}b, PCM: ${streamData.pcmBytes}b`);
-
-          try {
-            if (fs.existsSync(filename)) {
-              const size = fs.statSync(filename).size;
-              console.log(`[ffmpeg] Output file size: ${size} bytes`);
-
-              if (size < 100) {
-                console.warn(`[ffmpeg] Deleting empty file for ${userId} (${size} bytes)`);
-                fs.unlinkSync(filename);
-              } else {
-                console.log(`[ffmpeg] Successfully created: ${path.basename(filename)} (${size} bytes)`);
-              }
-            } else {
-              console.warn(`[ffmpeg] Output file does not exist: ${filename}`);
-            }
-          } catch (e) {
-            console.warn(`[ffmpeg] File handling error for ${userId}:`, e.message);
-          }
-          rec.userStreams.delete(userId);
-        });
-
-        ffmpeg.on('error', (e) => {
-          console.error(`[ffmpeg] Process error for ${userId}:`, e.message);
-          endAll();
-        });
-
+        trackManager.startReceivingAudio(opusStream);
       } catch (e) {
-        console.error(`[receiver] Setup failure for ${userId}:`, e.message);
+        console.error(`[receiver] Failed to subscribe to user ${userId}:`, e.message);
       }
     });
 
     receiver.speaking.on('end', (userId) => {
-      const user = this.client.users.cache.get(userId);
-      const username = user ? user.username : 'Unknown';
-      console.log(`[receiver] SPEAKING END detected for user ${userId} (${username})`);
-    });
+      console.log(`[receiver] User ${userId} stopped speaking`);
 
-    // Additional debugging: Monitor connection state
-    rec.connection.on('stateChange', (oldState, newState) => {
-      console.log(`[voice] Connection state changed: ${oldState.status} -> ${newState.status}`);
+      const trackManager = rec.userTracks.get(userId);
+      if (trackManager) {
+        trackManager.stopReceivingAudio();
+      }
     });
+  }
 
-    // Log initial connection state
-    console.log(`[voice] Initial connection state: ${rec.connection.state.status}`);
-  }  _monitorStopFlag(rec) {
+  _monitorStopFlag(rec) {
     const interval = setInterval(async () => {
       if (this.shouldExit) {
         clearInterval(interval);
@@ -435,7 +589,6 @@ class VoiceRecorder {
   }
 
   async stopRecording(guildId) {
-    // If current process owns the recording
     if (this.activeRecording && this.activeRecording.guildId === guildId) {
       console.log('[stop] stopping current process recording...');
       return await this._stopCurrentRecording();
@@ -447,7 +600,6 @@ class VoiceRecorder {
       return false;
     }
 
-    // Cross-process stop: write stop.flag in outputDir
     const stopPath = path.join(state.outputDir, STOP_FILENAME);
     try {
       fs.writeFileSync(stopPath, '');
@@ -456,7 +608,6 @@ class VoiceRecorder {
       console.warn('[stop] could not write stop flag:', e.message);
     }
 
-    // Wait up to 8s for state to clear
     for (let i = 0; i < 16; i++) {
       await new Promise((r) => setTimeout(r, 500));
       const s = this.loadState();
@@ -466,8 +617,7 @@ class VoiceRecorder {
       }
     }
 
-    console.warn('[stop] other process did not clear state in time (it may still be stopping)');
-    // As a last resort, try to terminate (works on Windows but may be abrupt)
+    console.warn('[stop] other process did not clear state in time');
     try {
       process.kill(state.pid);
       console.warn('[stop] sent terminate to other process');
@@ -483,22 +633,16 @@ class VoiceRecorder {
     if (!this.activeRecording) return false;
 
     const rec = this.activeRecording;
-    console.log('[cleanup] stopping user streams...');
+    console.log('[cleanup] stopping user tracks...');
 
-    for (const [userId, s] of rec.userStreams) {
-      console.log(`[cleanup] user ${userId}`);
-      try { s.opusStream?.destroy(); } catch (_) {}
-      try { s.decoder?.end(); } catch (_) {}
-      try {
-        if (s.ffmpeg && s.ffmpeg.stdin && !s.ffmpeg.stdin.destroyed) s.ffmpeg.stdin.end();
-        setTimeout(() => {
-          try { s.ffmpeg?.kill('SIGTERM'); } catch (_) {}
-        }, 1500);
-      } catch (_) {}
+    // Stop all user tracks
+    for (const [userId, trackManager] of rec.userTracks) {
+      console.log(`[cleanup] cleaning up track for user ${userId}`);
+      trackManager.cleanup();
     }
 
-    console.log('[cleanup] waiting 3s for encoders to flush...');
-    await new Promise((r) => setTimeout(r, 3000));
+    console.log('[cleanup] waiting 5s for encoders to finish...');
+    await new Promise((r) => setTimeout(r, 5000));
 
     if (rec.player) { try { rec.player.stop(); } catch (_) {} }
     if (rec.connection) { try { rec.connection.destroy(); } catch (_) {} }
@@ -530,7 +674,6 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  // Parse simple flags from tail (supports --format, --bitrate)
   const parseFlags = (args) => {
     const out = { _: [] };
     for (let i = 0; i < args.length; i++) {
@@ -571,7 +714,6 @@ if (require.main === module) {
         const ok = await recorder.startRecording(guildId, channelId, outputDir, { format: flags.format, bitrate: flags.bitrate });
         if (ok) {
           console.log('[cli] recording started; process will stay alive until stop.flag is created or process is terminated');
-          // Keep process alive
           setInterval(() => {}, 1 << 30);
         } else {
           console.error('[cli] failed to start');
