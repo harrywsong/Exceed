@@ -193,6 +193,7 @@ class VoiceRecorder {
         const receiver = connection.receiver;
 
         receiver.speaking.on('start', (userId) => {
+            console.log(`Detected speaking from user ${userId}`);
             if (recording.users.has(userId)) return;
 
             console.log(`User ${userId} started speaking`);
