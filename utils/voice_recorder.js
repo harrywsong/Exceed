@@ -1,16 +1,26 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const {
-    joinVoiceChannel,
-    VoiceConnectionStatus,
-    EndBehaviorType,
-    entersState,
-    createAudioPlayer,
-    createAudioResource,
-    AudioPlayerStatus
+  joinVoiceChannel,
+  VoiceConnectionStatus,
+  EndBehaviorType,
+  entersState,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
+  StreamType
 } = require('@discordjs/voice');
+const { Readable } = require('stream');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+
+// A single Opus "silence" frame keeps the connection alive.
+class Silence extends Readable {
+  _read() {
+    this.push(Buffer.from([0xF8, 0xFF, 0xFE]));
+  }
+}
 
 // Add state file management
 const STATE_FILE = path.join(process.cwd(), 'recording_state.json');
@@ -200,15 +210,23 @@ class VoiceRecorder {
                 guildId: guildId,
                 adapterCreator: guild.voiceAdapterCreator,
                 selfDeaf: false,  // MUST be false to receive audio
-                selfMute: true    // We don't need to send audio
+                selfMute: false    // We don't need to send audio
             });
 
             console.log('Voice connection created, waiting for ready state...');
 
+            let player;
             // Wait for connection to be ready with longer timeout
             try {
                 await entersState(connection, VoiceConnectionStatus.Ready, 20000);
                 console.log('Voice connection is ready!');
+                // Keep the voice connection alive like Craig does:
+                player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+                const silence = new Silence();
+                const resource = createAudioResource(silence, { inputType: StreamType.Opus });
+                connection.subscribe(player);
+                player.play(resource);
+
             } catch (error) {
                 console.error('Failed to connect to voice channel:', error.message);
                 connection.destroy();
@@ -222,12 +240,30 @@ class VoiceRecorder {
                 startTime: Date.now(),
                 userStreams: new Map(),
                 guildId: guildId,
-                channelId: channelId
+                channelId: channelId,
+                player: player
             };
 
             this.activeRecording = recording;
             this.saveState(recording); // Save state to file
             this.setupRecording(recording);
+
+            // More resilient reconnect logic recommended by discord.js
+            recording.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+              console.log('Voice connection disconnected, attempting to recover...');
+              try {
+                await Promise.race([
+                  entersState(recording.connection, VoiceConnectionStatus.Signalling, 5_000),
+                  entersState(recording.connection, VoiceConnectionStatus.Connecting, 5_000),
+                ]);
+                console.log('Reconnecting to voice...');
+              } catch (err) {
+                console.log('Could not reconnect, destroying connection:', err?.message || err);
+                try { recording.connection.destroy(); } catch {}
+                this.activeRecording = null;
+                this.saveState(null);
+              }
+            });
 
             console.log('Recording setup complete - now listening for audio');
             return true;
@@ -247,216 +283,88 @@ class VoiceRecorder {
         receiver.speaking.on('start', (userId) => {
             console.log(`User ${userId} started speaking`);
 
-            // Skip if we're already recording this user
+            // Skip if already recording this user
             if (recording.userStreams.has(userId)) {
-                console.log(`Already recording user ${userId}, skipping...`);
                 return;
             }
 
             try {
-                // Create audio stream for this user with better options
+                // Subscribe to Opus packets from Discord
                 const audioStream = receiver.subscribe(userId, {
-                    end: { behavior: EndBehaviorType.AfterSilence, duration: 2000 },
-                    encoder: 'opus' // <--- force opus packets
+                    end: { behavior: EndBehaviorType.AfterSilence, duration: 2000 }
                 });
 
                 const timestamp = Date.now();
+                const filename = path.join(recording.outputDir, `user_${userId}_${timestamp}.wav`);
 
-                // Try multiple approaches for better compatibility
-                const approaches = [
-                    {
-                        name: 'PCM_WAV',
-                        filename: path.join(recording.outputDir, `user_${userId}_${timestamp}.wav`),
-                        ffmpegArgs: [
-                            '-hide_banner',
-                            '-loglevel', 'warning',
-                            '-f', 's16le',        // Raw PCM input
-                            '-ar', '48000',       // Sample rate
-                            '-ac', '2',           // Channels
-                            '-i', 'pipe:0',       // Input from pipe
-                            '-f', 'wav',          // Output format
-                            '-ar', '48000',       // Output sample rate
-                            '-ac', '2',           // Output channels
-                            '-y'                  // Overwrite output files
-                        ]
-                    },
-                    {
-                        name: 'OPUS_DECODE',
-                        filename: path.join(recording.outputDir, `user_${userId}_${timestamp}_opus.wav`),
-                        ffmpegArgs: [
-                            '-hide_banner',
-                            '-loglevel', 'warning',
-                            '-f', 'opus',         // Opus input
-                            '-ar', '48000',
-                            '-ac', '2',
-                            '-i', 'pipe:0',
-                            '-f', 'wav',
-                            '-ar', '48000',
-                            '-ac', '2',
-                            '-acodec', 'pcm_s16le', // PCM codec for WAV
-                            '-y'
-                        ]
-                    }
-                ];
+                console.log(`Recording Opus stream for user ${userId} -> ${filename}`);
 
-                // Try the first approach (PCM)
-                const approach = approaches[1];
-                const filename = approach.filename;
-
-                console.log(`Starting ${approach.name} recording for user ${userId} to file: ${path.basename(filename)}`);
-
-                // Create FFmpeg process
-                const ffmpeg = spawn('ffmpeg', approach.ffmpegArgs.concat([filename]), {
-                    stdio: ['pipe', 'pipe', 'pipe']
-                });
+                // Spawn FFmpeg to decode Opus → WAV
+                const ffmpeg = spawn('ffmpeg', [
+                    '-hide_banner',
+                    '-loglevel', 'warning',
+                    '-f', 'opus',       // input is Opus
+                    '-ar', '48000',
+                    '-ac', '2',
+                    '-i', 'pipe:0',
+                    '-acodec', 'pcm_s16le', // decode to WAV PCM
+                    '-f', 'wav',
+                    '-y', filename
+                ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
                 recording.userStreams.set(userId, {
-                    audioStream,
-                    ffmpeg,
-                    filename,
-                    startTime: timestamp,
-                    approach: approach.name
+                    audioStream: audioStream,
+                    ffmpeg: ffmpeg,
+                    filename: filename,
+                    startTime: timestamp
                 });
 
-                // Track if we've received any data
-                let hasReceivedData = false;
                 let dataSize = 0;
 
-                // Handle audio stream data
                 audioStream.on('data', (chunk) => {
-                    if (!hasReceivedData) {
-                        console.log(`First audio data received for user ${userId}, size: ${chunk.length}`);
-                        hasReceivedData = true;
-                    }
                     dataSize += chunk.length;
-
-                    // Write to FFmpeg stdin
-                    if (ffmpeg.stdin && ffmpeg.stdin.writable) {
+                    if (ffmpeg.stdin.writable) {
                         ffmpeg.stdin.write(chunk);
                     }
                 });
 
-                // Handle FFmpeg completion
-                ffmpeg.on('close', (code) => {
-                    console.log(`FFmpeg for user ${userId} finished with code ${code}, data received: ${dataSize} bytes`);
-
-                    // Check if file exists and has content
-                    if (fs.existsSync(filename)) {
-                        const stats = fs.statSync(filename);
-                        if (stats.size > 1000) { // More than 1KB
-                            console.log(`Successfully recorded ${stats.size} bytes for user ${userId}`);
-                        } else {
-                            console.log(`File too small (${stats.size} bytes), removing for user ${userId}`);
-                            try {
-                                fs.unlinkSync(filename);
-                            } catch (e) {
-                                console.warn(`Error removing file: ${e.message}`);
-                            }
-                        }
-                    } else {
-                        console.log(`No output file created for user ${userId}`);
-                    }
-
-                    recording.userStreams.delete(userId);
+                audioStream.on('end', () => {
+                    console.log(`Audio stream ended for user ${userId}, total ${dataSize} bytes`);
+                    if (ffmpeg.stdin.writable) ffmpeg.stdin.end();
                 });
 
-                // Handle FFmpeg stdout/stderr
-                ffmpeg.stdout.on('data', (data) => {
-                    console.log(`FFmpeg stdout (${userId}): ${data.toString().trim()}`);
+                audioStream.on('error', (err) => {
+                    console.error(`Audio stream error for user ${userId}:`, err.message);
+                    if (!ffmpeg.killed) ffmpeg.kill();
+                });
+
+                ffmpeg.on('close', (code) => {
+                    console.log(`FFmpeg closed for user ${userId} (code ${code})`);
+                    if (fs.existsSync(filename)) {
+                        const stats = fs.statSync(filename);
+                        if (stats.size < 1000) {
+                            console.warn(`Deleting tiny/empty file for ${userId}`);
+                            fs.unlinkSync(filename);
+                        } else {
+                            console.log(`Final file size: ${stats.size} bytes`);
+                        }
+                    }
+                    recording.userStreams.delete(userId);
                 });
 
                 ffmpeg.stderr.on('data', (data) => {
-                    const error = data.toString();
-                    if (error.includes('Error') || error.includes('error') || error.includes('Invalid')) {
-                        console.error(`FFmpeg error for user ${userId}: ${error.trim()}`);
-                    } else if (error.trim()) {
-                        console.log(`FFmpeg info (${userId}): ${error.trim()}`);
-                    }
+                    const msg = data.toString().trim();
+                    if (msg) console.log(`FFmpeg (${userId}): ${msg}`);
                 });
 
-                ffmpeg.on('error', (error) => {
-                    console.error(`FFmpeg process error for user ${userId}:`, error.message);
-                    recording.userStreams.delete(userId);
-                });
-
-                // Handle audio stream events
-                audioStream.on('error', (error) => {
-                    console.error(`Audio stream error for user ${userId}:`, error.message);
-                    if (ffmpeg && !ffmpeg.killed) {
-                        ffmpeg.kill();
-                    }
-                    recording.userStreams.delete(userId);
-                });
-
-                audioStream.on('end', () => {
-                    console.log(`Audio stream ended for user ${userId}, received ${dataSize} bytes total`);
-                    if (ffmpeg && !ffmpeg.killed && ffmpeg.stdin && ffmpeg.stdin.writable) {
-                        ffmpeg.stdin.end();
-                    }
-                });
-
-                // Handle stream timeout (no data received)
-                setTimeout(() => {
-                    if (!hasReceivedData && recording.userStreams.has(userId)) {
-                        console.log(`No audio data received for user ${userId} after 10 seconds, ending stream`);
-                        if (audioStream) {
-                            audioStream.destroy();
-                        }
-                    }
-                }, 10000);
-
-            } catch (error) {
-                console.error(`Error setting up recording for user ${userId}:`, error.message);
+            } catch (err) {
+                console.error(`Error setting up recording for ${userId}:`, err.message);
             }
         });
 
-        // Monitor speaking events more carefully
         receiver.speaking.on('end', (userId) => {
             console.log(`User ${userId} stopped speaking`);
         });
-
-        // Handle connection events
-        recording.connection.on(VoiceConnectionStatus.Disconnected, async () => {
-            console.log('Voice connection disconnected, attempting to reconnect...');
-            try {
-                await entersState(recording.connection, VoiceConnectionStatus.Ready, 5000);
-                console.log('Reconnected successfully');
-            } catch {
-                console.log('Failed to reconnect, destroying connection');
-                recording.connection.destroy();
-            }
-        });
-
-        recording.connection.on(VoiceConnectionStatus.Destroyed, () => {
-            console.log('Voice connection destroyed');
-            this.activeRecording = null;
-            this.saveState(null); // Clear state when connection destroyed
-        });
-
-        recording.connection.on('error', (error) => {
-            console.error('Voice connection error:', error);
-            this.cleanup();
-        });
-
-        console.log('Audio receiver setup complete');
-
-        // Add periodic status logging
-        const statusInterval = setInterval(() => {
-            if (!this.activeRecording) {
-                clearInterval(statusInterval);
-                return;
-            }
-
-            const activeStreams = recording.userStreams.size;
-            console.log(`Recording status: ${activeStreams} active streams`);
-
-            if (activeStreams > 0) {
-                for (const [userId, stream] of recording.userStreams) {
-                    const duration = Date.now() - stream.startTime;
-                    console.log(`  User ${userId}: ${Math.round(duration/1000)}s (${stream.approach})`);
-                }
-            }
-        }, 30000); // Every 30 seconds
     }
 
     async stopRecording(guildId) {
@@ -529,6 +437,11 @@ class VoiceRecorder {
             } catch (error) {
                 console.warn(`Error stopping stream for user ${userId}:`, error.message);
             }
+        }
+
+        // 🟢 Stop the silence player if it exists
+        if (recording.player) {
+            try { recording.player.stop(); } catch {}
         }
 
         // Wait for processes to finish

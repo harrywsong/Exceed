@@ -10,6 +10,7 @@ import logging
 import signal
 import shutil
 import zipfile
+import time
 
 
 class RecordingView(discord.ui.View):
@@ -157,7 +158,12 @@ class Recording(commands.Cog):
 
     def _cleanup_node_processes(self):
         try:
-            subprocess.run(['pkill', '-f', 'voice_recorder.js'], check=False)
+            # Kill any existing voice recorder processes
+            if os.name == 'nt':  # Windows
+                subprocess.run(['taskkill', '/f', '/im', 'node.exe', '/fi', 'WINDOWTITLE eq voice_recorder*'],
+                              check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:  # Unix/Linux/Mac
+                subprocess.run(['pkill', '-f', 'voice_recorder.js'], check=False)
         except:
             pass
 
@@ -314,22 +320,26 @@ class Recording(commands.Cog):
             env = os.environ.copy()
             env['DISCORD_BOT_TOKEN'] = self.bot.http.token
 
-            process = subprocess.Popen([
-                'node', 'utils/voice_recorder.js', 'start',
-                str(interaction.guild.id), str(channel.id), recording_dir
-            ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Create a new console window for the recorder process (Windows) or use nohup (Unix)
+            creationflags = 0
+            if os.name == 'nt':  # Windows
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+                cmd = ['node', 'utils/voice_recorder.js', 'start',
+                       str(interaction.guild.id), str(channel.id), recording_dir]
+            else:  # Unix/Linux/Mac
+                cmd = ['nohup', 'node', 'utils/voice_recorder.js', 'start',
+                       str(interaction.guild.id), str(channel.id), recording_dir, '&']
 
-            # Store recording info
-            self.recordings[interaction.guild.id] = {
-                'id': recording_id,
-                'process': process,
-                'channel': channel,
-                'start_time': datetime.now(),
-                'dir': recording_dir
-            }
+            process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=creationflags
+            )
 
-            # Wait for process to start properly
-            self.bot.logger.info("Waiting for recorder to initialize...")
+            # Wait a bit for the process to start
             await asyncio.sleep(3)
 
             # Check if process is still running
@@ -339,10 +349,18 @@ class Recording(commands.Cog):
                 self.bot.logger.error(f"Exit code: {process.returncode}")
                 self.bot.logger.error(f"Stdout: {stdout}")
                 self.bot.logger.error(f"Stderr: {stderr}")
-                del self.recordings[interaction.guild.id]
                 await interaction.followup.send(f"❌ Recording process failed to start. Check bot logs for details.",
                                                 ephemeral=True)
                 return
+
+            # Store recording info
+            self.recordings[interaction.guild.id] = {
+                'id': recording_id,
+                'process': process,
+                'channel': channel,
+                'start_time': datetime.now(),
+                'dir': recording_dir
+            }
 
             embed = discord.Embed(
                 title="✅ Recording Started",
@@ -386,7 +404,7 @@ class Recording(commands.Cog):
                 try:
                     stdout, stderr = await asyncio.wait_for(
                         asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
-                        timeout=10.0
+                        timeout=15.0
                     )
                     self.bot.logger.info(f"Stop command output: {stdout}")
                     if stderr:
@@ -396,7 +414,7 @@ class Recording(commands.Cog):
                     self.bot.logger.warning("Stop command timed out")
 
             # Wait for files to be processed
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
             # Count audio files
             files_created = []
@@ -439,6 +457,9 @@ class Recording(commands.Cog):
                 await interaction.followup.send(embed=embed, view=view)
             else:
                 await interaction.followup.send(embed=embed)
+
+            # Remove from active recordings
+            del self.recordings[interaction.guild.id]
 
         except Exception as e:
             self.bot.logger.error(f"Recording stop error: {e}", exc_info=True)
