@@ -3,13 +3,12 @@ const {
     joinVoiceChannel,
     VoiceConnectionStatus,
     EndBehaviorType,
+    entersState
 } = require('@discordjs/voice');
 const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { entersState } = require('@discordjs/voice');
-
 
 class VoiceRecorder {
     constructor(token) {
@@ -17,7 +16,7 @@ class VoiceRecorder {
             intents: [
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildVoiceStates,
-                GatewayIntentBits.GuildMessages  // Added this intent
+                GatewayIntentBits.GuildMessages
             ]
         });
         this.token = token;
@@ -28,7 +27,6 @@ class VoiceRecorder {
 
     detectRaspberryPi() {
         try {
-            const fs = require('fs');
             if (fs.existsSync('/proc/cpuinfo')) {
                 const cpuinfo = fs.readFileSync('/proc/cpuinfo', 'utf8');
                 return cpuinfo.includes('Raspberry Pi') || cpuinfo.includes('BCM');
@@ -41,14 +39,12 @@ class VoiceRecorder {
 
     async init() {
         return new Promise((resolve, reject) => {
-            // Set up event listeners before login
-            this.client.once('clientReady', () => {
+            this.client.once('ready', () => {
                 console.log(`Voice recorder logged in as ${this.client.user.tag}`);
                 if (this.isRaspberryPi) {
-                    console.log('🥧 Raspberry Pi detected - using optimized settings');
+                    console.log('Raspberry Pi detected - using optimized settings');
                 }
 
-                // Log guild and channel information for debugging
                 console.log(`Bot is in ${this.client.guilds.cache.size} guilds:`);
                 this.client.guilds.cache.forEach(guild => {
                     console.log(`- ${guild.name} (${guild.id}) - ${guild.channels.cache.size} channels`);
@@ -70,14 +66,12 @@ class VoiceRecorder {
                 this.isReady = false;
             });
 
-            // Login with error handling
             this.client.login(this.token).catch(reject);
         });
     }
 
     async startRecording(guildId, channelId, outputDir) {
         try {
-            // Wait for client to be ready
             if (!this.isReady) {
                 console.log('Waiting for Discord client to be ready...');
                 let attempts = 0;
@@ -100,7 +94,6 @@ class VoiceRecorder {
 
             console.log(`Found guild: ${guild.name}. Looking for channel ${channelId}...`);
 
-            // Force fetch channels if not in cache
             try {
                 await guild.channels.fetch();
             } catch (fetchError) {
@@ -112,20 +105,19 @@ class VoiceRecorder {
                 console.error(`Channel ${channelId} not found in guild ${guild.name}`);
                 console.log('Available voice channels:',
                     guild.channels.cache
-                        .filter(c => c.type === 2) // Voice channels
+                        .filter(c => c.type === 2)
                         .map(c => `${c.name} (${c.id})`)
                 );
                 return false;
             }
 
-            if (channel.type !== 2) { // Not a voice channel
+            if (channel.type !== 2) {
                 console.error(`Channel ${channel.name} is not a voice channel (type: ${channel.type})`);
                 return false;
             }
 
             console.log(`Starting recording in voice channel: ${channel.name}`);
 
-            // Check if bot has necessary permissions
             const permissions = channel.permissionsFor(guild.members.me);
             if (!permissions.has('Connect') || !permissions.has('Speak')) {
                 console.error(`Bot lacks permissions in channel ${channel.name}. Connect: ${permissions.has('Connect')}, Speak: ${permissions.has('Speak')}`);
@@ -149,7 +141,6 @@ class VoiceRecorder {
                 channelId: channelId
             };
 
-            // Set up connection event handlers with timeout
             const connectionTimeout = setTimeout(() => {
                 console.error('Voice connection timeout after 10 seconds');
                 connection.destroy();
@@ -209,17 +200,17 @@ class VoiceRecorder {
             const userStream = receiver.subscribe(userId, {
                 end: {
                     behavior: EndBehaviorType.AfterSilence,
-                    duration: this.isRaspberryPi ? 200 : 100, // Longer silence for Pi
+                    duration: this.isRaspberryPi ? 200 : 100,
                 },
             });
 
             const filename = path.join(recording.outputDir, `${userId}.pcm`);
             const fileStream = fs.createWriteStream(filename);
 
-            // Pi-optimized opus decoder settings
+            // Optimized opus decoder settings
             const decoderOptions = this.isRaspberryPi ? {
                 frameSize: 960,
-                channels: 1, // Mono to save CPU on Pi
+                channels: 1,
                 rate: 48000
             } : {
                 frameSize: 960,
@@ -234,7 +225,8 @@ class VoiceRecorder {
             recording.users.set(userId, {
                 stream: userStream,
                 file: filename,
-                startTime: Date.now()
+                startTime: Date.now(),
+                channels: decoderOptions.channels
             });
 
             userStream.on('end', () => {
@@ -270,6 +262,9 @@ class VoiceRecorder {
         // Disconnect from voice
         recording.connection.destroy();
 
+        // Wait a moment for files to be written completely
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
         // Process the recording files
         await this.processRecording(recording);
 
@@ -289,16 +284,23 @@ class VoiceRecorder {
             if (fs.existsSync(pcmFile)) {
                 const stats = fs.statSync(pcmFile);
                 if (stats.size > 0) {
+                    console.log(`Processing ${pcmFile} (${stats.size} bytes) with ${userData.channels} channels`);
                     if (this.isRaspberryPi) {
-                        // Process files sequentially on Pi to avoid overload
-                        await this.convertPcmToWav(pcmFile, wavFile);
+                        // Process files sequentially on Pi
+                        await this.convertPcmToWav(pcmFile, wavFile, userData.channels);
                     } else {
-                        processPromises.push(this.convertPcmToWav(pcmFile, wavFile));
+                        processPromises.push(this.convertPcmToWav(pcmFile, wavFile, userData.channels));
                     }
                 } else {
                     console.log(`Skipping empty file for user ${userId}`);
-                    try { fs.unlinkSync(pcmFile); } catch {}
+                    try {
+                        fs.unlinkSync(pcmFile);
+                    } catch (e) {
+                        console.warn(`Could not delete empty PCM file: ${e.message}`);
+                    }
                 }
+            } else {
+                console.warn(`PCM file ${pcmFile} does not exist`);
             }
         }
 
@@ -312,11 +314,39 @@ class VoiceRecorder {
         }
     }
 
-    async convertPcmToWav(pcmFile, wavFile) {
-        return new Promise((resolve, reject) => {
-            console.log(`Converting ${pcmFile} to ${wavFile}`);
+    async checkFFmpegAvailability() {
+        return new Promise((resolve) => {
+            const ffmpegCheck = spawn('ffmpeg', ['-version']);
 
-            // Check if PCM file exists and has content
+            ffmpegCheck.on('close', (code) => {
+                if (code === 0) {
+                    console.log('FFmpeg is available');
+                    resolve(true);
+                } else {
+                    console.error('FFmpeg is not available or not working properly');
+                    resolve(false);
+                }
+            });
+
+            ffmpegCheck.on('error', (err) => {
+                console.error('FFmpeg not found:', err.message);
+                resolve(false);
+            });
+        });
+    }
+
+    async convertPcmToWav(pcmFile, wavFile, channels = 2) {
+        // Check FFmpeg availability first
+        const ffmpegAvailable = await this.checkFFmpegAvailability();
+        if (!ffmpegAvailable) {
+            console.error('FFmpeg not available, keeping PCM file');
+            return;
+        }
+
+        return new Promise((resolve, reject) => {
+            console.log(`Converting ${pcmFile} to ${wavFile} (${channels} channels)`);
+
+            // Verify PCM file exists and has content
             if (!fs.existsSync(pcmFile)) {
                 console.log(`PCM file ${pcmFile} does not exist, skipping conversion`);
                 resolve();
@@ -325,94 +355,137 @@ class VoiceRecorder {
 
             const stats = fs.statSync(pcmFile);
             if (stats.size === 0) {
-                console.log(`PCM file ${pcmFile} is empty, skipping conversion`);
-                try { fs.unlinkSync(pcmFile); } catch {}
+                console.log(`PCM file ${pcmFile} is empty, removing it`);
+                try {
+                    fs.unlinkSync(pcmFile);
+                } catch (e) {
+                    console.warn(`Could not delete empty PCM file: ${e.message}`);
+                }
                 resolve();
                 return;
             }
 
-            // Pi-optimized FFmpeg settings
+            console.log(`PCM file size: ${stats.size} bytes`);
+
+            // Build FFmpeg command with proper settings
             const ffmpegArgs = [
-                '-f', 's16le',
-                '-ar', '48000',
-                '-ac', this.isRaspberryPi ? '1' : '2', // Mono for Pi
-                '-i', pcmFile,
-                '-acodec', 'pcm_s16le'
+                '-f', 's16le',           // Input format: signed 16-bit little endian
+                '-ar', '48000',          // Sample rate: 48kHz
+                '-ac', channels.toString(), // Audio channels
+                '-i', pcmFile,           // Input file
+                '-acodec', 'pcm_s16le',  // Output codec
+                '-ar', '48000'           // Ensure output sample rate
             ];
 
-            // Pi-specific optimizations
+            // Raspberry Pi optimizations
             if (this.isRaspberryPi) {
-                ffmpegArgs.push('-threads', '2'); // Limit threads
-                ffmpegArgs.push('-preset', 'ultrafast'); // Fastest encoding
+                ffmpegArgs.push('-threads', '2');
+                ffmpegArgs.push('-preset', 'ultrafast');
             }
 
-            ffmpegArgs.push(wavFile, '-y');
+            // Add output file and overwrite flag
+            ffmpegArgs.push('-y', wavFile);
 
-            console.log(`Running FFmpeg with args: ${ffmpegArgs.join(' ')}`);
+            console.log(`Running FFmpeg: ffmpeg ${ffmpegArgs.join(' ')}`);
+
             const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
+            let stdout = '';
             let stderr = '';
+
+            ffmpeg.stdout.on('data', (data) => {
+                stdout += data.toString();
+            });
+
             ffmpeg.stderr.on('data', (data) => {
                 stderr += data.toString();
             });
 
-            ffmpeg.stdout.on('data', (data) => {
-                // Log FFmpeg output for debugging
-                console.log(`FFmpeg stdout: ${data.toString()}`);
-            });
-
             ffmpeg.on('close', (code) => {
                 console.log(`FFmpeg process exited with code ${code}`);
+
                 if (code === 0) {
-                    try {
-                        // Check if WAV file was created successfully
-                        if (fs.existsSync(wavFile) && fs.statSync(wavFile).size > 0) {
-                            fs.unlinkSync(pcmFile); // Delete PCM only if WAV was created
-                            console.log(`✅ Successfully converted ${path.basename(pcmFile)} to ${path.basename(wavFile)}`);
+                    // Verify WAV file was created successfully
+                    if (fs.existsSync(wavFile)) {
+                        const wavStats = fs.statSync(wavFile);
+                        if (wavStats.size > 44) { // WAV header is 44 bytes minimum
+                            console.log(`Successfully converted ${path.basename(pcmFile)} to ${path.basename(wavFile)} (${wavStats.size} bytes)`);
+
+                            // Delete PCM file only after successful conversion
+                            try {
+                                fs.unlinkSync(pcmFile);
+                                console.log(`Deleted original PCM file: ${path.basename(pcmFile)}`);
+                            } catch (err) {
+                                console.warn(`Could not delete PCM file: ${err.message}`);
+                            }
+                            resolve();
                         } else {
-                            console.log(`⚠️  WAV file not created or empty, keeping PCM file ${path.basename(pcmFile)}`);
+                            console.error(`WAV file created but seems invalid (${wavStats.size} bytes), keeping PCM`);
+                            try {
+                                fs.unlinkSync(wavFile);
+                            } catch (e) {
+                                console.warn(`Could not delete invalid WAV file: ${e.message}`);
+                            }
+                            resolve();
                         }
-                        resolve();
-                    } catch (err) {
-                        console.warn(`Could not delete PCM file: ${err.message}`);
+                    } else {
+                        console.error('FFmpeg reported success but WAV file not found, keeping PCM');
                         resolve();
                     }
                 } else {
-                    console.error(`❌ FFmpeg failed with code ${code}:`);
-                    if (stderr) console.error(`FFmpeg stderr: ${stderr}`);
-                    // Don't reject - keep the PCM file if conversion fails
+                    console.error(`FFmpeg failed with code ${code}`);
+                    if (stderr) {
+                        console.error('FFmpeg stderr:', stderr.trim());
+                    }
+                    if (stdout) {
+                        console.log('FFmpeg stdout:', stdout.trim());
+                    }
                     console.log(`Keeping original PCM file: ${path.basename(pcmFile)}`);
-                    resolve();
+                    resolve(); // Don't reject - just keep the PCM file
                 }
             });
 
             ffmpeg.on('error', (err) => {
                 console.error(`FFmpeg spawn error: ${err.message}`);
-                console.log(`Keeping original PCM file due to FFmpeg error: ${path.basename(pcmFile)}`);
+                console.log(`Keeping original PCM file due to spawn error: ${path.basename(pcmFile)}`);
                 resolve(); // Don't reject - just keep the PCM file
             });
 
-            // Pi timeout protection
+            // Timeout protection for Pi
+            let timeoutHandle = null;
             if (this.isRaspberryPi) {
-                setTimeout(() => {
+                timeoutHandle = setTimeout(() => {
                     if (!ffmpeg.killed) {
                         console.warn('FFmpeg taking too long on Pi, terminating...');
                         ffmpeg.kill('SIGTERM');
-                        resolve(); // Keep PCM file on timeout
+
+                        // Give it a moment to die gracefully
+                        setTimeout(() => {
+                            if (!ffmpeg.killed) {
+                                console.warn('Force killing FFmpeg process');
+                                ffmpeg.kill('SIGKILL');
+                            }
+                        }, 5000);
                     }
-                }, 30000); // 30 second timeout
+                }, 60000); // 60 second timeout for Pi
             }
+
+            // Clean up timeout if process finishes normally
+            ffmpeg.on('close', () => {
+                if (timeoutHandle) {
+                    clearTimeout(timeoutHandle);
+                }
+            });
         });
     }
+
     async cleanup() {
         console.log('Cleaning up voice recorder...');
 
-        // Stop all active recordings
         for (const [guildId, recording] of this.recordings) {
             try {
                 console.log(`Cleaning up recording for guild ${guildId}`);
 
-                // Stop user streams
                 for (const [userId, userData] of recording.users) {
                     try {
                         userData.stream.destroy();
@@ -421,7 +494,6 @@ class VoiceRecorder {
                     }
                 }
 
-                // Disconnect from voice
                 recording.connection.destroy();
             } catch (error) {
                 console.warn(`Error cleaning up recording for guild ${guildId}:`, error);
@@ -430,8 +502,7 @@ class VoiceRecorder {
 
         this.recordings.clear();
 
-        // Destroy Discord client
-        if (this.client && !this.client.isReady()) {
+        if (this.client && this.client.isReady()) {
             await this.client.destroy();
         }
 
@@ -439,12 +510,12 @@ class VoiceRecorder {
     }
 }
 
-// CLI interface for Python integration
+// CLI interface
 if (require.main === module) {
     const [,, action, ...args] = process.argv;
 
     if (!process.env.DISCORD_BOT_TOKEN) {
-        console.error('❌ DISCORD_BOT_TOKEN environment variable not set');
+        console.error('DISCORD_BOT_TOKEN environment variable not set');
         process.exit(1);
     }
 
@@ -452,25 +523,25 @@ if (require.main === module) {
 
     // Graceful shutdown handlers
     process.on('SIGINT', async () => {
-        console.log('\n🛑 Received SIGINT, shutting down gracefully...');
+        console.log('\nReceived SIGINT, shutting down gracefully...');
         await recorder.cleanup();
         process.exit(0);
     });
 
     process.on('SIGTERM', async () => {
-        console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
+        console.log('\nReceived SIGTERM, shutting down gracefully...');
         await recorder.cleanup();
         process.exit(0);
     });
 
     process.on('uncaughtException', async (error) => {
-        console.error('❌ Uncaught exception:', error);
+        console.error('Uncaught exception:', error);
         await recorder.cleanup();
         process.exit(1);
     });
 
     process.on('unhandledRejection', async (reason, promise) => {
-        console.error('❌ Unhandled rejection at:', promise, 'reason:', reason);
+        console.error('Unhandled rejection at:', promise, 'reason:', reason);
         await recorder.cleanup();
         process.exit(1);
     });
@@ -483,15 +554,14 @@ if (require.main === module) {
                     console.error('Usage: node voice_recorder.js start <guildId> <channelId> <outputDir>');
                     process.exit(1);
                 }
-                console.log(`🎙️ Starting recording for guild ${guildId}`);
+                console.log(`Starting recording for guild ${guildId}`);
                 const success = await recorder.startRecording(guildId, channelId, outputDir);
                 if (!success) {
-                    console.error('❌ Failed to start recording');
+                    console.error('Failed to start recording');
                     await recorder.cleanup();
                     process.exit(1);
                 }
-                console.log('✅ Recording started successfully');
-                // Keep process running for recording
+                console.log('Recording started successfully');
                 break;
 
             case 'stop':
@@ -500,12 +570,12 @@ if (require.main === module) {
                     console.error('Usage: node voice_recorder.js stop <guildId>');
                     process.exit(1);
                 }
-                console.log(`🛑 Stopping recording for guild ${stopGuildId}`);
+                console.log(`Stopping recording for guild ${stopGuildId}`);
                 const stopped = await recorder.stopRecording(stopGuildId);
                 if (stopped) {
-                    console.log('✅ Recording stopped and processed');
+                    console.log('Recording stopped and processed');
                 } else {
-                    console.log('ℹ️ No active recording found');
+                    console.log('No active recording found');
                 }
                 await recorder.cleanup();
                 process.exit(0);
@@ -518,7 +588,7 @@ if (require.main === module) {
                 process.exit(1);
         }
     }).catch(async error => {
-        console.error('❌ Recorder initialization failed:', error);
+        console.error('Recorder initialization failed:', error);
         await recorder.cleanup();
         process.exit(1);
     });
