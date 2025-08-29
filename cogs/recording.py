@@ -19,7 +19,7 @@ from google.auth.transport.requests import Request
 
 # Google Drive API setup
 SCOPES = ['https://www.googleapis.com/auth/drive']
-SERVICE_ACCOUNT_FILE = 'credentials.json'  # Path to your service account credentials
+SERVICE_ACCOUNT_FILE = 'exceed-interview-sheet-992849d383a9.json'  # Path to your service account credentials
 
 
 class Recording(commands.Cog):
