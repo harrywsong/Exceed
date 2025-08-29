@@ -11,100 +11,15 @@ import signal
 import shutil
 import zipfile
 import time
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.oauth2 import service_account
+import pickle
+from google.auth.transport.requests import Request
 
-
-class RecordingView(discord.ui.View):
-    def __init__(self, recording_id, recording_dir, bot_logger):
-        super().__init__(timeout=None)
-        self.recording_id = recording_id
-        self.recording_dir = recording_dir
-        self.bot_logger = bot_logger
-
-    @discord.ui.button(label="Download Audio Files", style=discord.ButtonStyle.primary, emoji="📥")
-    async def download_files(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            audio_files = []
-            if os.path.exists(self.recording_dir):
-                for file in os.listdir(self.recording_dir):
-                    if file.endswith(('.wav', '.mp3', '.m4a')):
-                        audio_files.append(os.path.join(self.recording_dir, file))
-
-            if not audio_files:
-                await interaction.followup.send("No audio files found in this recording.", ephemeral=True)
-                return
-
-            if len(audio_files) == 1:
-                file_path = audio_files[0]
-                if os.path.getsize(file_path) > 25 * 1024 * 1024:
-                    await interaction.followup.send("File too large for Discord. Please use the zip option.",
-                                                    ephemeral=True)
-                    return
-
-                file = discord.File(file_path)
-                await interaction.followup.send("Here's your audio file:", file=file, ephemeral=True)
-            else:
-                zip_path = os.path.join(self.recording_dir, f"recording_{self.recording_id}.zip")
-
-                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    for file_path in audio_files:
-                        zipf.write(file_path, os.path.basename(file_path))
-
-                if os.path.getsize(zip_path) > 25 * 1024 * 1024:
-                    await interaction.followup.send("Archive too large for Discord download.", ephemeral=True)
-                    os.remove(zip_path)
-                    return
-
-                file = discord.File(zip_path)
-                await interaction.followup.send("Here are your audio files:", file=file, ephemeral=True)
-                os.remove(zip_path)
-
-        except Exception as e:
-            self.bot_logger.error(f"Download error: {e}")
-            await interaction.followup.send("Error creating download. Files may have been moved or deleted.",
-                                            ephemeral=True)
-
-    @discord.ui.button(label="Delete Recording", style=discord.ButtonStyle.danger, emoji="🗑️")
-    async def delete_recording(self, interaction: discord.Interaction, button: discord.ui.Button):
-        confirm_view = ConfirmDeleteView(self.recording_id, self.recording_dir, self.bot_logger)
-        await interaction.response.send_message(
-            f"Are you sure you want to delete recording `{self.recording_id}`? This cannot be undone.",
-            view=confirm_view,
-            ephemeral=True
-        )
-
-
-class ConfirmDeleteView(discord.ui.View):
-    def __init__(self, recording_id, recording_dir, bot_logger):
-        super().__init__(timeout=30)
-        self.recording_id = recording_id
-        self.recording_dir = recording_dir
-        self.bot_logger = bot_logger
-
-    @discord.ui.button(label="Yes, Delete", style=discord.ButtonStyle.danger)
-    async def confirm_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            if os.path.exists(self.recording_dir):
-                shutil.rmtree(self.recording_dir)
-                await interaction.followup.send(f"Recording `{self.recording_id}` has been deleted.", ephemeral=True)
-                self.bot_logger.info(f"Recording {self.recording_id} manually deleted by user {interaction.user.id}")
-            else:
-                await interaction.followup.send("Recording directory not found. It may have already been deleted.",
-                                                ephemeral=True)
-        except Exception as e:
-            self.bot_logger.error(f"Manual delete error: {e}")
-            await interaction.followup.send("Error deleting recording.", ephemeral=True)
-
-        for item in self.children:
-            item.disabled = True
-        await interaction.edit_original_response(view=self)
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
-    async def cancel_delete(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Deletion cancelled.", ephemeral=True)
+# Google Drive API setup
+SCOPES = ['https://www.googleapis.com/auth/drive']
+SERVICE_ACCOUNT_FILE = 'credentials.json'  # Path to your service account credentials
 
 
 class Recording(commands.Cog):
@@ -180,6 +95,67 @@ class Recording(commands.Cog):
         except:
             return True, "OK"
 
+    async def _upload_to_drive(self, folder_path, recording_id):
+        """Upload a folder to Google Drive"""
+        try:
+            # Authenticate with service account
+            creds = service_account.Credentials.from_service_account_file(
+                SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+            drive_service = build('drive', 'v3', credentials=creds)
+
+            # Create folder in Google Drive
+            folder_metadata = {
+                'name': f'recording_{recording_id}',
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': ['1p-RdA-_iNNTJAkzD6jgPMrQsPGv2LGxA']  # Target folder ID
+            }
+
+            folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
+            folder_id = folder.get('id')
+
+            self.bot.logger.info(f"Created Google Drive folder: {folder_id}")
+
+            # Upload all files in the recording directory
+            uploaded_files = []
+            for file_name in os.listdir(folder_path):
+                if file_name.endswith(('.wav', '.mp3', '.m4a')):
+                    file_path = os.path.join(folder_path, file_name)
+
+                    file_metadata = {
+                        'name': file_name,
+                        'parents': [folder_id]
+                    }
+
+                    media = MediaFileUpload(file_path, resumable=True)
+
+                    # Upload with longer timeout and retry mechanism
+                    file = None
+                    for attempt in range(5):  # Try up to 5 times
+                        try:
+                            file = drive_service.files().create(
+                                body=file_metadata,
+                                media_body=media,
+                                fields='id'
+                            ).execute()
+                            break
+                        except Exception as e:
+                            if attempt < 4:
+                                self.bot.logger.warning(
+                                    f"Upload attempt {attempt + 1} failed: {e}. Retrying in 5 seconds...")
+                                await asyncio.sleep(5)
+                            else:
+                                raise e
+
+                    uploaded_files.append(file.get('id'))
+                    self.bot.logger.info(f"Uploaded {file_name} to Google Drive")
+
+            return folder_id, uploaded_files
+
+        except Exception as e:
+            self.bot.logger.error(f"Google Drive upload error: {e}")
+            raise
+
     @discord.app_commands.command(name="record", description="Start/stop recording the voice channel")
     @discord.app_commands.describe(action="Choose to start or stop recording")
     @discord.app_commands.choices(action=[
@@ -220,72 +196,6 @@ class Recording(commands.Cog):
             pass
 
         await interaction.response.send_message(embed=embed)
-
-    @discord.app_commands.command(name="list-recordings", description="List available recordings")
-    async def list_recordings(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-
-        try:
-            recordings_found = []
-            if os.path.exists(self.recordings_path):
-                for item in os.listdir(self.recordings_path):
-                    item_path = os.path.join(self.recordings_path, item)
-                    if os.path.isdir(item_path):
-                        # Look for continuous track files specifically
-                        audio_count = len([f for f in os.listdir(item_path)
-                                           if f.endswith(('.wav', '.mp3', '.m4a')) and 'continuous' in f])
-
-                        # Also count any other audio files for backward compatibility
-                        total_audio = len([f for f in os.listdir(item_path)
-                                           if f.endswith(('.wav', '.mp3', '.m4a'))])
-
-                        creation_time = datetime.fromtimestamp(os.path.getctime(item_path))
-                        recordings_found.append({
-                            'id': item,
-                            'path': item_path,
-                            'continuous_tracks': audio_count,
-                            'total_files': total_audio,
-                            'date': creation_time
-                        })
-
-            if not recordings_found:
-                await interaction.followup.send("No recordings found.")
-                return
-
-            recordings_found.sort(key=lambda x: x['date'], reverse=True)
-
-            embed = discord.Embed(
-                title="🎵 Available Recordings",
-                color=discord.Color.blue(),
-                timestamp=datetime.now()
-            )
-
-            for recording in recordings_found[:10]:
-                age = datetime.now() - recording['date']
-                age_str = f"{age.days}d {age.seconds // 3600}h ago" if age.days > 0 else f"{age.seconds // 3600}h {(age.seconds // 60) % 60}m ago"
-
-                # Show both continuous tracks and total files for clarity
-                file_info = f"Tracks: {recording['continuous_tracks']}"
-                if recording['total_files'] != recording['continuous_tracks']:
-                    file_info += f" ({recording['total_files']} total)"
-
-                embed.add_field(
-                    name=f"🎵 {recording['id']}",
-                    value=f"{file_info} | Created: {age_str}",
-                    inline=False
-                )
-
-            if recordings_found:
-                latest_recording = recordings_found[0]
-                view = RecordingView(latest_recording['id'], latest_recording['path'], self.bot.logger)
-                embed.set_footer(text=f"Showing download options for latest recording: {latest_recording['id']}")
-                await interaction.followup.send(embed=embed, view=view)
-            else:
-                await interaction.followup.send(embed=embed)
-
-        except Exception as e:
-            self.bot.logger.error(f"List recordings error: {e}")
-            await interaction.followup.send("Error listing recordings.")
 
     async def _start_recording(self, interaction):
         if not interaction.user.voice:
@@ -427,8 +337,8 @@ class Recording(commands.Cog):
                     self.bot.logger.warning("Stop command timed out")
 
             # Wait longer for continuous tracks to be processed
-            max_wait_time = 60
-            check_interval = 5
+            max_wait_time = 120  # Increased to 2 minutes for larger files
+            check_interval = 10
             files_created = []
 
             for i in range(0, max_wait_time, check_interval):
@@ -487,6 +397,30 @@ class Recording(commands.Cog):
             duration = datetime.now() - recording['start_time']
             duration_str = str(duration).split('.')[0]
 
+            # Upload to Google Drive
+            upload_embed = discord.Embed(
+                title="📤 Uploading to Google Drive",
+                description="Please wait while we upload your recording...",
+                color=discord.Color.orange(),
+                timestamp=datetime.now()
+            )
+            upload_embed.add_field(name="Recording ID", value=f"`{recording['id']}`", inline=True)
+            upload_embed.add_field(name="Files", value=f"{len(files_created)} tracks to upload", inline=True)
+            upload_embed.set_footer(text="This may take several minutes for large recordings")
+
+            await interaction.followup.send(embed=upload_embed)
+
+            # Upload to Google Drive
+            drive_folder_id = None
+            try:
+                drive_folder_id, uploaded_files = await self._upload_to_drive(recording['dir'], recording['id'])
+                self.bot.logger.info(
+                    f"Successfully uploaded {len(uploaded_files)} files to Google Drive folder {drive_folder_id}")
+            except Exception as e:
+                self.bot.logger.error(f"Failed to upload to Google Drive: {e}")
+                drive_folder_id = None
+
+            # Create final status embed
             embed = discord.Embed(
                 title="✅ Recording Stopped",
                 description="Continuous track recording completed",
@@ -496,14 +430,27 @@ class Recording(commands.Cog):
             embed.add_field(name="Duration", value=duration_str, inline=True)
             embed.add_field(name="Recording ID", value=f"`{recording['id']}`", inline=True)
             embed.add_field(name="Track Files", value=f"{len(files_created)} continuous tracks", inline=True)
-            embed.add_field(name="Location", value=f"`./recordings/{recording['id']}/`", inline=False)
+
+            if drive_folder_id:
+                embed.add_field(
+                    name="📁 Google Drive",
+                    value=f"[View Recording Folder](https://drive.google.com/drive/folders/{drive_folder_id})",
+                    inline=False
+                )
+                embed.color = discord.Color.green()
+            else:
+                embed.add_field(
+                    name="⚠️ Upload Status",
+                    value="Failed to upload to Google Drive. Files are available locally.",
+                    inline=False
+                )
+                embed.color = discord.Color.red()
 
             if files_created:
-                file_list = '\n'.join([f"• {f}" for f in files_created[:10]])
-                if len(files_created) > 10:
-                    file_list += f"\n• ... and {len(files_created) - 10} more"
+                file_list = '\n'.join([f"• {f}" for f in files_created[:5]])
+                if len(files_created) > 5:
+                    file_list += f"\n• ... and {len(files_created) - 5} more"
                 embed.add_field(name="Track Files", value=f"```{file_list}```", inline=False)
-                embed.color = discord.Color.green()
 
                 # Note about continuous tracks
                 embed.add_field(
@@ -515,29 +462,7 @@ class Recording(commands.Cog):
                 embed.add_field(name="Status", value="⛔ No track files were created", inline=False)
                 embed.color = discord.Color.red()
 
-                # More detailed debugging info
-                if os.path.exists(recording['dir']):
-                    all_files = os.listdir(recording['dir'])
-                    debug_info = f"Files in directory: {len(all_files)}\n"
-                    for f in all_files[:5]:
-                        size = os.path.getsize(os.path.join(recording['dir'], f))
-                        debug_info += f"• {f} ({size} bytes)\n"
-                    if len(all_files) > 5:
-                        debug_info += f"• ... and {len(all_files) - 5} more"
-                    embed.add_field(name="Debug Info", value=f"```{debug_info}```", inline=False)
-
-                embed.add_field(
-                    name="Possible Issues",
-                    value="• No users in voice channel during recording\n• FFmpeg processing issues\n• Permissions issues\n• Node.js process crashed",
-                    inline=False
-                )
-
-            # Create view for download/delete options if files exist
-            if files_created:
-                view = RecordingView(recording['id'], recording['dir'], self.bot.logger)
-                await interaction.followup.send(embed=embed, view=view)
-            else:
-                await interaction.followup.send(embed=embed)
+            await interaction.edit_original_response(embed=embed)
 
             # Remove from active recordings
             del self.recordings[interaction.guild.id]
@@ -550,8 +475,16 @@ class Recording(commands.Cog):
                 except:
                     pass
                 del self.recordings[interaction.guild.id]
-            await interaction.followup.send("⚠️ Recording stopped but there may have been processing errors.",
-                                            ephemeral=True)
+
+            error_embed = discord.Embed(
+                title="❌ Recording Error",
+                description="An error occurred while processing your recording.",
+                color=discord.Color.red(),
+                timestamp=datetime.now()
+            )
+            error_embed.add_field(name="Error", value=str(e)[:200], inline=False)
+
+            await interaction.edit_original_response(embed=error_embed)
 
 
 async def setup(bot):
