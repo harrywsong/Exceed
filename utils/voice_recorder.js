@@ -398,22 +398,22 @@ class VoiceRecorder {
                 '-ac', channels.toString(), // Audio channels
                 '-i', pcmFile,           // Input file
                 '-acodec', 'pcm_s16le',  // Output codec
-                '-ar', '48000'           // Ensure output sample rate
+                '-ar', '48000',          // Ensure output sample rate
+                '-y',                    // Overwrite output file
+                wavFile                  // Output file
             ];
 
             // Raspberry Pi optimizations
             if (this.isRaspberryPi) {
-                ffmpegArgs.push('-threads', '2');
-                ffmpegArgs.push('-preset', 'ultrafast');
+                // Insert optimization flags before the output file
+                const outputIndex = ffmpegArgs.indexOf(wavFile);
+                ffmpegArgs.splice(outputIndex, 0, '-threads', '2');
             }
-
-            // Add output file and overwrite flag
-            ffmpegArgs.push('-y', wavFile);
 
             console.log(`Running FFmpeg: ffmpeg ${ffmpegArgs.join(' ')}`);
 
             const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-                stdio: ['pipe', 'pipe', 'pipe']  // Explicit stdio setup
+                stdio: ['ignore', 'pipe', 'pipe']  // Don't pipe stdin, capture stdout/stderr
             });
 
             let stdout = '';
@@ -427,8 +427,18 @@ class VoiceRecorder {
                 stderr += data.toString();
             });
 
+            // Set up timeout for Raspberry Pi
+            const timeout = this.isRaspberryPi ? 60000 : 30000;
+            const timeoutHandle = setTimeout(() => {
+                if (!ffmpeg.killed) {
+                    console.warn(`FFmpeg timeout after ${timeout/1000}s for ${path.basename(pcmFile)}, killing process...`);
+                    ffmpeg.kill('SIGKILL');
+                }
+            }, timeout);
+
             // Handle process completion
             ffmpeg.on('close', (code) => {
+                clearTimeout(timeoutHandle);
                 console.log(`FFmpeg process exited with code ${code}`);
 
                 if (code === 0) {
@@ -463,7 +473,9 @@ class VoiceRecorder {
                     }
                 } else {
                     console.error(`FFmpeg failed with exit code ${code}`);
-                    console.error(`FFmpeg stderr: ${stderr.trim()}`);
+                    if (stderr) {
+                        console.error(`FFmpeg stderr: ${stderr.trim()}`);
+                    }
                     if (stdout) {
                         console.log(`FFmpeg stdout: ${stdout.trim()}`);
                     }
@@ -474,45 +486,13 @@ class VoiceRecorder {
 
             // Handle spawn errors
             ffmpeg.on('error', (err) => {
+                clearTimeout(timeoutHandle);
                 console.error(`FFmpeg spawn error: ${err.message}`);
                 console.log(`Keeping original PCM file due to spawn error: ${path.basename(pcmFile)}`);
                 resolve(); // Don't reject - just keep the PCM file
             });
-
-            // Timeout protection for Pi
-            let timeoutHandle = null;
-            if (this.isRaspberryPi) {
-                timeoutHandle = setTimeout(() => {
-                    if (!ffmpeg.killed) {
-                        console.warn(`FFmpeg timeout after 60s for ${path.basename(pcmFile)}, terminating...`);
-                        ffmpeg.kill('SIGTERM');
-
-                        // Force kill if SIGTERM doesn't work
-                        setTimeout(() => {
-                            if (!ffmpeg.killed) {
-                                console.warn('Force killing FFmpeg process');
-                                ffmpeg.kill('SIGKILL');
-                            }
-                        }, 5000);
-
-                        // Resolve after timeout to prevent hanging
-                        setTimeout(() => {
-                            console.log(`Conversion timed out for ${path.basename(pcmFile)}, keeping PCM file`);
-                            resolve();
-                        }, 6000);
-                    }
-                }, 60000); // 60 second timeout for Pi
-            }
-
-            // Clean up timeout if process finishes normally
-            ffmpeg.on('close', () => {
-                if (timeoutHandle) {
-                    clearTimeout(timeoutHandle);
-                }
-            });
         });
     }
-
     async cleanup() {
         console.log('Cleaning up voice recorder...');
 
