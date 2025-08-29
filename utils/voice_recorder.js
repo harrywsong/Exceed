@@ -86,6 +86,19 @@ class VoiceRecorder {
         }
     }
 
+    // Check if FFmpeg is available
+    checkFFmpeg() {
+        return new Promise((resolve) => {
+            const ffmpeg = spawn('ffmpeg', ['-version'], { stdio: 'ignore' });
+            ffmpeg.on('close', (code) => {
+                resolve(code === 0);
+            });
+            ffmpeg.on('error', () => {
+                resolve(false);
+            });
+        });
+    }
+
     async init() {
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
@@ -123,6 +136,13 @@ class VoiceRecorder {
         try {
             console.log(`Attempting to start recording for guild ${guildId}, channel ${channelId}`);
 
+            // Check FFmpeg availability
+            const hasFFmpeg = await this.checkFFmpeg();
+            console.log(`FFmpeg available: ${hasFFmpeg}`);
+            if (!hasFFmpeg) {
+                console.warn('FFmpeg not found! Audio conversion may fail.');
+            }
+
             // Check if there's already a recording
             const existingState = this.checkExistingRecording();
             if (existingState) {
@@ -155,6 +175,7 @@ class VoiceRecorder {
             }
 
             console.log(`Found voice channel: ${channel.name}`);
+            console.log(`Channel members: ${channel.members.size}`);
 
             // Check permissions
             const botMember = guild.members.me;
@@ -228,36 +249,66 @@ class VoiceRecorder {
 
             // Skip if we're already recording this user
             if (recording.userStreams.has(userId)) {
+                console.log(`Already recording user ${userId}, skipping...`);
                 return;
             }
 
             try {
-                // Create audio stream for this user
+                // Create audio stream for this user with better options
                 const audioStream = receiver.subscribe(userId, {
                     end: {
                         behavior: EndBehaviorType.AfterSilence,
-                        duration: 1000
+                        duration: 2000  // Wait 2 seconds after silence before ending
                     }
                 });
 
                 const timestamp = Date.now();
-                const filename = path.join(recording.outputDir, `user_${userId}_${timestamp}.wav`);
 
-                console.log(`Starting recording for user ${userId} to file: ${path.basename(filename)}`);
+                // Try multiple approaches for better compatibility
+                const approaches = [
+                    {
+                        name: 'PCM_WAV',
+                        filename: path.join(recording.outputDir, `user_${userId}_${timestamp}.wav`),
+                        ffmpegArgs: [
+                            '-hide_banner',
+                            '-loglevel', 'warning',
+                            '-f', 's16le',        // Raw PCM input
+                            '-ar', '48000',       // Sample rate
+                            '-ac', '2',           // Channels
+                            '-i', 'pipe:0',       // Input from pipe
+                            '-f', 'wav',          // Output format
+                            '-ar', '48000',       // Output sample rate
+                            '-ac', '2',           // Output channels
+                            '-y'                  // Overwrite output files
+                        ]
+                    },
+                    {
+                        name: 'OPUS_DECODE',
+                        filename: path.join(recording.outputDir, `user_${userId}_${timestamp}_opus.wav`),
+                        ffmpegArgs: [
+                            '-hide_banner',
+                            '-loglevel', 'warning',
+                            '-f', 'opus',         // Opus input
+                            '-ar', '48000',
+                            '-ac', '2',
+                            '-i', 'pipe:0',
+                            '-f', 'wav',
+                            '-ar', '48000',
+                            '-ac', '2',
+                            '-acodec', 'pcm_s16le', // PCM codec for WAV
+                            '-y'
+                        ]
+                    }
+                ];
 
-                // Create FFmpeg process to convert Opus to WAV
-                const ffmpeg = spawn('ffmpeg', [
-                    '-hide_banner',
-                    '-loglevel', 'error',
-                    '-f', 'opus',
-                    '-ar', '48000',
-                    '-ac', '2',
-                    '-i', 'pipe:0',
-                    '-f', 'wav',
-                    '-ar', '48000',
-                    '-ac', '2',
-                    filename
-                ], {
+                // Try the first approach (PCM)
+                const approach = approaches[0];
+                const filename = approach.filename;
+
+                console.log(`Starting ${approach.name} recording for user ${userId} to file: ${path.basename(filename)}`);
+
+                // Create FFmpeg process
+                const ffmpeg = spawn('ffmpeg', approach.ffmpegArgs.concat([filename]), {
                     stdio: ['pipe', 'pipe', 'pipe']
                 });
 
@@ -265,34 +316,63 @@ class VoiceRecorder {
                     audioStream,
                     ffmpeg,
                     filename,
-                    startTime: timestamp
+                    startTime: timestamp,
+                    approach: approach.name
                 });
 
-                // Pipe audio to FFmpeg
-                audioStream.pipe(ffmpeg.stdin);
+                // Track if we've received any data
+                let hasReceivedData = false;
+                let dataSize = 0;
+
+                // Handle audio stream data
+                audioStream.on('data', (chunk) => {
+                    if (!hasReceivedData) {
+                        console.log(`First audio data received for user ${userId}, size: ${chunk.length}`);
+                        hasReceivedData = true;
+                    }
+                    dataSize += chunk.length;
+
+                    // Write to FFmpeg stdin
+                    if (ffmpeg.stdin && ffmpeg.stdin.writable) {
+                        ffmpeg.stdin.write(chunk);
+                    }
+                });
 
                 // Handle FFmpeg completion
                 ffmpeg.on('close', (code) => {
-                    console.log(`FFmpeg for user ${userId} finished with code ${code}`);
+                    console.log(`FFmpeg for user ${userId} finished with code ${code}, data received: ${dataSize} bytes`);
 
                     // Check if file exists and has content
                     if (fs.existsSync(filename)) {
                         const stats = fs.statSync(filename);
-                        if (stats.size > 1000) {
+                        if (stats.size > 1000) { // More than 1KB
                             console.log(`Successfully recorded ${stats.size} bytes for user ${userId}`);
                         } else {
-                            console.log(`Removing empty file for user ${userId}`);
-                            fs.unlinkSync(filename);
+                            console.log(`File too small (${stats.size} bytes), removing for user ${userId}`);
+                            try {
+                                fs.unlinkSync(filename);
+                            } catch (e) {
+                                console.warn(`Error removing file: ${e.message}`);
+                            }
                         }
+                    } else {
+                        console.log(`No output file created for user ${userId}`);
                     }
 
                     recording.userStreams.delete(userId);
                 });
 
+                // Handle FFmpeg stdout/stderr
+                ffmpeg.stdout.on('data', (data) => {
+                    console.log(`FFmpeg stdout (${userId}): ${data.toString().trim()}`);
+                });
+
                 ffmpeg.stderr.on('data', (data) => {
                     const error = data.toString();
-                    if (error.includes('Error') || error.includes('error')) {
+                    if (error.includes('Error') || error.includes('error') || error.includes('Invalid')) {
                         console.error(`FFmpeg error for user ${userId}: ${error.trim()}`);
+                    } else if (error.trim()) {
+                        console.log(`FFmpeg info (${userId}): ${error.trim()}`);
                     }
                 });
 
@@ -311,15 +391,30 @@ class VoiceRecorder {
                 });
 
                 audioStream.on('end', () => {
-                    console.log(`Audio stream ended for user ${userId}`);
-                    if (ffmpeg && !ffmpeg.killed && ffmpeg.stdin.writable) {
+                    console.log(`Audio stream ended for user ${userId}, received ${dataSize} bytes total`);
+                    if (ffmpeg && !ffmpeg.killed && ffmpeg.stdin && ffmpeg.stdin.writable) {
                         ffmpeg.stdin.end();
                     }
                 });
 
+                // Handle stream timeout (no data received)
+                setTimeout(() => {
+                    if (!hasReceivedData && recording.userStreams.has(userId)) {
+                        console.log(`No audio data received for user ${userId} after 10 seconds, ending stream`);
+                        if (audioStream) {
+                            audioStream.destroy();
+                        }
+                    }
+                }, 10000);
+
             } catch (error) {
                 console.error(`Error setting up recording for user ${userId}:`, error.message);
             }
+        });
+
+        // Monitor speaking events more carefully
+        receiver.speaking.on('end', (userId) => {
+            console.log(`User ${userId} stopped speaking`);
         });
 
         // Handle connection events
@@ -346,6 +441,24 @@ class VoiceRecorder {
         });
 
         console.log('Audio receiver setup complete');
+
+        // Add periodic status logging
+        const statusInterval = setInterval(() => {
+            if (!this.activeRecording) {
+                clearInterval(statusInterval);
+                return;
+            }
+
+            const activeStreams = recording.userStreams.size;
+            console.log(`Recording status: ${activeStreams} active streams`);
+
+            if (activeStreams > 0) {
+                for (const [userId, stream] of recording.userStreams) {
+                    const duration = Date.now() - stream.startTime;
+                    console.log(`  User ${userId}: ${Math.round(duration/1000)}s (${stream.approach})`);
+                }
+            }
+        }, 30000); // Every 30 seconds
     }
 
     async stopRecording(guildId) {
@@ -406,12 +519,14 @@ class VoiceRecorder {
                     streamData.audioStream.destroy();
                 }
                 if (streamData.ffmpeg && !streamData.ffmpeg.killed) {
-                    streamData.ffmpeg.stdin.end();
+                    if (streamData.ffmpeg.stdin && streamData.ffmpeg.stdin.writable) {
+                        streamData.ffmpeg.stdin.end();
+                    }
                     setTimeout(() => {
                         if (!streamData.ffmpeg.killed) {
-                            streamData.ffmpeg.kill();
+                            streamData.ffmpeg.kill('SIGTERM');
                         }
-                    }, 2000);
+                    }, 3000);
                 }
             } catch (error) {
                 console.warn(`Error stopping stream for user ${userId}:`, error.message);
@@ -419,7 +534,8 @@ class VoiceRecorder {
         }
 
         // Wait for processes to finish
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log('Waiting for audio processing to complete...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
 
         // Destroy connection
         if (recording.connection) {
