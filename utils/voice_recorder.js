@@ -302,7 +302,7 @@ class VoiceRecorder {
                 ];
 
                 // Try the first approach (PCM)
-                const approach = approaches[0];
+                const approach = approaches[1];
                 const filename = approach.filename;
 
                 console.log(`Starting ${approach.name} recording for user ${userId} to file: ${path.basename(filename)}`);
