@@ -3,7 +3,10 @@ const {
     joinVoiceChannel,
     VoiceConnectionStatus,
     EndBehaviorType,
-    entersState
+    entersState,
+    createAudioPlayer,
+    createAudioResource,
+    AudioPlayerStatus
 } = require('@discordjs/voice');
 const fs = require('fs');
 const path = require('path');
@@ -18,235 +21,280 @@ class VoiceRecorder {
             ]
         });
         this.token = token;
-        this.recordings = new Map();
+        this.activeRecording = null;
         this.isReady = false;
+        this.shouldExit = false;
     }
 
     async init() {
         return new Promise((resolve, reject) => {
-            this.client.once('ready', () => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Login timeout after 30 seconds'));
+            }, 30000);
+
+            const onReady = () => {
+                clearTimeout(timeout);
                 console.log(`Voice recorder logged in as ${this.client.user.tag}`);
                 console.log(`Bot is in ${this.client.guilds.cache.size} guilds`);
                 this.isReady = true;
                 resolve();
-            });
+            };
+
+            // Handle both old and new Discord.js versions
+            this.client.once('ready', onReady);
+            this.client.once('clientReady', onReady);
 
             this.client.on('error', (error) => {
                 console.error('Discord client error:', error);
                 if (!this.isReady) {
+                    clearTimeout(timeout);
                     reject(error);
                 }
             });
 
-            this.client.login(this.token).catch(reject);
+            this.client.login(this.token).catch((error) => {
+                clearTimeout(timeout);
+                reject(error);
+            });
         });
     }
 
     async startRecording(guildId, channelId, outputDir) {
         try {
-            console.log(`Starting recording for guild ${guildId}, channel ${channelId}`);
+            console.log(`Attempting to start recording for guild ${guildId}, channel ${channelId}`);
+
+            if (!this.isReady) {
+                console.error('Client is not ready');
+                return false;
+            }
 
             const guild = this.client.guilds.cache.get(guildId);
             if (!guild) {
                 console.error(`Guild ${guildId} not found`);
+                console.log('Available guilds:', Array.from(this.client.guilds.cache.values()).map(g => `${g.name} (${g.id})`));
                 return false;
             }
 
             const channel = guild.channels.cache.get(channelId);
-            if (!channel || channel.type !== 2) {
-                console.error(`Voice channel ${channelId} not found or invalid`);
+            if (!channel) {
+                console.error(`Channel ${channelId} not found`);
+                console.log('Available channels:', Array.from(guild.channels.cache.values()).map(c => `${c.name} (${c.id}) type:${c.type}`));
                 return false;
             }
+
+            if (channel.type !== 2) {
+                console.error(`Channel ${channel.name} is not a voice channel (type: ${channel.type})`);
+                return false;
+            }
+
+            console.log(`Found voice channel: ${channel.name}`);
 
             // Check permissions
-            const permissions = channel.permissionsFor(guild.members.me);
-            if (!permissions?.has(['Connect', 'Speak'])) {
-                console.error('Missing voice channel permissions');
+            const botMember = guild.members.me;
+            if (!botMember) {
+                console.error('Bot member not found in guild');
                 return false;
             }
 
-            // Create connection with correct settings for receiving audio
+            const permissions = channel.permissionsFor(botMember);
+            console.log(`Bot permissions - Connect: ${permissions.has('Connect')}, Speak: ${permissions.has('Speak')}, ViewChannel: ${permissions.has('ViewChannel')}`);
+
+            if (!permissions.has('Connect') || !permissions.has('ViewChannel')) {
+                console.error('Bot lacks required permissions');
+                return false;
+            }
+
+            console.log('Creating voice connection...');
+
+            // Create voice connection
             const connection = joinVoiceChannel({
                 channelId: channelId,
                 guildId: guildId,
                 adapterCreator: guild.voiceAdapterCreator,
-                selfDeaf: false,  // Must be false to receive audio
-                selfMute: false   // Can be true, but false is safer for testing
+                selfDeaf: false,  // MUST be false to receive audio
+                selfMute: true    // We don't need to send audio
             });
 
-            const recording = {
-                connection: connection,
-                receiver: null,
-                outputDir: outputDir,
-                startTime: Date.now(),
-                activeStreams: new Map(),
-                guildId: guildId
-            };
+            console.log('Voice connection created, waiting for ready state...');
 
-            // Wait for connection to be ready
+            // Wait for connection to be ready with longer timeout
             try {
-                await entersState(connection, VoiceConnectionStatus.Ready, 10000);
-                console.log('Voice connection established');
+                await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+                console.log('Voice connection is ready!');
             } catch (error) {
-                console.error('Failed to establish voice connection:', error);
+                console.error('Failed to connect to voice channel:', error.message);
                 connection.destroy();
                 return false;
             }
 
-            // Set up the receiver
-            recording.receiver = connection.receiver;
-            this.setupAudioReceiver(recording);
+            // Set up recording
+            const recording = {
+                connection: connection,
+                outputDir: outputDir,
+                startTime: Date.now(),
+                userStreams: new Map(),
+                guildId: guildId,
+                channelId: channelId
+            };
 
-            // Handle connection events
-            connection.on(VoiceConnectionStatus.Disconnected, async () => {
-                console.log('Voice connection lost, attempting to reconnect...');
-                try {
-                    await entersState(connection, VoiceConnectionStatus.Ready, 5000);
-                } catch {
-                    connection.destroy();
-                    this.recordings.delete(guildId);
-                }
-            });
+            this.activeRecording = recording;
+            this.setupRecording(recording);
 
-            connection.on(VoiceConnectionStatus.Destroyed, () => {
-                console.log('Voice connection destroyed');
-                this.cleanupRecording(guildId);
-            });
-
-            this.recordings.set(guildId, recording);
-            console.log('Recording started successfully');
+            console.log('Recording setup complete - now listening for audio');
             return true;
 
         } catch (error) {
-            console.error('Failed to start recording:', error);
+            console.error('Error starting recording:', error);
             return false;
         }
     }
 
-    setupAudioReceiver(recording) {
-        const { receiver, outputDir, activeStreams } = recording;
+    setupRecording(recording) {
+        const receiver = recording.connection.receiver;
 
-        // Listen for when users start speaking
+        console.log('Setting up audio receiver...');
+
+        // Listen for users speaking
         receiver.speaking.on('start', (userId) => {
-            if (activeStreams.has(userId)) {
-                console.log(`User ${userId} already being recorded, skipping`);
+            console.log(`User ${userId} started speaking`);
+
+            // Skip if we're already recording this user
+            if (recording.userStreams.has(userId)) {
                 return;
             }
 
-            console.log(`Started recording user ${userId}`);
+            try {
+                // Create audio stream for this user
+                const audioStream = receiver.subscribe(userId, {
+                    end: {
+                        behavior: EndBehaviorType.AfterSilence,
+                        duration: 1000
+                    }
+                });
 
-            // Subscribe to the user's audio stream
-            const audioStream = receiver.subscribe(userId, {
-                end: {
-                    behavior: EndBehaviorType.AfterSilence,
-                    duration: 1000 // End after 1 second of silence
-                }
-            });
+                const timestamp = Date.now();
+                const filename = path.join(recording.outputDir, `user_${userId}_${timestamp}.wav`);
 
-            const outputFile = path.join(outputDir, `${userId}_${Date.now()}.wav`);
+                console.log(`Starting recording for user ${userId} to file: ${path.basename(filename)}`);
 
-            // Create FFmpeg process to convert Opus to WAV
-            const ffmpegArgs = [
-                '-f', 'opus',           // Input format is Opus
-                '-ar', '48000',         // Sample rate
-                '-ac', '2',             // Stereo
-                '-i', 'pipe:0',         // Read from stdin
-                '-f', 'wav',            // Output format
-                '-acodec', 'pcm_s16le', // PCM encoding
-                outputFile              // Output file
-            ];
+                // Create FFmpeg process to convert Opus to WAV
+                const ffmpeg = spawn('ffmpeg', [
+                    '-hide_banner',
+                    '-loglevel', 'error',
+                    '-f', 'opus',
+                    '-ar', '48000',
+                    '-ac', '2',
+                    '-i', 'pipe:0',
+                    '-f', 'wav',
+                    '-ar', '48000',
+                    '-ac', '2',
+                    filename
+                ], {
+                    stdio: ['pipe', 'pipe', 'pipe']
+                });
 
-            const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-                stdio: ['pipe', 'pipe', 'pipe']
-            });
+                recording.userStreams.set(userId, {
+                    audioStream,
+                    ffmpeg,
+                    filename,
+                    startTime: timestamp
+                });
 
-            // Store the stream info
-            activeStreams.set(userId, {
-                audioStream,
-                ffmpeg,
-                outputFile,
-                startTime: Date.now()
-            });
+                // Pipe audio to FFmpeg
+                audioStream.pipe(ffmpeg.stdin);
 
-            // Pipe the Opus audio to FFmpeg
-            audioStream.pipe(ffmpeg.stdin);
+                // Handle FFmpeg completion
+                ffmpeg.on('close', (code) => {
+                    console.log(`FFmpeg for user ${userId} finished with code ${code}`);
 
-            // Handle FFmpeg output
-            ffmpeg.stdout.on('data', (data) => {
-                // FFmpeg stdout (usually empty for this use case)
-            });
+                    // Check if file exists and has content
+                    if (fs.existsSync(filename)) {
+                        const stats = fs.statSync(filename);
+                        if (stats.size > 1000) {
+                            console.log(`Successfully recorded ${stats.size} bytes for user ${userId}`);
+                        } else {
+                            console.log(`Removing empty file for user ${userId}`);
+                            fs.unlinkSync(filename);
+                        }
+                    }
 
-            ffmpeg.stderr.on('data', (data) => {
-                const message = data.toString();
-                if (message.includes('error') || message.includes('Error')) {
-                    console.error(`FFmpeg error for user ${userId}: ${message}`);
-                }
-            });
+                    recording.userStreams.delete(userId);
+                });
 
-            // Handle stream end
-            audioStream.on('end', () => {
-                console.log(`Audio stream ended for user ${userId}`);
+                ffmpeg.stderr.on('data', (data) => {
+                    const error = data.toString();
+                    if (error.includes('Error') || error.includes('error')) {
+                        console.error(`FFmpeg error for user ${userId}: ${error.trim()}`);
+                    }
+                });
 
-                setTimeout(() => {
+                ffmpeg.on('error', (error) => {
+                    console.error(`FFmpeg process error for user ${userId}:`, error.message);
+                    recording.userStreams.delete(userId);
+                });
+
+                // Handle audio stream events
+                audioStream.on('error', (error) => {
+                    console.error(`Audio stream error for user ${userId}:`, error.message);
                     if (ffmpeg && !ffmpeg.killed) {
+                        ffmpeg.kill();
+                    }
+                    recording.userStreams.delete(userId);
+                });
+
+                audioStream.on('end', () => {
+                    console.log(`Audio stream ended for user ${userId}`);
+                    if (ffmpeg && !ffmpeg.killed && ffmpeg.stdin.writable) {
                         ffmpeg.stdin.end();
                     }
-                }, 1000);
-            });
+                });
 
-            // Handle FFmpeg process completion
-            ffmpeg.on('close', (code) => {
-                console.log(`FFmpeg process for user ${userId} closed with code ${code}`);
+            } catch (error) {
+                console.error(`Error setting up recording for user ${userId}:`, error.message);
+            }
+        });
 
-                // Check if file was created and has content
-                if (fs.existsSync(outputFile)) {
-                    const stats = fs.statSync(outputFile);
-                    if (stats.size > 1000) { // More than just WAV header
-                        console.log(`Successfully recorded ${stats.size} bytes for user ${userId}`);
-                    } else {
-                        console.log(`Removing empty/invalid file for user ${userId}`);
-                        fs.unlinkSync(outputFile);
-                    }
-                } else {
-                    console.log(`No output file created for user ${userId}`);
-                }
+        // Handle connection events
+        recording.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+            console.log('Voice connection disconnected, attempting to reconnect...');
+            try {
+                await entersState(recording.connection, VoiceConnectionStatus.Ready, 5000);
+                console.log('Reconnected successfully');
+            } catch {
+                console.log('Failed to reconnect, destroying connection');
+                recording.connection.destroy();
+            }
+        });
 
-                activeStreams.delete(userId);
-            });
+        recording.connection.on(VoiceConnectionStatus.Destroyed, () => {
+            console.log('Voice connection destroyed');
+            this.activeRecording = null;
+        });
 
-            // Handle errors
-            audioStream.on('error', (error) => {
-                console.error(`Audio stream error for user ${userId}:`, error);
-                if (ffmpeg && !ffmpeg.killed) {
-                    ffmpeg.kill();
-                }
-                activeStreams.delete(userId);
-            });
-
-            ffmpeg.on('error', (error) => {
-                console.error(`FFmpeg process error for user ${userId}:`, error);
-                activeStreams.delete(userId);
-            });
+        recording.connection.on('error', (error) => {
+            console.error('Voice connection error:', error);
+            this.cleanup();
         });
 
         console.log('Audio receiver setup complete');
     }
 
     async stopRecording(guildId) {
-        const recording = this.recordings.get(guildId);
-        if (!recording) {
-            console.log(`No recording found for guild ${guildId}`);
+        if (!this.activeRecording || this.activeRecording.guildId !== guildId) {
+            console.log('No active recording found for guild', guildId);
             return false;
         }
 
-        console.log(`Stopping recording for guild ${guildId}`);
+        console.log('Stopping recording...');
+        const recording = this.activeRecording;
 
-        // Stop all active streams
-        for (const [userId, streamData] of recording.activeStreams) {
+        // Stop all user streams
+        for (const [userId, streamData] of recording.userStreams) {
+            console.log(`Stopping stream for user ${userId}`);
             try {
-                console.log(`Stopping stream for user ${userId}`);
-                streamData.audioStream.destroy();
-
+                if (streamData.audioStream) {
+                    streamData.audioStream.destroy();
+                }
                 if (streamData.ffmpeg && !streamData.ffmpeg.killed) {
                     streamData.ffmpeg.stdin.end();
                     setTimeout(() => {
@@ -256,7 +304,7 @@ class VoiceRecorder {
                     }, 2000);
                 }
             } catch (error) {
-                console.error(`Error stopping stream for user ${userId}:`, error);
+                console.warn(`Error stopping stream for user ${userId}:`, error.message);
             }
         }
 
@@ -268,41 +316,40 @@ class VoiceRecorder {
             recording.connection.destroy();
         }
 
-        this.recordings.delete(guildId);
-        console.log('Recording stopped successfully');
+        this.activeRecording = null;
+        console.log('Recording stopped');
         return true;
     }
 
-    cleanupRecording(guildId) {
-        const recording = this.recordings.get(guildId);
-        if (recording) {
-            // Force cleanup any remaining streams
-            for (const [userId, streamData] of recording.activeStreams) {
-                try {
-                    streamData.audioStream.destroy();
-                    if (streamData.ffmpeg && !streamData.ffmpeg.killed) {
-                        streamData.ffmpeg.kill('SIGKILL');
-                    }
-                } catch (error) {
-                    console.warn(`Error during forced cleanup for user ${userId}:`, error);
-                }
-            }
-            this.recordings.delete(guildId);
-        }
-    }
-
     async cleanup() {
-        console.log('Cleaning up voice recorder...');
+        console.log('Cleaning up recorder...');
 
-        for (const [guildId] of this.recordings) {
-            await this.stopRecording(guildId);
+        if (this.activeRecording) {
+            await this.stopRecording(this.activeRecording.guildId);
         }
 
-        if (this.client?.isReady()) {
-            await this.client.destroy();
+        if (this.client && this.client.isReady()) {
+            try {
+                await this.client.destroy();
+            } catch (error) {
+                console.warn('Error destroying client:', error.message);
+            }
         }
 
         console.log('Cleanup complete');
+    }
+
+    // Keep the process alive while recording
+    keepAlive() {
+        const checkInterval = setInterval(() => {
+            if (this.shouldExit || !this.activeRecording) {
+                console.log('No active recording or exit requested, stopping...');
+                clearInterval(checkInterval);
+                this.cleanup().then(() => {
+                    process.exit(0);
+                });
+            }
+        }, 5000);
     }
 }
 
@@ -317,9 +364,10 @@ if (require.main === module) {
 
     const recorder = new VoiceRecorder(process.env.DISCORD_BOT_TOKEN);
 
-    // Graceful shutdown
+    // Graceful shutdown handlers
     const shutdown = async (signal) => {
         console.log(`\nReceived ${signal}, shutting down gracefully...`);
+        recorder.shouldExit = true;
         await recorder.cleanup();
         process.exit(0);
     };
@@ -333,7 +381,15 @@ if (require.main === module) {
         process.exit(1);
     });
 
+    process.on('unhandledRejection', async (reason, promise) => {
+        console.error('Unhandled rejection:', reason);
+        await recorder.cleanup();
+        process.exit(1);
+    });
+
     recorder.init().then(async () => {
+        console.log('Recorder initialized successfully');
+
         switch(action) {
             case 'start':
                 const [guildId, channelId, outputDir] = args;
@@ -345,24 +401,20 @@ if (require.main === module) {
                 // Ensure output directory exists
                 if (!fs.existsSync(outputDir)) {
                     fs.mkdirSync(outputDir, { recursive: true });
+                    console.log(`Created output directory: ${outputDir}`);
                 }
 
+                console.log('Attempting to start recording...');
                 const success = await recorder.startRecording(guildId, channelId, outputDir);
-                if (!success) {
+
+                if (success) {
+                    console.log('Recording started successfully! Keeping process alive...');
+                    recorder.keepAlive();
+                } else {
                     console.error('Failed to start recording');
                     await recorder.cleanup();
                     process.exit(1);
                 }
-                console.log('Recording is now active. Keeping process alive...');
-
-                // Keep the process alive for continuous recording
-                setInterval(() => {
-                    // Check if recording is still active
-                    if (!recorder.recordings.has(guildId)) {
-                        console.log('No active recordings, exiting...');
-                        process.exit(0);
-                    }
-                }, 5000);
                 break;
 
             case 'stop':
@@ -374,9 +426,9 @@ if (require.main === module) {
 
                 const stopped = await recorder.stopRecording(stopGuildId);
                 if (stopped) {
-                    console.log('Recording stopped');
+                    console.log('Recording stopped successfully');
                 } else {
-                    console.log('No active recording found');
+                    console.log('No active recording found to stop');
                 }
 
                 await recorder.cleanup();
@@ -385,6 +437,9 @@ if (require.main === module) {
 
             default:
                 console.error('Usage: node voice_recorder.js <start|stop> [args...]');
+                console.error('Commands:');
+                console.error('  start <guildId> <channelId> <outputDir> - Start recording');
+                console.error('  stop <guildId> - Stop recording');
                 process.exit(1);
         }
     }).catch(async (error) => {
@@ -393,3 +448,5 @@ if (require.main === module) {
         process.exit(1);
     });
 }
+
+module.exports = VoiceRecorder;
