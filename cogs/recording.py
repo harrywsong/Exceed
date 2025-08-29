@@ -11,22 +11,20 @@ import signal
 import shutil
 import zipfile
 import time
+
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2 import service_account
 import pickle
 from google.auth.transport.requests import Request
 
-import os
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+# Google Drive API setup - OAuth 2.0
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+CREDENTIALS_FILE = 'exceed-465801-9a237edcd3b1.json'  # Use your actual OAuth credentials file name
+TOKEN_FILE = 'token.pickle'  # Your existing token file
+TARGET_FOLDER_ID = "1p-RdA-_iNNTJAkzD6jgPMrQsPGv2LGxA"  # Your target folder ID
 
-# Google Drive API setup
-SCOPES = ['https://www.googleapis.com/auth/drive.file']  # Reduced scope
-CREDENTIALS_FILE = 'client_secret_788983093291-4m8ocb4hf9gi3k1pkh5ko283ft26lmak.apps.googleusercontent.com.json'
-TOKEN_FILE = 'token1.pickle'
 
 class Recording(commands.Cog):
     def __init__(self, bot):
@@ -89,30 +87,49 @@ class Recording(commands.Cog):
             pass
 
     def _get_oauth_credentials(self):
-        """Get OAuth 2.0 credentials for Google Drive API"""
+        """Get OAuth 2.0 credentials from existing token.pickle"""
         creds = None
 
-        # Check if we have a token file already
-        if os.path.exists(TOKEN_FILE):
-            with open(TOKEN_FILE, 'rb') as token:
-                creds = pickle.load(token)
+        # Check if credentials file exists
+        if not os.path.exists(CREDENTIALS_FILE):
+            self.bot.logger.error(f"OAuth credentials file not found: {CREDENTIALS_FILE}")
+            raise FileNotFoundError(f"OAuth credentials file not found: {CREDENTIALS_FILE}")
 
-        # If no valid credentials, let the user log in
+        # Load existing token if available
+        if os.path.exists(TOKEN_FILE):
+            try:
+                with open(TOKEN_FILE, 'rb') as token:
+                    creds = pickle.load(token)
+                self.bot.logger.info("Loaded existing OAuth token from token.pickle")
+            except Exception as e:
+                self.bot.logger.error(f"Error loading token.pickle: {e}")
+                creds = None
+
+        # If no valid credentials, initiate OAuth flow
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                    self.bot.logger.info("Refreshed expired OAuth token")
+                except Exception as e:
+                    self.bot.logger.error(f"Error refreshing token: {e}")
+                    creds = None
             else:
-                if not os.path.exists(CREDENTIALS_FILE):
-                    raise FileNotFoundError(f"OAuth credentials file not found: {CREDENTIALS_FILE}")
-
+                # Start new OAuth flow
                 flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
                 creds = flow.run_local_server(port=0)
+                self.bot.logger.info("Completed new OAuth authentication")
 
-            # Save credentials for next run
-            with open(TOKEN_FILE, 'wb') as token:
-                pickle.dump(creds, token)
+            # Save the credentials for the next run
+            try:
+                with open(TOKEN_FILE, 'wb') as token:
+                    pickle.dump(creds, token)
+                self.bot.logger.info("Saved OAuth token to token.pickle")
+            except Exception as e:
+                self.bot.logger.error(f"Error saving token: {e}")
 
         return creds
+
     def _check_system_resources(self):
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
@@ -133,18 +150,19 @@ class Recording(commands.Cog):
             creds = await asyncio.to_thread(self._get_oauth_credentials)
             drive_service = build('drive', 'v3', credentials=creds)
 
-            # Create folder in Google Drive (in the user's root directory)
+            # Create folder inside your target folder
             folder_metadata = {
                 'name': f'recording_{recording_id}',
-                'mimeType': 'application/vnd.google-apps.folder'
+                'mimeType': 'application/vnd.google-apps.folder',
+                'parents': [TARGET_FOLDER_ID]  # Place inside your existing folder
             }
 
             folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
             folder_id = folder.get('id')
 
-            self.bot.logger.info(f"Created Google Drive folder: {folder_id}")
+            self.bot.logger.info(f"Created folder {folder_id} inside target folder {TARGET_FOLDER_ID}")
 
-            # Upload all files in the recording directory
+            # Upload all audio files
             uploaded_files = []
             for file_name in os.listdir(folder_path):
                 if file_name.endswith(('.wav', '.mp3', '.m4a')):
@@ -152,13 +170,12 @@ class Recording(commands.Cog):
 
                     file_metadata = {
                         'name': file_name,
-                        'parents': [folder_id]
+                        'parents': [folder_id]  # Place in the new subfolder
                     }
 
                     media = MediaFileUpload(file_path, resumable=True)
 
                     # Upload with retry mechanism
-                    file = None
                     for attempt in range(5):
                         try:
                             file = drive_service.files().create(
@@ -166,17 +183,18 @@ class Recording(commands.Cog):
                                 media_body=media,
                                 fields='id'
                             ).execute()
+
+                            uploaded_files.append(file.get('id'))
+                            self.bot.logger.info(f"Uploaded {file_name} (ID: {file.get('id')})")
                             break
+
                         except Exception as e:
                             if attempt < 4:
-                                self.bot.logger.warning(
-                                    f"Upload attempt {attempt + 1} failed: {e}. Retrying in 5 seconds...")
+                                self.bot.logger.warning(f"Upload attempt {attempt + 1} failed: {e}. Retrying...")
                                 await asyncio.sleep(5)
                             else:
-                                raise e
-
-                    uploaded_files.append(file.get('id'))
-                    self.bot.logger.info(f"Uploaded {file_name} to Google Drive")
+                                self.bot.logger.error(f"Failed to upload {file_name} after 5 attempts")
+                                raise
 
             return folder_id, uploaded_files
 
