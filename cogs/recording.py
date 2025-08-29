@@ -369,7 +369,7 @@ class Recording(commands.Cog):
             )
             embed.add_field(name="녹음 ID", value=f"`{recording_id}`", inline=True)
             embed.add_field(name="출력 디렉터리", value=f"`./recordings/{recording_id}/`", inline=False)
-            embed.add_field(name="트랙 유형", value="사용자별 동기화된 개별 트랙 (user_ID_닉네임.mp3)", inline=False)
+            embed.add_field(name="트랙 유형", value="사용자별 동기화된 개별 트랙 ('user_ID'_닉네임.mp3)", inline=False)
             embed.add_field(
                 name="🔄 동기화 정보",
                 value="모든 트랙이 녹음 시작 시간부터 동일한 길이로 생성되며, 부재 시간은 침묵으로 채워집니다.",
