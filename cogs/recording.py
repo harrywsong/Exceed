@@ -19,8 +19,7 @@ from google.auth.transport.requests import Request
 
 # Google Drive API setup
 SCOPES = ['https://www.googleapis.com/auth/drive']
-SERVICE_ACCOUNT_FILE = 'credentials.json'  # Path to your service account credentials
-
+SERVICE_ACCOUNT_FILE = 'token.pickle'
 
 class Recording(commands.Cog):
     def __init__(self, bot):
