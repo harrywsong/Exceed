@@ -3,12 +3,13 @@ const {
     joinVoiceChannel,
     VoiceConnectionStatus,
     EndBehaviorType,
-    entersState  // Add this missing import
 } = require('@discordjs/voice');
 const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { entersState } = require('@discordjs/voice');
+
 
 class VoiceRecorder {
     constructor(token) {
@@ -315,6 +316,21 @@ class VoiceRecorder {
         return new Promise((resolve, reject) => {
             console.log(`Converting ${pcmFile} to ${wavFile}`);
 
+            // Check if PCM file exists and has content
+            if (!fs.existsSync(pcmFile)) {
+                console.log(`PCM file ${pcmFile} does not exist, skipping conversion`);
+                resolve();
+                return;
+            }
+
+            const stats = fs.statSync(pcmFile);
+            if (stats.size === 0) {
+                console.log(`PCM file ${pcmFile} is empty, skipping conversion`);
+                try { fs.unlinkSync(pcmFile); } catch {}
+                resolve();
+                return;
+            }
+
             // Pi-optimized FFmpeg settings
             const ffmpegArgs = [
                 '-f', 's16le',
@@ -332,6 +348,7 @@ class VoiceRecorder {
 
             ffmpegArgs.push(wavFile, '-y');
 
+            console.log(`Running FFmpeg with args: ${ffmpegArgs.join(' ')}`);
             const ffmpeg = spawn('ffmpeg', ffmpegArgs);
 
             let stderr = '';
@@ -339,11 +356,22 @@ class VoiceRecorder {
                 stderr += data.toString();
             });
 
+            ffmpeg.stdout.on('data', (data) => {
+                // Log FFmpeg output for debugging
+                console.log(`FFmpeg stdout: ${data.toString()}`);
+            });
+
             ffmpeg.on('close', (code) => {
+                console.log(`FFmpeg process exited with code ${code}`);
                 if (code === 0) {
                     try {
-                        fs.unlinkSync(pcmFile);
-                        console.log(`✅ Successfully converted ${path.basename(pcmFile)}`);
+                        // Check if WAV file was created successfully
+                        if (fs.existsSync(wavFile) && fs.statSync(wavFile).size > 0) {
+                            fs.unlinkSync(pcmFile); // Delete PCM only if WAV was created
+                            console.log(`✅ Successfully converted ${path.basename(pcmFile)} to ${path.basename(wavFile)}`);
+                        } else {
+                            console.log(`⚠️  WAV file not created or empty, keeping PCM file ${path.basename(pcmFile)}`);
+                        }
                         resolve();
                     } catch (err) {
                         console.warn(`Could not delete PCM file: ${err.message}`);
@@ -351,14 +379,17 @@ class VoiceRecorder {
                     }
                 } else {
                     console.error(`❌ FFmpeg failed with code ${code}:`);
-                    if (stderr) console.error(stderr);
-                    reject(new Error(`FFmpeg exited with code ${code}`));
+                    if (stderr) console.error(`FFmpeg stderr: ${stderr}`);
+                    // Don't reject - keep the PCM file if conversion fails
+                    console.log(`Keeping original PCM file: ${path.basename(pcmFile)}`);
+                    resolve();
                 }
             });
 
             ffmpeg.on('error', (err) => {
                 console.error(`FFmpeg spawn error: ${err.message}`);
-                reject(err);
+                console.log(`Keeping original PCM file due to FFmpeg error: ${path.basename(pcmFile)}`);
+                resolve(); // Don't reject - just keep the PCM file
             });
 
             // Pi timeout protection
@@ -367,13 +398,12 @@ class VoiceRecorder {
                     if (!ffmpeg.killed) {
                         console.warn('FFmpeg taking too long on Pi, terminating...');
                         ffmpeg.kill('SIGTERM');
-                        reject(new Error('FFmpeg timeout on Pi'));
+                        resolve(); // Keep PCM file on timeout
                     }
                 }, 30000); // 30 second timeout
             }
         });
     }
-
     async cleanup() {
         console.log('Cleaning up voice recorder...');
 
