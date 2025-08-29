@@ -262,7 +262,7 @@ class VoiceRecorder {
 
         // Wait longer for files to be written completely, especially on Pi
         console.log('Waiting for file buffers to flush...');
-        await new Promise(resolve => setTimeout(resolve, this.isRaspberryPi ? 5000 : 3000));
+        await new Promise(resolve => setTimeout(resolve, this.isRaspberryPi ? 10000 : 3000));
 
         // Process the recording files
         await this.processRecording(recording);
