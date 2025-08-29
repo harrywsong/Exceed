@@ -128,8 +128,8 @@ class VoiceRecorder {
                 channelId: channelId,
                 guildId: guildId,
                 adapterCreator: guild.voiceAdapterCreator,
-                selfDeaf: true,
-                selfMute: false
+                selfDeaf: false,  // Changed to false to enable receiving audio
+                selfMute: true    // Changed to true to disable transmitting audio
             });
 
             const recording = {
