@@ -622,6 +622,7 @@ class MyBot(commands.Bot):
             'cogs.voice',
             'cogs.welcomegoodbye',
             'cogs.message_history',
+            'cogs.recording',
         ]
 
         # Database-dependent extensions
