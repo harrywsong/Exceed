@@ -1,15 +1,11 @@
-// voice_recorder.js — Fixed version with smooth continuous audio
+// voice_recorder.js — FIXED version addressing audio corruption and timing issues
 //
-// Fixes:
-// - Proper continuous audio streaming without gaps
-// - Better synchronization and buffering
-// - Smoother silence generation using consistent timing
-// - Improved FFmpeg parameters for stable output
-//
-// Requirements:
-//   npm i discord.js @discordjs/voice prism-media
-//   FFmpeg installed and on PATH
-//   DISCORD_BOT_TOKEN in env
+// Key fixes:
+// 1. Fixed silence generation to use proper sample rate timing
+// 2. Corrected audio format pipeline (Opus -> PCM -> FFmpeg)
+// 3. Fixed buffer management and stream synchronization
+// 4. Proper cleanup to prevent runaway processes
+// 5. Added audio validation and error handling
 
 const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require('discord.js');
 const {
@@ -28,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// --- Constants ---
+// --- Constants (CORRECTED) ---
 const STATE_FILE = path.join(process.cwd(), 'recording_state.json');
 const STOP_FILENAME = 'stop.flag';
 const SAMPLE_RATE = 48000;
@@ -36,36 +32,40 @@ const CHANNELS = 2;
 const FRAME_SIZE = 960; // 20ms at 48kHz
 const BYTES_PER_SAMPLE = 2; // 16-bit
 const BYTES_PER_FRAME = FRAME_SIZE * CHANNELS * BYTES_PER_SAMPLE;
-const CHUNK_DURATION_MS = 20; // 20ms chunks for smooth playback
+const SILENCE_INTERVAL_MS = 20; // Proper 20ms intervals
 
-// Keep alive with a single Opus silence frame
+// Simple silence keepalive
 class Silence extends Readable {
   _read() {
     this.push(Buffer.from([0xf8, 0xff, 0xfe]));
   }
 }
 
-// High-precision silence generator that maintains perfect timing
+// FIXED: Precision silence generator with correct timing
 class PrecisionSilenceGenerator extends Readable {
   constructor(options = {}) {
     super(options);
     this.sampleRate = SAMPLE_RATE;
     this.channels = CHANNELS;
     this.bytesPerFrame = BYTES_PER_FRAME;
-    this.startTime = process.hrtime.bigint();
-    this.frameCount = 0;
     this.destroyed = false;
 
-    // Use high-precision timer for consistent 20ms intervals
-    this.timer = setInterval(() => this._generateFrame(), CHUNK_DURATION_MS);
+    // Calculate exact samples needed for 20ms
+    this.samplesPerChunk = Math.floor(this.sampleRate * SILENCE_INTERVAL_MS / 1000);
+    this.chunkSize = this.samplesPerChunk * this.channels * BYTES_PER_SAMPLE;
+
+    console.log(`[silence] Generating ${this.chunkSize} bytes every ${SILENCE_INTERVAL_MS}ms`);
+
+    // Use precise interval timing
+    this.timer = setInterval(() => this._generateSilenceChunk(), SILENCE_INTERVAL_MS);
   }
 
-  _generateFrame() {
+  _generateSilenceChunk() {
     if (this.destroyed) return;
 
-    const silenceFrame = Buffer.alloc(this.bytesPerFrame);
-    this.push(silenceFrame);
-    this.frameCount++;
+    // Generate proper silence buffer - zero bytes for PCM silence
+    const silenceChunk = Buffer.alloc(this.chunkSize, 0);
+    this.push(silenceChunk);
   }
 
   _read() {
@@ -73,77 +73,93 @@ class PrecisionSilenceGenerator extends Readable {
   }
 
   destroy() {
+    this.destroyed = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
-    this.destroyed = true;
     super.destroy();
   }
 }
 
-// Audio mixer that seamlessly switches between silence and voice
-class SeamlessAudioMixer extends Transform {
+// FIXED: Simplified audio mixer that doesn't interfere with streams
+class AudioMixer extends PassThrough {
   constructor(options = {}) {
     super(options);
     this.isReceivingVoice = false;
-    this.silenceGenerator = new PrecisionSilenceGenerator();
-    this.voiceStream = null;
+    this.silenceGenerator = null;
+    this.currentVoiceStream = null;
+    this.destroyed = false;
 
-    // Start with silence
-    this._startSilence();
+    this._startSilenceMode();
   }
 
-  _startSilence() {
-    if (!this.silenceGenerator || this.silenceGenerator.destroyed) {
-      this.silenceGenerator = new PrecisionSilenceGenerator();
+  _startSilenceMode() {
+    if (this.destroyed) return;
+
+    console.log('[mixer] Starting silence mode');
+    this.isReceivingVoice = false;
+
+    if (this.silenceGenerator) {
+      this.silenceGenerator.destroy();
     }
 
+    this.silenceGenerator = new PrecisionSilenceGenerator();
     this.silenceGenerator.on('data', (chunk) => {
       if (!this.isReceivingVoice && !this.destroyed) {
-        this.push(chunk);
+        this.write(chunk);
       }
+    });
+
+    this.silenceGenerator.on('error', (err) => {
+      console.warn('[mixer] Silence generator error:', err.message);
     });
   }
 
   switchToVoice(voiceStream) {
+    if (this.destroyed) return;
+
+    console.log('[mixer] Switching to voice mode');
     this.isReceivingVoice = true;
-    this.voiceStream = voiceStream;
+
+    // Stop silence generation
+    if (this.silenceGenerator) {
+      this.silenceGenerator.destroy();
+      this.silenceGenerator = null;
+    }
+
+    this.currentVoiceStream = voiceStream;
 
     voiceStream.on('data', (chunk) => {
       if (this.isReceivingVoice && !this.destroyed) {
-        this.push(chunk);
+        this.write(chunk);
       }
     });
 
     voiceStream.on('end', () => {
-      this.switchToSilence();
+      console.log('[mixer] Voice stream ended, back to silence');
+      this._startSilenceMode();
     });
 
     voiceStream.on('error', (err) => {
-      console.warn('Voice stream error:', err.message);
-      this.switchToSilence();
+      console.warn('[mixer] Voice stream error:', err.message);
+      this._startSilenceMode();
     });
   }
 
-  switchToSilence() {
-    this.isReceivingVoice = false;
-    this.voiceStream = null;
-  }
-
-  _transform(chunk, encoding, callback) {
-    // This mixer doesn't transform input chunks directly
-    // It manages the flow between silence and voice
-    callback();
-  }
-
   destroy() {
+    this.destroyed = true;
+
     if (this.silenceGenerator) {
       this.silenceGenerator.destroy();
+      this.silenceGenerator = null;
     }
-    if (this.voiceStream) {
-      try { this.voiceStream.destroy(); } catch (_) {}
+
+    if (this.currentVoiceStream) {
+      try { this.currentVoiceStream.destroy(); } catch (_) {}
+      this.currentVoiceStream = null;
     }
+
     super.destroy();
   }
 }
@@ -156,19 +172,17 @@ class UserTrackManager {
     this.bitrate = bitrate;
     this.recordingStartTime = recordingStartTime;
 
-    // Track user presence and audio state
     this.isPresent = false;
     this.isReceivingAudio = false;
     this.joinTime = null;
     this.leaveTime = null;
 
-    // Audio processing components
-    this.audioMixer = new SeamlessAudioMixer();
+    // FIXED: Simplified audio pipeline
+    this.audioMixer = new AudioMixer();
     this.currentOpusStream = null;
     this.currentDecoder = null;
     this.ffmpegProcess = null;
 
-    // Output file
     const timestamp = Date.now();
     const base = path.join(outputDir, `user_${userId}_continuous`);
     this.filename = format === 'mp3' ? `${base}.mp3` : `${base}.wav`;
@@ -177,65 +191,74 @@ class UserTrackManager {
   }
 
   _setupFFmpeg() {
+    // FIXED: Corrected FFmpeg parameters for stable recording
     const args = [
-      '-f', 's16le',
-      '-ar', SAMPLE_RATE.toString(),
-      '-ac', CHANNELS.toString(),
-      '-i', 'pipe:0',
-      // Optimized FFmpeg settings for smooth continuous recording
-      '-buffer_size', '65536',      // Larger buffer for stability
-      '-max_delay', '1000000',      // 1 second max delay
-      '-avoid_negative_ts', 'auto', // Handle timestamp issues
-      '-fflags', '+genpts'          // Generate presentation timestamps
+      '-f', 's16le',                    // Input format: signed 16-bit little-endian
+      '-ar', SAMPLE_RATE.toString(),    // Sample rate
+      '-ac', CHANNELS.toString(),       // Audio channels
+      '-i', 'pipe:0',                   // Input from stdin
+      '-threads', '1',                  // Single thread for stability
+      '-buffer_size', '32768',          // Reasonable buffer size
+      '-fflags', '+genpts',             // Generate presentation timestamps
+      '-avoid_negative_ts', 'make_zero' // Handle negative timestamps
     ];
 
     if (this.format === 'mp3') {
       args.push(
+        '-acodec', 'libmp3lame',
         '-b:a', this.bitrate,
-        '-f', 'mp3',
-        '-write_xing', '0'  // Disable Xing header for better streaming
+        '-f', 'mp3'
       );
     } else {
-      args.push('-acodec', 'pcm_s16le', '-f', 'wav');
+      args.push(
+        '-acodec', 'pcm_s16le',
+        '-f', 'wav'
+      );
     }
 
     args.push('-y', this.filename);
 
-    console.log(`[track] Starting FFmpeg for user ${this.userId}`);
+    console.log(`[track] Starting FFmpeg for user ${this.userId}: ${args.join(' ')}`);
+
     this.ffmpegProcess = spawn('ffmpeg', args, {
-      stdio: ['pipe', 'pipe', 'pipe'] // Capture all streams for better error handling
+      stdio: ['pipe', 'pipe', 'pipe']
     });
 
+    // FIXED: Better error handling
     this.ffmpegProcess.stderr.on('data', (data) => {
       const errorMsg = data.toString();
-      // Only log actual errors, not FFmpeg's verbose output
-      if (errorMsg.includes('error') || errorMsg.includes('failed')) {
-        console.warn(`[track] FFmpeg stderr for user ${this.userId}:`, errorMsg);
+      // Only log actual errors
+      if (errorMsg.includes('Error') || errorMsg.includes('failed') || errorMsg.includes('Invalid')) {
+        console.error(`[ffmpeg] Error for user ${this.userId}:`, errorMsg.trim());
       }
     });
 
     this.ffmpegProcess.on('error', (err) => {
-      console.error(`[track] FFmpeg error for user ${this.userId}:`, err.message);
+      console.error(`[ffmpeg] Process error for user ${this.userId}:`, err.message);
     });
 
     this.ffmpegProcess.on('close', (code) => {
-      console.log(`[track] FFmpeg closed for user ${this.userId} (code: ${code})`);
-      this._checkOutputFile();
+      console.log(`[ffmpeg] Process closed for user ${this.userId} with code ${code}`);
+      this._validateOutputFile();
     });
 
-    // Pipe the audio mixer directly to FFmpeg
+    // FIXED: Proper error handling for pipe
+    this.ffmpegProcess.stdin.on('error', (err) => {
+      console.warn(`[ffmpeg] Stdin error for user ${this.userId}:`, err.message);
+    });
+
+    // Connect the audio mixer to FFmpeg
     this.audioMixer.pipe(this.ffmpegProcess.stdin);
   }
 
   userJoined(joinTime = Date.now()) {
-    console.log(`[track] User ${this.userId} joined at ${joinTime}`);
+    console.log(`[track] User ${this.userId} joined at ${new Date(joinTime).toISOString()}`);
     this.isPresent = true;
     this.joinTime = joinTime;
-    // Continuous silence is already being generated
   }
 
   userLeft(leaveTime = Date.now()) {
-    console.log(`[track] User ${this.userId} left at ${leaveTime}`);
+    console.log(`[track] User ${this.userId} left at ${new Date(leaveTime).toISOString()}`);
     this.isPresent = false;
     this.leaveTime = leaveTime;
     this._stopCurrentAudioStream();
@@ -243,44 +266,40 @@ class UserTrackManager {
 
   startReceivingAudio(opusStream) {
     console.log(`[track] Starting audio reception for user ${this.userId}`);
-    this.isReceivingAudio = true;
 
-    // Stop any existing audio stream
+    // Stop any existing stream first
     this._stopCurrentAudioStream();
 
+    this.isReceivingAudio = true;
     this.currentOpusStream = opusStream;
+
+    // FIXED: Proper Opus decoder configuration
     this.currentDecoder = new prism.opus.Decoder({
       rate: SAMPLE_RATE,
       channels: CHANNELS,
       frameSize: FRAME_SIZE
     });
 
-    // Handle decoder output
-    this.currentDecoder.on('data', (pcmChunk) => {
-      // Feed PCM data to the mixer as voice input
-      if (!this.audioMixer.destroyed) {
-        this.audioMixer.switchToVoice(this.currentDecoder);
-      }
-    });
-
+    // Handle decoder errors
     this.currentDecoder.on('error', (err) => {
-      console.warn(`[track] Decoder error for user ${this.userId}:`, err.message);
+      console.error(`[decoder] Error for user ${this.userId}:`, err.message);
       this._stopCurrentAudioStream();
     });
 
     // Handle opus stream events
     opusStream.on('end', () => {
-      console.log(`[track] Opus stream ended for user ${this.userId}`);
+      console.log(`[opus] Stream ended for user ${this.userId}`);
       this._stopCurrentAudioStream();
     });
 
     opusStream.on('error', (err) => {
-      console.warn(`[track] Opus stream error for user ${this.userId}:`, err.message);
+      console.error(`[opus] Stream error for user ${this.userId}:`, err.message);
       this._stopCurrentAudioStream();
     });
 
-    // Connect streams
+    // FIXED: Correct stream pipeline: Opus -> Decoder -> Mixer
     opusStream.pipe(this.currentDecoder);
+    this.audioMixer.switchToVoice(this.currentDecoder);
   }
 
   stopReceivingAudio() {
@@ -291,20 +310,21 @@ class UserTrackManager {
   _stopCurrentAudioStream() {
     this.isReceivingAudio = false;
 
-    // Switch back to silence
-    if (this.audioMixer && !this.audioMixer.destroyed) {
-      this.audioMixer.switchToSilence();
-    }
-
     if (this.currentOpusStream) {
-      try { this.currentOpusStream.destroy(); } catch (_) {}
+      try {
+        this.currentOpusStream.destroy();
+      } catch (_) {}
       this.currentOpusStream = null;
     }
 
     if (this.currentDecoder) {
-      try { this.currentDecoder.end(); } catch (_) {}
+      try {
+        this.currentDecoder.end();
+      } catch (_) {}
       this.currentDecoder = null;
     }
+
+    // Mixer will automatically switch back to silence mode
   }
 
   cleanup() {
@@ -312,34 +332,57 @@ class UserTrackManager {
 
     this._stopCurrentAudioStream();
 
+    // FIXED: Proper cleanup sequence
     if (this.audioMixer) {
-      try { this.audioMixer.destroy(); } catch (_) {}
+      try {
+        this.audioMixer.end();
+        this.audioMixer.destroy();
+      } catch (_) {}
     }
 
-    // Give FFmpeg time to finish processing
-    setTimeout(() => {
-      if (this.ffmpegProcess && !this.ffmpegProcess.killed) {
+    // Give FFmpeg time to finish processing buffered data
+    if (this.ffmpegProcess && !this.ffmpegProcess.killed) {
+      setTimeout(() => {
         try {
-          this.ffmpegProcess.stdin.end();
+          if (!this.ffmpegProcess.killed) {
+            this.ffmpegProcess.stdin.end();
+          }
         } catch (_) {}
-      }
-    }, 3000); // Increased timeout for better file completion
+      }, 2000);
+
+      // Force kill if it doesn't close gracefully
+      setTimeout(() => {
+        try {
+          if (!this.ffmpegProcess.killed) {
+            this.ffmpegProcess.kill('SIGTERM');
+          }
+        } catch (_) {}
+      }, 8000);
+    }
   }
 
-  _checkOutputFile() {
+  _validateOutputFile() {
     try {
       if (fs.existsSync(this.filename)) {
-        const size = fs.statSync(this.filename).size;
-        console.log(`[track] Final file for user ${this.userId}: ${path.basename(this.filename)} (${size} bytes)`);
+        const stats = fs.statSync(this.filename);
+        const size = stats.size;
+        const durationEstimate = size / (SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE); // rough estimate in seconds
+
+        console.log(`[track] Final file for user ${this.userId}: ${path.basename(this.filename)}`);
+        console.log(`[track] Size: ${size} bytes, Estimated duration: ${durationEstimate.toFixed(1)}s`);
 
         if (size < 1000) {
-          console.warn(`[track] File too small for user ${this.userId}, but keeping for sync`);
+          console.warn(`[track] File suspiciously small for user ${this.userId}`);
+        } else if (durationEstimate > 3600) { // More than 1 hour
+          console.warn(`[track] File suspiciously large for user ${this.userId} - possible timing issue`);
+        } else {
+          console.log(`[track] File appears normal for user ${this.userId}`);
         }
       } else {
         console.warn(`[track] Output file missing for user ${this.userId}: ${this.filename}`);
       }
     } catch (e) {
-      console.warn(`[track] Error checking output file for user ${this.userId}:`, e.message);
+      console.error(`[track] Error validating output file for user ${this.userId}:`, e.message);
     }
   }
 }
@@ -356,7 +399,6 @@ class VoiceRecorder {
     this.shouldExit = false;
   }
 
-  // --------- Utility: FFmpeg availability ---------
   checkFFmpeg() {
     return new Promise((resolve) => {
       const ffmpeg = spawn('ffmpeg', ['-version'], { stdio: 'ignore' });
@@ -365,14 +407,13 @@ class VoiceRecorder {
     });
   }
 
-  // --------- State file helpers ---------
   loadState() {
     try {
       if (fs.existsSync(STATE_FILE)) {
         return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
       }
     } catch (e) {
-      console.warn('[state] load error:', e.message);
+      console.warn('[state] Load error:', e.message);
     }
     return null;
   }
@@ -394,7 +435,7 @@ class VoiceRecorder {
         fs.unlinkSync(STATE_FILE);
       }
     } catch (e) {
-      console.warn('[state] save error:', e.message);
+      console.warn('[state] Save error:', e.message);
     }
   }
 
@@ -410,7 +451,6 @@ class VoiceRecorder {
     }
   }
 
-  // --------- Client init ---------
   async init() {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Login timeout after 30s')), 30000);
@@ -426,7 +466,7 @@ class VoiceRecorder {
       this.client.once('ready', onReady);
 
       this.client.on('error', (err) => {
-        console.error('[discord] client error:', err);
+        console.error('[discord] Client error:', err);
         if (!this.isReady) {
           clearTimeout(timeout);
           reject(err);
@@ -440,58 +480,46 @@ class VoiceRecorder {
     });
   }
 
-  // --------- Recording core ---------
   async startRecording(guildId, channelId, outputDir, opts = {}) {
     const format = (opts.format || 'mp3').toLowerCase();
     const bitrate = opts.bitrate || '192k';
 
     if (!this.isReady) {
-      console.error('[start] client not ready');
+      console.error('[start] Client not ready');
       return false;
     }
 
-    const ff = await this.checkFFmpeg();
-    if (!ff) {
+    if (!(await this.checkFFmpeg())) {
       console.error('[start] FFmpeg not found on PATH');
       return false;
     }
 
     const existing = this.checkExistingRecording();
     if (existing) {
-      console.warn('[start] another recording is already running:', existing);
+      console.warn('[start] Another recording is already running:', existing);
       return false;
     }
 
     const guild = this.client.guilds.cache.get(guildId);
     if (!guild) {
-      console.error(`[start] guild not found: ${guildId}`);
+      console.error(`[start] Guild not found: ${guildId}`);
       return false;
     }
 
     const channel = guild.channels.cache.get(channelId);
-    if (!channel) {
-      console.error(`[start] channel not found: ${channelId}`);
-      return false;
-    }
-
-    if (channel.type !== 2) {
-      console.error(`[start] channel is not a voice channel (type=${channel.type})`);
+    if (!channel || channel.type !== 2) {
+      console.error(`[start] Voice channel not found or invalid: ${channelId}`);
       return false;
     }
 
     const me = guild.members.me;
-    if (!me) {
-      console.error('[start] bot member not found in guild');
-      return false;
-    }
-
     const perms = channel.permissionsFor(me);
     if (!perms?.has(PermissionsBitField.Flags.Connect) || !perms?.has(PermissionsBitField.Flags.ViewChannel)) {
-      console.error('[start] missing Connect or ViewChannel permission');
+      console.error('[start] Missing required permissions');
       return false;
     }
 
-    console.log('[voice] joining channel...');
+    console.log('[voice] Joining channel...');
     const connection = joinVoiceChannel({
       channelId: channelId,
       guildId: guildId,
@@ -502,14 +530,14 @@ class VoiceRecorder {
 
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-      console.log('[voice] connection ready');
+      console.log('[voice] Connection ready');
     } catch (e) {
-      console.error('[voice] failed to enter ready state:', e.message);
+      console.error('[voice] Failed to enter ready state:', e.message);
       try { connection.destroy(); } catch (_) {}
       return false;
     }
 
-    // Keep connection alive
+    // Keep connection alive with silence
     const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
     const silence = new Silence();
     const resource = createAudioResource(silence, { inputType: StreamType.Opus });
@@ -530,39 +558,39 @@ class VoiceRecorder {
       stopFlagPath: path.join(outputDir, STOP_FILENAME),
       recordingStartTime,
     };
+
     this.activeRecording = rec;
-
     fs.mkdirSync(outputDir, { recursive: true });
-
     this.saveState(rec);
+
     this._setupReceiver(rec);
     this._setupVoiceStateTracking(rec);
     this._monitorStopFlag(rec);
 
-    // Initialize tracks for users already in the channel
+    // Initialize tracks for existing users
     channel.members.forEach(member => {
       if (!member.user.bot) {
         this._initializeUserTrack(rec, member.user.id);
       }
     });
 
+    // Handle disconnections
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
-      console.log('[voice] disconnected, attempting to recover...');
+      console.log('[voice] Disconnected, attempting to recover...');
       try {
         await Promise.race([
           entersState(connection, VoiceConnectionStatus.Signalling, 5000),
           entersState(connection, VoiceConnectionStatus.Connecting, 5000),
         ]);
-        console.log('[voice] reconnected');
+        console.log('[voice] Reconnected');
       } catch (err) {
-        console.log('[voice] could not reconnect, destroying...');
+        console.error('[voice] Could not reconnect:', err.message);
         try { connection.destroy(); } catch (_) {}
-        this.activeRecording = null;
-        this.saveState(null);
+        await this._stopCurrentRecording();
       }
     });
 
-    console.log('[start] recording setup complete; listening for audio and tracking users');
+    console.log('[start] Recording setup complete');
     return true;
   }
 
@@ -612,13 +640,12 @@ class VoiceRecorder {
 
   _setupReceiver(rec) {
     const receiver = rec.connection.receiver;
-    console.log('[receiver] setting up speaking listeners');
+    console.log('[receiver] Setting up speaking listeners');
 
     receiver.speaking.on('start', (userId) => {
-      console.log(`[receiver] User ${userId} started speaking`);
-
       if (this.client.users.cache.get(userId)?.bot) return;
 
+      console.log(`[receiver] User ${userId} started speaking`);
       this._initializeUserTrack(rec, userId);
       const trackManager = rec.userTracks.get(userId);
 
@@ -640,7 +667,6 @@ class VoiceRecorder {
 
     receiver.speaking.on('end', (userId) => {
       console.log(`[receiver] User ${userId} stopped speaking`);
-
       const trackManager = rec.userTracks.get(userId);
       if (trackManager) {
         trackManager.stopReceivingAudio();
@@ -656,54 +682,53 @@ class VoiceRecorder {
       }
       try {
         if (fs.existsSync(rec.stopFlagPath)) {
-          console.log('[stop] stop flag detected');
+          console.log('[stop] Stop flag detected');
           clearInterval(interval);
           await this._stopCurrentRecording();
-          console.log('[stop] stopped via flag');
         }
       } catch (e) {
-        console.warn('[stop] monitor error:', e.message);
+        console.warn('[stop] Monitor error:', e.message);
       }
     }, 1000);
   }
 
   async stopRecording(guildId) {
     if (this.activeRecording && this.activeRecording.guildId === guildId) {
-      console.log('[stop] stopping current process recording...');
+      console.log('[stop] Stopping current recording...');
       return await this._stopCurrentRecording();
     }
 
     const state = this.loadState();
     if (!state || state.guildId !== guildId) {
-      console.log('[stop] no active recording state for this guild');
+      console.log('[stop] No active recording state for this guild');
       return false;
     }
 
     const stopPath = path.join(state.outputDir, STOP_FILENAME);
     try {
       fs.writeFileSync(stopPath, '');
-      console.log(`[stop] wrote stop flag at ${stopPath}`);
+      console.log(`[stop] Wrote stop flag at ${stopPath}`);
     } catch (e) {
-      console.warn('[stop] could not write stop flag:', e.message);
+      console.warn('[stop] Could not write stop flag:', e.message);
     }
 
+    // Wait for other process to stop
     for (let i = 0; i < 20; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const s = this.loadState();
       if (!s || s.guildId !== guildId) {
-        console.log('[stop] state cleared (other process stopped)');
+        console.log('[stop] Other process stopped successfully');
         return true;
       }
     }
 
-    console.warn('[stop] other process did not clear state in time');
+    console.warn('[stop] Other process did not stop, attempting to terminate');
     try {
       process.kill(state.pid);
-      console.warn('[stop] sent terminate to other process');
       this.saveState(null);
       return true;
     } catch (e) {
-      console.warn('[stop] terminate failed:', e.message);
+      console.warn('[stop] Terminate failed:', e.message);
       return false;
     }
   }
@@ -712,44 +737,56 @@ class VoiceRecorder {
     if (!this.activeRecording) return false;
 
     const rec = this.activeRecording;
-    console.log('[cleanup] stopping user tracks...');
+    console.log('[cleanup] Stopping all user tracks...');
 
     // Stop all user tracks
     for (const [userId, trackManager] of rec.userTracks) {
-      console.log(`[cleanup] cleaning up track for user ${userId}`);
+      console.log(`[cleanup] Cleaning up track for user ${userId}`);
       trackManager.cleanup();
     }
 
-    console.log('[cleanup] waiting 8s for encoders to finish...');
-    await new Promise((r) => setTimeout(r, 8000)); // Increased wait time
+    // FIXED: Reasonable wait time for cleanup
+    console.log('[cleanup] Waiting 5 seconds for encoders to finish...');
+    await new Promise((r) => setTimeout(r, 5000));
 
     if (rec.player) { try { rec.player.stop(); } catch (_) {} }
     if (rec.connection) { try { rec.connection.destroy(); } catch (_) {} }
 
     this.activeRecording = null;
     this.saveState(null);
-    try { if (fs.existsSync(rec.stopFlagPath)) fs.unlinkSync(rec.stopFlagPath); } catch (_) {}
 
-    console.log('[cleanup] recording stopped');
+    try {
+      if (fs.existsSync(rec.stopFlagPath)) {
+        fs.unlinkSync(rec.stopFlagPath);
+      }
+    } catch (_) {}
+
+    console.log('[cleanup] Recording stopped successfully');
     return true;
   }
 
   async cleanup() {
-    console.log('[cleanup] global cleanup...');
-    if (this.activeRecording) await this._stopCurrentRecording();
-    if (this.client && this.client.isReady()) {
-      try { await this.client.destroy(); } catch (e) { console.warn('[cleanup] client destroy:', e.message); }
+    console.log('[cleanup] Global cleanup...');
+    if (this.activeRecording) {
+      await this._stopCurrentRecording();
     }
-    console.log('[cleanup] done');
+    if (this.client && this.client.isReady()) {
+      try {
+        await this.client.destroy();
+      } catch (e) {
+        console.warn('[cleanup] Client destroy error:', e.message);
+      }
+    }
+    console.log('[cleanup] Cleanup complete');
   }
 }
 
-// ---------------- CLI ----------------
+// CLI Interface
 if (require.main === module) {
   const [,, action, ...rest] = process.argv;
 
   if (!process.env.DISCORD_BOT_TOKEN) {
-    console.error('DISCORD_BOT_TOKEN env not set');
+    console.error('DISCORD_BOT_TOKEN environment variable not set');
     process.exit(1);
   }
 
@@ -767,16 +804,26 @@ if (require.main === module) {
   const recorder = new VoiceRecorder(process.env.DISCORD_BOT_TOKEN);
 
   const shutdown = async (signal) => {
-    console.log(`\n[proc] received ${signal}, shutdown...`);
+    console.log(`\n[proc] Received ${signal}, shutting down...`);
     recorder.shouldExit = true;
     await recorder.cleanup();
     process.exit(0);
   };
+
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  process.on('uncaughtException', async (err) => { console.error('[uncaught]', err); await recorder.cleanup(); process.exit(1); });
-  process.on('unhandledRejection', async (reason) => { console.error('[unhandled]', reason); await recorder.cleanup(); process.exit(1); });
+  process.on('uncaughtException', async (err) => {
+    console.error('[uncaught]', err);
+    await recorder.cleanup();
+    process.exit(1);
+  });
+
+  process.on('unhandledRejection', async (reason) => {
+    console.error('[unhandled]', reason);
+    await recorder.cleanup();
+    process.exit(1);
+  });
 
   recorder.init().then(async () => {
     switch (action) {
@@ -788,14 +835,21 @@ if (require.main === module) {
           process.exit(1);
         }
 
-        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+        if (!fs.existsSync(outputDir)) {
+          fs.mkdirSync(outputDir, { recursive: true });
+        }
 
-        const ok = await recorder.startRecording(guildId, channelId, outputDir, { format: flags.format, bitrate: flags.bitrate });
+        const ok = await recorder.startRecording(guildId, channelId, outputDir, {
+          format: flags.format,
+          bitrate: flags.bitrate
+        });
+
         if (ok) {
-          console.log('[cli] recording started; process will stay alive until stop.flag is created or process is terminated');
+          console.log('[cli] Recording started successfully');
+          // Keep process alive
           setInterval(() => {}, 1 << 30);
         } else {
-          console.error('[cli] failed to start');
+          console.error('[cli] Failed to start recording');
           await recorder.cleanup();
           process.exit(1);
         }
@@ -808,7 +862,7 @@ if (require.main === module) {
           process.exit(1);
         }
         const ok = await recorder.stopRecording(guildId);
-        console.log(ok ? '[cli] stop requested successfully' : '[cli] stop failed or nothing to stop');
+        console.log(ok ? '[cli] Recording stopped successfully' : '[cli] Stop failed or nothing to stop');
         await recorder.cleanup();
         process.exit(0);
       }
@@ -820,7 +874,7 @@ if (require.main === module) {
         process.exit(1);
     }
   }).catch(async (err) => {
-    console.error('[init] failed:', err);
+    console.error('[init] Initialization failed:', err);
     await recorder.cleanup();
     process.exit(1);
   });
