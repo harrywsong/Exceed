@@ -340,7 +340,7 @@ class VoiceRecorder {
 
     async checkFFmpegAvailability() {
         return new Promise((resolve) => {
-            const ffmpegCheck = spawn('ffmpeg', ['-version']);
+            const ffmpegCheck = spawn('/usr/bin/ffmpeg', ['-version']);
 
             ffmpegCheck.on('close', (code) => {
                 if (code === 0) {
@@ -412,8 +412,8 @@ class VoiceRecorder {
 
             console.log(`Running FFmpeg: ffmpeg ${ffmpegArgs.join(' ')}`);
 
-            const ffmpeg = spawn('ffmpeg', ffmpegArgs, {
-                stdio: ['ignore', 'pipe', 'pipe']  // Don't pipe stdin, capture stdout/stderr
+            const ffmpeg = spawn('/usr/bin/ffmpeg', ffmpegArgs, {
+                stdio: ['ignore', 'pipe', 'pipe']
             });
 
             let stdout = '';
