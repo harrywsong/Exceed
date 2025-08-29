@@ -161,7 +161,7 @@ class Recording(commands.Cog):
             # Kill any existing voice recorder processes
             if os.name == 'nt':  # Windows
                 subprocess.run(['taskkill', '/f', '/im', 'node.exe', '/fi', 'WINDOWTITLE eq voice_recorder*'],
-                              check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                               check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:  # Unix/Linux/Mac
                 subprocess.run(['pkill', '-f', 'voice_recorder.js'], check=False)
         except:
@@ -231,14 +231,20 @@ class Recording(commands.Cog):
                 for item in os.listdir(self.recordings_path):
                     item_path = os.path.join(self.recordings_path, item)
                     if os.path.isdir(item_path):
+                        # Look for continuous track files specifically
                         audio_count = len([f for f in os.listdir(item_path)
+                                           if f.endswith(('.wav', '.mp3', '.m4a')) and 'continuous' in f])
+
+                        # Also count any other audio files for backward compatibility
+                        total_audio = len([f for f in os.listdir(item_path)
                                            if f.endswith(('.wav', '.mp3', '.m4a'))])
 
                         creation_time = datetime.fromtimestamp(os.path.getctime(item_path))
                         recordings_found.append({
                             'id': item,
                             'path': item_path,
-                            'files': audio_count,
+                            'continuous_tracks': audio_count,
+                            'total_files': total_audio,
                             'date': creation_time
                         })
 
@@ -249,7 +255,7 @@ class Recording(commands.Cog):
             recordings_found.sort(key=lambda x: x['date'], reverse=True)
 
             embed = discord.Embed(
-                title="📁 Available Recordings",
+                title="🎵 Available Recordings",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
@@ -258,9 +264,14 @@ class Recording(commands.Cog):
                 age = datetime.now() - recording['date']
                 age_str = f"{age.days}d {age.seconds // 3600}h ago" if age.days > 0 else f"{age.seconds // 3600}h {(age.seconds // 60) % 60}m ago"
 
+                # Show both continuous tracks and total files for clarity
+                file_info = f"Tracks: {recording['continuous_tracks']}"
+                if recording['total_files'] != recording['continuous_tracks']:
+                    file_info += f" ({recording['total_files']} total)"
+
                 embed.add_field(
                     name=f"🎵 {recording['id']}",
-                    value=f"Files: {recording['files']} | Created: {age_str}",
+                    value=f"{file_info} | Created: {age_str}",
                     inline=False
                 )
 
@@ -278,20 +289,20 @@ class Recording(commands.Cog):
 
     async def _start_recording(self, interaction):
         if not interaction.user.voice:
-            await interaction.response.send_message("❌ You need to be in a voice channel!", ephemeral=True)
+            await interaction.response.send_message("⛔ You need to be in a voice channel!", ephemeral=True)
             return
 
         if interaction.guild.id in self.recordings:
-            await interaction.response.send_message("❌ Already recording in this server!", ephemeral=True)
+            await interaction.response.send_message("⛔ Already recording in this server!", ephemeral=True)
             return
 
         can_record, reason = self._check_system_resources()
         if not can_record:
-            await interaction.response.send_message(f"❌ Cannot start recording: {reason}", ephemeral=True)
+            await interaction.response.send_message(f"⛔ Cannot start recording: {reason}", ephemeral=True)
             return
 
         if len(self.recordings) >= self.max_concurrent_recordings:
-            await interaction.response.send_message("❌ Maximum recordings reached for this system", ephemeral=True)
+            await interaction.response.send_message("⛔ Maximum recordings reached for this system", ephemeral=True)
             return
 
         channel = interaction.user.voice.channel
@@ -312,7 +323,7 @@ class Recording(commands.Cog):
                 permissions = channel.permissions_for(bot_member)
                 self.bot.logger.info(f"Bot permissions - Connect: {permissions.connect}, Speak: {permissions.speak}")
                 if not permissions.connect or not permissions.speak:
-                    await interaction.followup.send("❌ Bot lacks required permissions in voice channel!",
+                    await interaction.followup.send("⛔ Bot lacks required permissions in voice channel!",
                                                     ephemeral=True)
                     return
 
@@ -349,7 +360,7 @@ class Recording(commands.Cog):
                 self.bot.logger.error(f"Exit code: {process.returncode}")
                 self.bot.logger.error(f"Stdout: {stdout}")
                 self.bot.logger.error(f"Stderr: {stderr}")
-                await interaction.followup.send(f"❌ Recording process failed to start. Check bot logs for details.",
+                await interaction.followup.send(f"⛔ Recording process failed to start. Check bot logs for details.",
                                                 ephemeral=True)
                 return
 
@@ -364,12 +375,13 @@ class Recording(commands.Cog):
 
             embed = discord.Embed(
                 title="✅ Recording Started",
-                description=f"Recording audio in {channel.name}",
+                description=f"Recording continuous tracks in {channel.name}",
                 color=discord.Color.green(),
                 timestamp=datetime.now()
             )
             embed.add_field(name="Recording ID", value=f"`{recording_id}`", inline=True)
             embed.add_field(name="Output Directory", value=f"`./recordings/{recording_id}/`", inline=False)
+            embed.add_field(name="Track Type", value="Continuous per-user tracks with sync", inline=False)
             embed.set_footer(text="Use /record stop to end the recording")
 
             await interaction.followup.send(embed=embed)
@@ -378,11 +390,11 @@ class Recording(commands.Cog):
             self.bot.logger.error(f"Recording start error: {e}", exc_info=True)
             if interaction.guild.id in self.recordings:
                 del self.recordings[interaction.guild.id]
-            await interaction.followup.send(f"❌ Failed to start recording: {str(e)[:100]}...", ephemeral=True)
+            await interaction.followup.send(f"⛔ Failed to start recording: {str(e)[:100]}...", ephemeral=True)
 
     async def _stop_recording(self, interaction):
         if interaction.guild.id not in self.recordings:
-            await interaction.response.send_message("❌ No active recording in this server!", ephemeral=True)
+            await interaction.response.send_message("⛔ No active recording in this server!", ephemeral=True)
             return
 
         recording = self.recordings[interaction.guild.id]
@@ -402,9 +414,10 @@ class Recording(commands.Cog):
                 ], env=stop_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
                 try:
+                    # Increased timeout for continuous track processing
                     stdout, stderr = await asyncio.wait_for(
                         asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
-                        timeout=15.0
+                        timeout=30.0  # Increased from 15 to 30 seconds
                     )
                     self.bot.logger.info(f"Stop command output: {stdout}")
                     if stderr:
@@ -413,9 +426,9 @@ class Recording(commands.Cog):
                     stop_process.terminate()
                     self.bot.logger.warning("Stop command timed out")
 
-            # Wait longer for files to be processed and check multiple times
-            max_wait_time = 15  # seconds
-            check_interval = 2  # seconds
+            # Wait longer for continuous tracks to be processed
+            max_wait_time = 30  # Increased from 15 to 30 seconds
+            check_interval = 2
             files_created = []
 
             for i in range(0, max_wait_time, check_interval):
@@ -423,37 +436,38 @@ class Recording(commands.Cog):
 
                 if os.path.exists(recording['dir']):
                     all_files = os.listdir(recording['dir'])
-                    # Check for any audio files, including small ones
-                    potential_files = [f for f in all_files if
-                                       f.endswith(('.wav', '.mp3', '.m4a')) and not f.startswith('stop')]
+                    # Look specifically for continuous track files
+                    continuous_files = [f for f in all_files if
+                                        f.endswith(('.wav', '.mp3', '.m4a')) and
+                                        'continuous' in f and
+                                        not f.startswith('stop')]
 
-                    # Log what we found
                     self.bot.logger.info(
-                        f"Check {i // check_interval + 1}: Found {len(potential_files)} potential audio files")
-                    for f in potential_files:
+                        f"Check {i // check_interval + 1}: Found {len(continuous_files)} continuous track files")
+
+                    for f in continuous_files:
                         file_path = os.path.join(recording['dir'], f)
                         if os.path.exists(file_path):
                             size = os.path.getsize(file_path)
                             self.bot.logger.info(f"  - {f}: {size} bytes")
 
-                    # If we found files, give them a bit more time to finalize
-                    if potential_files and i < max_wait_time - check_interval:
+                    # Check if files are stable (not growing)
+                    if continuous_files and i < max_wait_time - check_interval:
                         await asyncio.sleep(check_interval)
-                        # Re-check to see if file sizes changed (still being written)
                         stable_files = []
-                        for f in potential_files:
+                        for f in continuous_files:
                             file_path = os.path.join(recording['dir'], f)
                             if os.path.exists(file_path):
                                 new_size = os.path.getsize(file_path)
-                                if new_size > 0:  # Accept any non-empty file
+                                if new_size > 1000:  # Accept files > 1KB (continuous tracks will be larger)
                                     stable_files.append(f)
 
                         if stable_files:
                             files_created = stable_files
                             break
-                    elif potential_files:
-                        files_created = [f for f in potential_files if
-                                         os.path.getsize(os.path.join(recording['dir'], f)) > 0]
+                    elif continuous_files:
+                        files_created = [f for f in continuous_files if
+                                         os.path.getsize(os.path.join(recording['dir'], f)) > 1000]
                         break
 
             # Final comprehensive check
@@ -461,13 +475,13 @@ class Recording(commands.Cog):
                 all_files = os.listdir(recording['dir'])
                 self.bot.logger.info(f"Final check - All files in directory: {all_files}")
 
-                # Look for ANY audio files, even 0-byte ones for debugging
+                # Look for ANY audio files for debugging
                 for f in all_files:
                     if f.endswith(('.wav', '.mp3', '.m4a')):
                         file_path = os.path.join(recording['dir'], f)
                         size = os.path.getsize(file_path)
                         self.bot.logger.info(f"Audio file found: {f} ({size} bytes)")
-                        if size > 0:
+                        if size > 1000:  # Accept larger files for continuous tracks
                             files_created.append(f)
 
             duration = datetime.now() - recording['start_time']
@@ -475,30 +489,37 @@ class Recording(commands.Cog):
 
             embed = discord.Embed(
                 title="✅ Recording Stopped",
-                description="Recording completed successfully",
+                description="Continuous track recording completed",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
             embed.add_field(name="Duration", value=duration_str, inline=True)
             embed.add_field(name="Recording ID", value=f"`{recording['id']}`", inline=True)
-            embed.add_field(name="Total Files", value=f"{len(files_created)} audio files", inline=True)
+            embed.add_field(name="Track Files", value=f"{len(files_created)} continuous tracks", inline=True)
             embed.add_field(name="Location", value=f"`./recordings/{recording['id']}/`", inline=False)
 
             if files_created:
                 file_list = '\n'.join([f"• {f}" for f in files_created[:10]])
                 if len(files_created) > 10:
                     file_list += f"\n• ... and {len(files_created) - 10} more"
-                embed.add_field(name="Audio Files", value=f"```{file_list}```", inline=False)
+                embed.add_field(name="Track Files", value=f"```{file_list}```", inline=False)
                 embed.color = discord.Color.green()
+
+                # Note about continuous tracks
+                embed.add_field(
+                    name="ℹ️ Track Information",
+                    value="Each file contains a continuous track for one user, synchronized from recording start to end with silence during absence periods.",
+                    inline=False
+                )
             else:
-                embed.add_field(name="Status", value="❌ No audio files were created", inline=False)
+                embed.add_field(name="Status", value="⛔ No track files were created", inline=False)
                 embed.color = discord.Color.red()
 
                 # More detailed debugging info
                 if os.path.exists(recording['dir']):
                     all_files = os.listdir(recording['dir'])
                     debug_info = f"Files in directory: {len(all_files)}\n"
-                    for f in all_files[:5]:  # Show first 5 files
+                    for f in all_files[:5]:
                         size = os.path.getsize(os.path.join(recording['dir'], f))
                         debug_info += f"• {f} ({size} bytes)\n"
                     if len(all_files) > 5:
@@ -507,7 +528,7 @@ class Recording(commands.Cog):
 
                 embed.add_field(
                     name="Possible Issues",
-                    value="• No one spoke during recording\n• Audio files were too small and deleted\n• FFmpeg processing issues\n• Permission issues",
+                    value="• No users in voice channel during recording\n• FFmpeg processing issues\n• Permissions issues\n• Node.js process crashed",
                     inline=False
                 )
 
@@ -531,6 +552,7 @@ class Recording(commands.Cog):
                 del self.recordings[interaction.guild.id]
             await interaction.followup.send("⚠️ Recording stopped but there may have been processing errors.",
                                             ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(Recording(bot))
