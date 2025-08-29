@@ -420,21 +420,32 @@ class Recording(commands.Cog):
             ], env=stop_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
             try:
-                await asyncio.wait_for(
+                stdout, stderr = await asyncio.wait_for(
                     asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
-                    timeout=10.0
+                    timeout=15.0  # Increased timeout for conversion
                 )
+
+                # Log any conversion issues
+                if stderr and ("FFmpeg" in stderr or "conversion" in stderr.lower()):
+                    self.bot.logger.warning(f"Conversion issues detected: {stderr[:200]}")
+
             except asyncio.TimeoutError:
                 stop_process.terminate()
+                self.bot.logger.warning("Stop process timed out")
 
-            # Wait a moment for file processing
-            await asyncio.sleep(3)
+            # Wait longer for file processing, especially conversions
+            await asyncio.sleep(5)  # Increased wait time
 
-            # Count all audio files (both .wav and .pcm)
+            # Count and categorize audio files
             files_created = []
+            wav_files = []
+            pcm_files = []
+
             if os.path.exists(recording['dir']):
-                files_created = [f for f in os.listdir(recording['dir'])
-                                 if f.endswith(('.wav', '.pcm'))]
+                all_files = os.listdir(recording['dir'])
+                files_created = [f for f in all_files if f.endswith(('.wav', '.pcm'))]
+                wav_files = [f for f in all_files if f.endswith('.wav')]
+                pcm_files = [f for f in all_files if f.endswith('.pcm')]
 
             duration = datetime.now() - recording['start_time']
             duration_str = str(duration).split('.')[0]
@@ -447,14 +458,43 @@ class Recording(commands.Cog):
             )
             embed.add_field(name="Duration", value=duration_str, inline=True)
             embed.add_field(name="Recording ID", value=f"`{recording['id']}`", inline=True)
-            embed.add_field(name="Files Created", value=f"{len(files_created)} audio files", inline=True)
+            embed.add_field(name="Total Files", value=f"{len(files_created)} audio files", inline=True)
             embed.add_field(name="Location", value=f"`./recordings/{recording['id']}/`", inline=False)
+
+            # Provide detailed file breakdown
+            if wav_files and pcm_files:
+                file_status = f"✅ {len(wav_files)} WAV files\n⚠️ {len(pcm_files)} PCM files (conversion issues)"
+                embed.color = discord.Color.orange()
+            elif wav_files:
+                file_status = f"✅ {len(wav_files)} WAV files"
+                embed.color = discord.Color.green()
+            elif pcm_files:
+                file_status = f"⚠️ {len(pcm_files)} PCM files only (conversion failed)"
+                embed.color = discord.Color.red()
+                embed.add_field(
+                    name="⚠️ Conversion Issue",
+                    value="Files are in PCM format. FFmpeg may not be installed or available.",
+                    inline=False
+                )
+            else:
+                file_status = "❌ No audio files created"
+                embed.color = discord.Color.red()
+
+            embed.add_field(name="File Status", value=file_status, inline=True)
 
             if files_created:
                 file_list = '\n'.join([f"• {f}" for f in files_created[:10]])
                 if len(files_created) > 10:
                     file_list += f"\n• ... and {len(files_created) - 10} more"
                 embed.add_field(name="Audio Files", value=f"```{file_list}```", inline=False)
+
+            # Add conversion help if only PCM files exist
+            if pcm_files and not wav_files:
+                embed.add_field(
+                    name="💡 Manual Conversion",
+                    value="You can convert PCM to WAV manually:\n`ffmpeg -f s16le -ar 48000 -ac 2 -i file.pcm file.wav`",
+                    inline=False
+                )
 
             # Create persistent view for download/delete options
             view = RecordingView(recording['id'], recording['dir'], self.bot.logger)
@@ -472,7 +512,6 @@ class Recording(commands.Cog):
                 del self.recordings[interaction.guild.id]
             await interaction.followup.send("⚠️ Recording stopped but there may have been processing errors.",
                                             ephemeral=True)
-
 
 async def setup(bot):
     await bot.add_cog(Recording(bot))
