@@ -204,35 +204,81 @@ class VoiceRecorder {
                 },
             });
 
-            const filename = path.join(recording.outputDir, `${userId}.pcm`);
-            const fileStream = fs.createWriteStream(filename);
+            const filename = path.join(recording.outputDir, `${userId}.wav`);
 
-            // Optimized opus decoder settings
-            const decoderOptions = {
-                frameSize: 960,
-                channels: 2,
-                rate: 48000
-            };
+            // Use FFmpeg to decode Opus directly to WAV
+            let ffmpegArgs = [
+                '-f', 'opus',            // Input format: Opus packets
+                '-i', 'pipe:0',          // Input from stdin (piped from userStream)
+                '-acodec', 'pcm_s16le',  // Output codec: signed 16-bit PCM
+                '-f', 'wav',             // Output container: WAV
+                '-ar', '48000',          // Sample rate: 48kHz
+                '-ac', '2',              // Stereo channels
+                '-y',                    // Overwrite if exists
+                filename                 // Output file
+            ];
 
-            const opusDecoder = new prism.opus.Decoder(decoderOptions);
+            // Raspberry Pi optimizations: limit threads
+            if (this.isRaspberryPi) {
+                const outputIndex = ffmpegArgs.indexOf(filename);
+                ffmpegArgs.splice(outputIndex, 0, '-threads', '1');
+            }
 
-            userStream.pipe(opusDecoder).pipe(fileStream);
+            console.log(`Starting FFmpeg decoder for user ${userId}: ffmpeg ${ffmpegArgs.join(' ')}`);
+
+            const ffmpegProcess = spawn('/usr/bin/ffmpeg', ffmpegArgs, {
+                stdio: ['pipe', 'pipe', 'pipe']  // stdin, stdout, stderr
+            });
+
+            // Pipe Opus stream to FFmpeg stdin
+            userStream.pipe(ffmpegProcess.stdin);
+
+            // Log FFmpeg output for debugging
+            let stdout = '';
+            let stderr = '';
+            ffmpegProcess.stdout.on('data', (data) => { stdout += data.toString(); });
+            ffmpegProcess.stderr.on('data', (data) => { stderr += data.toString(); });
+
+            ffmpegProcess.on('close', (code) => {
+                console.log(`FFmpeg for user ${userId} exited with code ${code}`);
+                if (code !== 0) {
+                    console.error(`FFmpeg stdout: ${stdout.trim()}`);
+                    console.error(`FFmpeg stderr: ${stderr.trim()}`);
+                }
+                // Check if WAV file is valid
+                if (fs.existsSync(filename)) {
+                    const stats = fs.statSync(filename);
+                    if (stats.size <= 44) {  // Empty WAV (just header)
+                        console.error(`Empty/invalid WAV for ${userId}, removing it`);
+                        fs.unlinkSync(filename);
+                    }
+                }
+            });
+
+            ffmpegProcess.on('error', (err) => {
+                console.error(`FFmpeg error for user ${userId}: ${err.message}`);
+            });
 
             recording.users.set(userId, {
                 stream: userStream,
+                ffmpeg: ffmpegProcess,
                 file: filename,
                 startTime: Date.now(),
-                channels: decoderOptions.channels
+                channels: 2  // Fixed stereo
             });
 
             userStream.on('end', () => {
                 console.log(`User ${userId} stopped speaking`);
-                fileStream.end();
+                if (ffmpegProcess && !ffmpegProcess.killed) {
+                    ffmpegProcess.stdin.end();
+                }
             });
 
             userStream.on('error', (error) => {
                 console.error(`Stream error for user ${userId}:`, error);
-                fileStream.end();
+                if (ffmpegProcess && !ffmpegProcess.killed) {
+                    ffmpegProcess.kill('SIGTERM');
+                }
             });
         });
     }
@@ -246,31 +292,33 @@ class VoiceRecorder {
 
         console.log('Stopping recording and processing audio');
 
-        // Stop all user streams gracefully
+        // Stop all user streams and FFmpeg processes gracefully
         for (const [userId, userData] of recording.users) {
             try {
-                console.log(`Stopping stream for user ${userId}`);
                 userData.stream.destroy();
+                if (userData.ffmpeg && !userData.ffmpeg.killed) {
+                    userData.ffmpeg.stdin.end();
+                    await new Promise(resolve => setTimeout(resolve, 1000));  // Brief wait for flush
+                    userData.ffmpeg.kill('SIGTERM');
+                }
             } catch (error) {
-                console.warn(`Error stopping stream for user ${userId}:`, error);
+                console.warn(`Error stopping stream/FFmpeg for user ${userId}:`, error);
             }
         }
 
-        // Disconnect from voice
-        console.log('Destroying voice connection');
-        recording.connection.destroy();
+        // Wait longer on Pi for file writes to complete
+        await new Promise(resolve => setTimeout(resolve, this.isRaspberryPi ? 15000 : 5000));
 
-        // Wait longer for files to be written completely, especially on Pi
-        console.log('Waiting for file buffers to flush...');
-        await new Promise(resolve => setTimeout(resolve, this.isRaspberryPi ? 10000 : 3000));
-
-        // Process the recording files
-        await this.processRecording(recording);
+        // Clean up connection
+        try {
+            recording.connection.destroy();
+        } catch (error) {
+            console.warn('Error destroying voice connection:', error);
+        }
 
         this.recordings.delete(guildId);
         return true;
     }
-
     async processRecording(recording) {
         console.log('Processing recorded audio files');
         console.log(`Found ${recording.users.size} user streams to process`);
