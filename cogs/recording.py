@@ -369,7 +369,7 @@ class Recording(commands.Cog):
             )
             embed.add_field(name="녹음 ID", value=f"`{recording_id}`", inline=True)
             embed.add_field(name="출력 디렉터리", value=f"`./recordings/{recording_id}/`", inline=False)
-            embed.add_field(name="트랙 유형", value="동기화된 사용자별 연속 트랙", inline=False)
+            embed.add_field(name="트랙 유형", value="사용자별 개별 트랙 (user_ID_닉네임.mp3)", inline=False)
             embed.set_footer(text="/녹음 중지를 사용하여 녹음을 종료하세요")
 
             await interaction.followup.send(embed=embed)
@@ -412,10 +412,10 @@ class Recording(commands.Cog):
                 ], env=stop_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
                 try:
-                    # 연속 트랙 처리를 위해 타임아웃 증가
+                    # 사용자 트랙 처리를 위해 타임아웃 조정
                     stdout, stderr = await asyncio.wait_for(
                         asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
-                        timeout=30.0  # 15초에서 30초로 증가
+                        timeout=20.0  # 20초로 조정
                     )
                     self.bot.logger.info(f"중지 명령 출력: {stdout}")
                     if stderr:
@@ -424,9 +424,26 @@ class Recording(commands.Cog):
                     stop_process.terminate()
                     self.bot.logger.warning("중지 명령 타임아웃")
 
-            # 연속 트랙이 처리될 때까지 더 오래 대기
-            max_wait_time = 120  # 큰 파일을 위해 2분으로 증가
-            check_interval = 10
+            # 디렉터리 구조 디버깅
+            self.bot.logger.info(f"녹음 디렉터리 확인: {recording['dir']}")
+            if os.path.exists(recording['dir']):
+                self.bot.logger.info(f"디렉터리 존재함. 내용: {os.listdir(recording['dir'])}")
+
+                # 하위 디렉터리가 있는지 확인 (타임스탬프 폴더 때문에)
+                for item in os.listdir(recording['dir']):
+                    item_path = os.path.join(recording['dir'], item)
+                    if os.path.isdir(item_path):
+                        self.bot.logger.info(f"하위 디렉터리 발견: {item}")
+                        self.bot.logger.info(f"하위 디렉터리 내용: {os.listdir(item_path)}")
+                        # 실제 검색 경로를 하위 디렉터리로 업데이트
+                        recording['dir'] = item_path
+                        break
+            else:
+                self.bot.logger.warning(f"녹음 디렉터리가 존재하지 않음: {recording['dir']}")
+
+            # Wait longer for user tracks to be processed
+            max_wait_time = 60  # 1분으로 단축 (새 시스템은 더 빠름)
+            check_interval = 5  # 5초마다 확인 (더 자주 확인)
             files_created = []
 
             for i in range(0, max_wait_time, check_interval):
@@ -434,37 +451,37 @@ class Recording(commands.Cog):
 
                 if os.path.exists(recording['dir']):
                     all_files = os.listdir(recording['dir'])
-                    # 연속 트랙 파일 특별히 찾기
-                    continuous_files = [f for f in all_files if
-                                        f.endswith(('.wav', '.mp3', '.m4a')) and
-                                        ('continuous' in f or 'user_' in f) and
-                                        not f.startswith('stop')]
+                    # 새로운 파일명 시스템에 맞춰 user_ 파일 찾기
+                    user_files = [f for f in all_files if
+                                  f.endswith(('.wav', '.mp3', '.m4a')) and
+                                  f.startswith('user_') and
+                                  not f.startswith('stop')]
 
                     self.bot.logger.info(
-                        f"확인 {i // check_interval + 1}: {len(continuous_files)}개의 연속 트랙 파일 발견")
+                        f"확인 {i // check_interval + 1}: {len(user_files)}개의 사용자 트랙 파일 발견")
 
-                    for f in continuous_files:
+                    for f in user_files:
                         file_path = os.path.join(recording['dir'], f)
                         if os.path.exists(file_path):
                             size = os.path.getsize(file_path)
                             self.bot.logger.info(f"  - {f}: {size} 바이트")
 
                     # 파일이 안정적인지 확인 (더 이상 증가하지 않음)
-                    if continuous_files and i < max_wait_time - check_interval:
+                    if user_files and i < max_wait_time - check_interval:
                         await asyncio.sleep(check_interval)
                         stable_files = []
-                        for f in continuous_files:
+                        for f in user_files:
                             file_path = os.path.join(recording['dir'], f)
                             if os.path.exists(file_path):
                                 new_size = os.path.getsize(file_path)
-                                if new_size > 1000:  # 1KB보다 큰 파일 허용 (연속 트랙은 더 클 것임)
+                                if new_size > 1000:  # 1KB보다 큰 파일 허용
                                     stable_files.append(f)
 
                         if stable_files:
                             files_created = stable_files
                             break
-                    elif continuous_files:
-                        files_created = [f for f in continuous_files if
+                    elif user_files:
+                        files_created = [f for f in user_files if
                                          os.path.getsize(os.path.join(recording['dir'], f)) > 1000]
                         break
 
@@ -473,13 +490,13 @@ class Recording(commands.Cog):
                 all_files = os.listdir(recording['dir'])
                 self.bot.logger.info(f"최종 확인 - 디렉터리의 모든 파일: {all_files}")
 
-                # 디버깅을 위해 모든 오디오 파일 찾기
+                # 새로운 파일명 시스템에 맞춰 모든 오디오 파일 찾기
                 for f in all_files:
-                    if f.endswith(('.wav', '.mp3', '.m4a')):
+                    if f.endswith(('.wav', '.mp3', '.m4a')) and not f.startswith('stop'):
                         file_path = os.path.join(recording['dir'], f)
                         size = os.path.getsize(file_path)
                         self.bot.logger.info(f"오디오 파일 발견: {f} ({size} 바이트)")
-                        if size > 1000:  # 연속 트랙을 위해 더 큰 파일 허용
+                        if size > 1000:  # 1KB보다 큰 파일 허용
                             files_created.append(f)
 
             duration = datetime.now() - recording['start_time']
@@ -511,13 +528,13 @@ class Recording(commands.Cog):
             # 최종 상태 임베드 생성
             embed = discord.Embed(
                 title="✅ 녹음 중지됨",
-                description="연속 트랙 녹음이 완료되었습니다",
+                description="사용자별 트랙 녹음이 완료되었습니다",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
             embed.add_field(name="녹음 시간", value=duration_str, inline=True)
             embed.add_field(name="녹음 ID", value=f"`{recording['id']}`", inline=True)
-            embed.add_field(name="트랙 파일", value=f"{len(files_created)}개 연속 트랙", inline=True)
+            embed.add_field(name="트랙 파일", value=f"{len(files_created)}개 사용자 트랙", inline=True)
 
             if drive_folder_id:
                 embed.add_field(
@@ -540,7 +557,7 @@ class Recording(commands.Cog):
                     file_list += f"\n• ... 그리고 {len(files_created) - 5}개 더"
                 embed.add_field(name="트랙 파일", value=f"```{file_list}```", inline=False)
 
-                # 연속 트랙에 대한 참고사항
+                # 사용자별 트랙에 대한 참고사항
                 embed.add_field(
                     name="ℹ️ 트랙 정보",
                     value="각 파일은 한 사용자의 연속 트랙을 포함하며, 녹음 시작부터 종료까지 동기화되어 부재 기간에는 무음이 포함됩니다.",
