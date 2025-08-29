@@ -1,4 +1,3 @@
-
 import discord
 from discord.ext import commands
 import asyncio
@@ -58,7 +57,7 @@ class Recording(commands.Cog):
     @discord.app_commands.command(name="record-status", description="Check current recording status")
     async def recording_status(self, interaction: discord.Interaction):
         if interaction.guild.id not in self.recordings:
-            await interaction.response.send_message("📹 No active recording in this server.")
+            await interaction.response.send_message("🔹 No active recording in this server.")
             return
 
         recording = self.recordings[interaction.guild.id]
@@ -108,25 +107,6 @@ class Recording(commands.Cog):
             return
 
         channel = interaction.user.voice.channel
-
-        # Add this debugging section after: channel = interaction.user.voice.channel
-        try:
-            # Log detailed channel information
-            self.bot.logger.info(f"Debug - Guild ID: {interaction.guild.id}")
-            self.bot.logger.info(f"Debug - Channel ID: {channel.id}")
-            self.bot.logger.info(f"Debug - Channel Name: {channel.name}")
-            self.bot.logger.info(f"Debug - User in channel: {interaction.user.display_name}")
-            self.bot.logger.info(f"Debug - Bot can see channel: {channel is not None}")
-
-            # Check bot permissions
-            bot_member = interaction.guild.get_member(self.bot.user.id)
-            if bot_member:
-                permissions = channel.permissions_for(bot_member)
-                self.bot.logger.info(
-                    f"Debug - Bot permissions - Connect: {permissions.connect}, Speak: {permissions.speak}")
-
-        except Exception as debug_error:
-            self.bot.logger.error(f"Debug error: {debug_error}")
         recording_id = str(int(datetime.now().timestamp()))
         recording_dir = os.path.join(self.recordings_path, recording_id)
         os.makedirs(recording_dir, exist_ok=True)
@@ -135,22 +115,55 @@ class Recording(commands.Cog):
         await interaction.response.defer()
 
         try:
-            # Start Node.js recorder process
+            # Log detailed information for debugging
+            self.bot.logger.info(f"Starting recording - Guild: {interaction.guild.name} ({interaction.guild.id})")
+            self.bot.logger.info(f"Channel: {channel.name} ({channel.id})")
+            self.bot.logger.info(f"User: {interaction.user.display_name} ({interaction.user.id})")
+
+            # Check bot permissions
+            bot_member = interaction.guild.get_member(self.bot.user.id)
+            if bot_member:
+                permissions = channel.permissions_for(bot_member)
+                self.bot.logger.info(f"Bot permissions - Connect: {permissions.connect}, Speak: {permissions.speak}")
+                if not permissions.connect or not permissions.speak:
+                    await interaction.followup.send("❌ Bot lacks required permissions in voice channel!",
+                                                    ephemeral=True)
+                    return
+
+            # Start Node.js recorder process with extended environment
             env = os.environ.copy()
             env['DISCORD_BOT_TOKEN'] = self.bot.http.token
+            env['NODE_ENV'] = 'production'
 
+            # Start the recorder process
             process = subprocess.Popen([
                 'node', 'utils/voice_recorder.js', 'start',
                 str(interaction.guild.id), str(channel.id), recording_dir
-            ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            ], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-            # Give it a moment to start
-            await asyncio.sleep(3)
+            # Give the Node.js process more time to initialize and connect
+            self.bot.logger.info("Waiting for Node.js recorder to initialize...")
+            await asyncio.sleep(8)  # Increased from 3 to 8 seconds
 
             # Check if process is still running
             if process.poll() is not None:
                 stdout, stderr = process.communicate()
-                raise Exception(f"Recorder failed to start: {stderr.decode()}")
+                self.bot.logger.error(f"Recorder process output: {stdout}")
+                self.bot.logger.error(f"Recorder process errors: {stderr}")
+                raise Exception(f"Recorder failed to start: {stderr}")
+
+            # Check for any immediate errors by reading a bit of stderr
+            try:
+                import select
+                if hasattr(select, 'select'):  # Unix systems
+                    ready, _, _ = select.select([process.stderr], [], [], 1)
+                    if ready:
+                        error_output = process.stderr.read(1024)
+                        if error_output and 'error' in error_output.lower():
+                            self.bot.logger.error(f"Node.js recorder error: {error_output}")
+                            raise Exception(f"Recorder error: {error_output}")
+            except Exception as e:
+                self.bot.logger.warning(f"Could not check for immediate errors: {e}")
 
             self.recordings[interaction.guild.id] = {
                 'id': recording_id,
@@ -173,9 +186,12 @@ class Recording(commands.Cog):
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
-            logging.error(f"Recording start error: {e}")
-            await interaction.followup.send("❌ Failed to start recording. Check bot permissions and system resources.",
-                                            ephemeral=True)
+            self.bot.logger.error(f"Recording start error: {e}", exc_info=True)
+            await interaction.followup.send(
+                "❌ Failed to start recording. Check bot permissions and system resources.\n"
+                f"Error details: {str(e)[:100]}...",
+                ephemeral=True
+            )
 
     async def _stop_recording(self, interaction):
         if interaction.guild.id not in self.recordings:
@@ -188,20 +204,41 @@ class Recording(commands.Cog):
         await interaction.response.defer()
 
         try:
-            # Stop the Node.js process gracefully
+            self.bot.logger.info(f"Stopping recording for guild {interaction.guild.id}")
+
+            # Send stop command to Node.js process
+            stop_env = dict(os.environ, DISCORD_BOT_TOKEN=self.bot.http.token)
             stop_process = subprocess.Popen([
                 'node', 'utils/voice_recorder.js', 'stop', str(interaction.guild.id)
-            ], env=dict(os.environ, DISCORD_BOT_TOKEN=self.bot.http.token))
+            ], env=stop_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
-            # Wait for stop command to complete
+            # Wait for stop command to complete with timeout
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
+                    timeout=10.0
+                )
+                self.bot.logger.info(f"Stop process output: {stdout}")
+                if stderr:
+                    self.bot.logger.warning(f"Stop process stderr: {stderr}")
+            except asyncio.TimeoutError:
+                self.bot.logger.warning("Stop command timed out")
+                stop_process.terminate()
+
+            # Give a moment for graceful shutdown
             await asyncio.sleep(2)
 
             # Terminate the recording process if still running
             if recording['process'].poll() is None:
+                self.bot.logger.info("Terminating recording process")
                 recording['process'].terminate()
                 try:
-                    recording['process'].wait(timeout=5)
-                except subprocess.TimeoutExpired:
+                    await asyncio.wait_for(
+                        asyncio.create_task(asyncio.to_thread(recording['process'].wait)),
+                        timeout=5
+                    )
+                except asyncio.TimeoutError:
+                    self.bot.logger.warning("Recording process didn't terminate gracefully, killing it")
                     recording['process'].kill()
 
             # Check what files were created
@@ -214,7 +251,7 @@ class Recording(commands.Cog):
 
             embed = discord.Embed(
                 title="✅ Recording Stopped",
-                description=f"Recording completed successfully",
+                description="Recording completed successfully",
                 color=discord.Color.blue(),
                 timestamp=datetime.now()
             )
@@ -233,7 +270,7 @@ class Recording(commands.Cog):
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
-            logging.error(f"Recording stop error: {e}")
+            self.bot.logger.error(f"Recording stop error: {e}", exc_info=True)
             # Still try to cleanup
             if interaction.guild.id in self.recordings:
                 try:
@@ -247,6 +284,7 @@ class Recording(commands.Cog):
 
     def cog_unload(self):
         """Cleanup when cog is unloaded"""
+        self.bot.logger.info("Cleaning up Recording cog...")
         for guild_id, recording in self.recordings.items():
             try:
                 recording['process'].terminate()

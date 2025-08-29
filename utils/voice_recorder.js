@@ -8,11 +8,16 @@ const { spawn } = require('child_process');
 class VoiceRecorder {
     constructor(token) {
         this.client = new Client({
-            intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
+            intents: [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildVoiceStates,
+                GatewayIntentBits.GuildMessages  // Added this intent
+            ]
         });
         this.token = token;
         this.recordings = new Map();
         this.isRaspberryPi = this.detectRaspberryPi();
+        this.isReady = false;
     }
 
     detectRaspberryPi() {
@@ -29,28 +34,97 @@ class VoiceRecorder {
     }
 
     async init() {
-        await this.client.login(this.token);
-        console.log(`Voice recorder logged in as ${this.client.user.tag}`);
-        if (this.isRaspberryPi) {
-            console.log('🥧 Raspberry Pi detected - using optimized settings');
-        }
+        return new Promise((resolve, reject) => {
+            // Set up event listeners before login
+            this.client.once('ready', () => {
+                console.log(`Voice recorder logged in as ${this.client.user.tag}`);
+                if (this.isRaspberryPi) {
+                    console.log('🥧 Raspberry Pi detected - using optimized settings');
+                }
+
+                // Log guild and channel information for debugging
+                console.log(`Bot is in ${this.client.guilds.cache.size} guilds:`);
+                this.client.guilds.cache.forEach(guild => {
+                    console.log(`- ${guild.name} (${guild.id}) - ${guild.channels.cache.size} channels`);
+                });
+
+                this.isReady = true;
+                resolve();
+            });
+
+            this.client.on('error', (error) => {
+                console.error('Discord client error:', error);
+                if (!this.isReady) {
+                    reject(error);
+                }
+            });
+
+            this.client.on('disconnect', () => {
+                console.log('Discord client disconnected');
+                this.isReady = false;
+            });
+
+            // Login with error handling
+            this.client.login(this.token).catch(reject);
+        });
     }
 
     async startRecording(guildId, channelId, outputDir) {
         try {
+            // Wait for client to be ready
+            if (!this.isReady) {
+                console.log('Waiting for Discord client to be ready...');
+                let attempts = 0;
+                while (!this.isReady && attempts < 30) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    attempts++;
+                }
+                if (!this.isReady) {
+                    throw new Error('Discord client not ready after 30 seconds');
+                }
+            }
+
+            console.log(`Looking for guild ${guildId}...`);
             const guild = this.client.guilds.cache.get(guildId);
             if (!guild) {
-                console.error(`Guild ${guildId} not found`);
+                console.error(`Guild ${guildId} not found in cache`);
+                console.log('Available guilds:', this.client.guilds.cache.map(g => `${g.name} (${g.id})`));
                 return false;
+            }
+
+            console.log(`Found guild: ${guild.name}. Looking for channel ${channelId}...`);
+
+            // Force fetch channels if not in cache
+            try {
+                await guild.channels.fetch();
+            } catch (fetchError) {
+                console.warn(`Could not fetch channels: ${fetchError.message}`);
             }
 
             const channel = guild.channels.cache.get(channelId);
             if (!channel) {
-                console.error(`Channel ${channelId} not found`);
+                console.error(`Channel ${channelId} not found in guild ${guild.name}`);
+                console.log('Available voice channels:',
+                    guild.channels.cache
+                        .filter(c => c.type === 2) // Voice channels
+                        .map(c => `${c.name} (${c.id})`)
+                );
                 return false;
             }
 
-            console.log(`Starting recording in ${channel.name}`);
+            if (channel.type !== 2) { // Not a voice channel
+                console.error(`Channel ${channel.name} is not a voice channel (type: ${channel.type})`);
+                return false;
+            }
+
+            console.log(`Starting recording in voice channel: ${channel.name}`);
+
+            // Check if bot has necessary permissions
+            const permissions = channel.permissionsFor(guild.members.me);
+            if (!permissions.has('Connect') || !permissions.has('Speak')) {
+                console.error(`Bot lacks permissions in channel ${channel.name}. Connect: ${permissions.has('Connect')}, Speak: ${permissions.has('Speak')}`);
+                return false;
+            }
 
             const connection = joinVoiceChannel({
                 channelId: channelId,
@@ -64,20 +138,50 @@ class VoiceRecorder {
                 connection: connection,
                 users: new Map(),
                 outputDir: outputDir,
-                startTime: Date.now()
+                startTime: Date.now(),
+                guildId: guildId,
+                channelId: channelId
             };
 
+            // Set up connection event handlers with timeout
+            const connectionTimeout = setTimeout(() => {
+                console.error('Voice connection timeout after 10 seconds');
+                connection.destroy();
+            }, 10000);
+
             connection.on(VoiceConnectionStatus.Ready, () => {
+                clearTimeout(connectionTimeout);
                 console.log('Voice connection ready, setting up recording');
                 this.setupUserRecording(connection, recording);
             });
 
-            connection.on(VoiceConnectionStatus.Disconnected, () => {
+            connection.on(VoiceConnectionStatus.Disconnected, async (oldState, newState) => {
+                clearTimeout(connectionTimeout);
                 console.log('Voice connection disconnected');
+
+                try {
+                    await Promise.race([
+                        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
+                        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+                    ]);
+                } catch (error) {
+                    console.log('Connection could not be re-established, destroying...');
+                    connection.destroy();
+                    this.recordings.delete(guildId);
+                }
+            });
+
+            connection.on(VoiceConnectionStatus.Destroyed, () => {
+                clearTimeout(connectionTimeout);
+                console.log('Voice connection destroyed');
+                this.recordings.delete(guildId);
             });
 
             connection.on('error', (error) => {
+                clearTimeout(connectionTimeout);
                 console.error('Voice connection error:', error);
+                connection.destroy();
+                this.recordings.delete(guildId);
             });
 
             this.recordings.set(guildId, recording);
@@ -266,12 +370,37 @@ class VoiceRecorder {
     }
 
     async cleanup() {
+        console.log('Cleaning up voice recorder...');
+
+        // Stop all active recordings
         for (const [guildId, recording] of this.recordings) {
             try {
+                console.log(`Cleaning up recording for guild ${guildId}`);
+
+                // Stop user streams
+                for (const [userId, userData] of recording.users) {
+                    try {
+                        userData.stream.destroy();
+                    } catch (error) {
+                        console.warn(`Error stopping stream for user ${userId}:`, error);
+                    }
+                }
+
+                // Disconnect from voice
                 recording.connection.destroy();
-            } catch {}
+            } catch (error) {
+                console.warn(`Error cleaning up recording for guild ${guildId}:`, error);
+            }
         }
-        this.client.destroy();
+
+        this.recordings.clear();
+
+        // Destroy Discord client
+        if (this.client && !this.client.isReady()) {
+            await this.client.destroy();
+        }
+
+        console.log('Voice recorder cleanup complete');
     }
 }
 
@@ -299,6 +428,18 @@ if (require.main === module) {
         process.exit(0);
     });
 
+    process.on('uncaughtException', async (error) => {
+        console.error('❌ Uncaught exception:', error);
+        await recorder.cleanup();
+        process.exit(1);
+    });
+
+    process.on('unhandledRejection', async (reason, promise) => {
+        console.error('❌ Unhandled rejection at:', promise, 'reason:', reason);
+        await recorder.cleanup();
+        process.exit(1);
+    });
+
     recorder.init().then(async () => {
         switch(action) {
             case 'start':
@@ -311,6 +452,7 @@ if (require.main === module) {
                 const success = await recorder.startRecording(guildId, channelId, outputDir);
                 if (!success) {
                     console.error('❌ Failed to start recording');
+                    await recorder.cleanup();
                     process.exit(1);
                 }
                 console.log('✅ Recording started successfully');
@@ -340,8 +482,9 @@ if (require.main === module) {
                 console.error('  stop <guildId> - Stop recording');
                 process.exit(1);
         }
-    }).catch(error => {
+    }).catch(async error => {
         console.error('❌ Recorder initialization failed:', error);
+        await recorder.cleanup();
         process.exit(1);
     });
 }
