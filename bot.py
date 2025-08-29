@@ -1,5 +1,4 @@
 # /home/hws/Exceed/bot.py
-
 import discord
 import pytz
 from discord.ext import commands, tasks
