@@ -17,10 +17,16 @@ from google.oauth2 import service_account
 import pickle
 from google.auth.transport.requests import Request
 
-# Google Drive API setup
-SCOPES = ['https://www.googleapis.com/auth/drive']
-SERVICE_ACCOUNT_FILE = 'exceed-interview-sheet-992849d383a9.json'  # Path to your service account credentials
+import os
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
+# Google Drive API setup
+SCOPES = ['https://www.googleapis.com/auth/drive.file']  # Reduced scope
+CREDENTIALS_FILE = 'client_secret_788983093291-4m8ocb4hf9gi3k1pkh5ko283ft26lmak.apps.googleusercontent.com.json'
+TOKEN_FILE = 'token1.pickle'
 
 class Recording(commands.Cog):
     def __init__(self, bot):
@@ -82,6 +88,31 @@ class Recording(commands.Cog):
         except:
             pass
 
+    def _get_oauth_credentials(self):
+        """Get OAuth 2.0 credentials for Google Drive API"""
+        creds = None
+
+        # Check if we have a token file already
+        if os.path.exists(TOKEN_FILE):
+            with open(TOKEN_FILE, 'rb') as token:
+                creds = pickle.load(token)
+
+        # If no valid credentials, let the user log in
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                if not os.path.exists(CREDENTIALS_FILE):
+                    raise FileNotFoundError(f"OAuth credentials file not found: {CREDENTIALS_FILE}")
+
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
+
+            # Save credentials for next run
+            with open(TOKEN_FILE, 'wb') as token:
+                pickle.dump(creds, token)
+
+        return creds
     def _check_system_resources(self):
         try:
             cpu_percent = psutil.cpu_percent(interval=1)
@@ -96,19 +127,16 @@ class Recording(commands.Cog):
             return True, "OK"
 
     async def _upload_to_drive(self, folder_path, recording_id):
-        """Upload a folder to Google Drive"""
+        """Upload a folder to Google Drive using OAuth 2.0"""
         try:
-            # Authenticate with service account
-            creds = service_account.Credentials.from_service_account_file(
-                SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-
+            # Get OAuth credentials
+            creds = await asyncio.to_thread(self._get_oauth_credentials)
             drive_service = build('drive', 'v3', credentials=creds)
 
-            # Create folder in Google Drive
+            # Create folder in Google Drive (in the user's root directory)
             folder_metadata = {
                 'name': f'recording_{recording_id}',
-                'mimeType': 'application/vnd.google-apps.folder',
-                'parents': ['1p-RdA-_iNNTJAkzD6jgPMrQsPGv2LGxA']  # Target folder ID
+                'mimeType': 'application/vnd.google-apps.folder'
             }
 
             folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
@@ -129,9 +157,9 @@ class Recording(commands.Cog):
 
                     media = MediaFileUpload(file_path, resumable=True)
 
-                    # Upload with longer timeout and retry mechanism
+                    # Upload with retry mechanism
                     file = None
-                    for attempt in range(5):  # Try up to 5 times
+                    for attempt in range(5):
                         try:
                             file = drive_service.files().create(
                                 body=file_metadata,
