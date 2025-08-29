@@ -1,4 +1,19 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+// voice_recorder.js — Windows-safe, per-user recording (FFmpeg + prism)
+//
+// Features
+// - Per-user recordings from a Discord voice channel
+// - Windows-safe stop (no POSIX signals) via a stop.flag file
+// - Robust Opus → PCM decode using prism-media, then FFmpeg → WAV/MP3
+// - State persistence to prevent double-recording across processes
+// - Reconnect handling and graceful cleanup
+// - CLI: start <guildId> <channelId> <outputDir> [--format wav|mp3] [--bitrate 192k]
+//
+// Requirements
+//   npm i discord.js @discordjs/voice prism-media
+//   FFmpeg installed and on PATH
+//   DISCORD_BOT_TOKEN in env
+
+const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require('discord.js');
 const {
   joinVoiceChannel,
   VoiceConnectionStatus,
@@ -6,596 +21,588 @@ const {
   entersState,
   createAudioPlayer,
   createAudioResource,
-  AudioPlayerStatus,
   NoSubscriberBehavior,
-  StreamType
+  StreamType,
 } = require('@discordjs/voice');
+const prism = require('prism-media');
 const { Readable } = require('stream');
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// A single Opus "silence" frame keeps the connection alive.
+// --- Constants ---
+const STATE_FILE = path.join(process.cwd(), 'recording_state.json');
+const STOP_FILENAME = 'stop.flag';
+
+// Keep alive with a single Opus silence frame (Craig-style)
 class Silence extends Readable {
   _read() {
-    this.push(Buffer.from([0xF8, 0xFF, 0xFE]));
+    this.push(Buffer.from([0xf8, 0xff, 0xfe]));
   }
 }
 
-// Add state file management
-const STATE_FILE = path.join(process.cwd(), 'recording_state.json');
-
 class VoiceRecorder {
-    constructor(token) {
-        this.client = new Client({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildVoiceStates
-            ]
-        });
-        this.token = token;
+  constructor(token) {
+    this.client = new Client({
+      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+      partials: [Partials.GuildMember, Partials.Channel],
+    });
+    this.token = token;
+    this.activeRecording = null;
+    this.isReady = false;
+    this.shouldExit = false;
+  }
+
+  // --------- Utility: FFmpeg availability ---------
+  checkFFmpeg() {
+    return new Promise((resolve) => {
+      const ffmpeg = spawn('ffmpeg', ['-version'], { stdio: 'ignore' });
+      ffmpeg.on('close', (code) => resolve(code === 0));
+      ffmpeg.on('error', () => resolve(false));
+    });
+  }
+
+  // --------- State file helpers ---------
+  loadState() {
+    try {
+      if (fs.existsSync(STATE_FILE)) {
+        return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      }
+    } catch (e) {
+      console.warn('[state] load error:', e.message);
+    }
+    return null;
+  }
+
+  saveState(recording) {
+    try {
+      if (recording) {
+        const state = {
+          guildId: recording.guildId,
+          channelId: recording.channelId,
+          outputDir: recording.outputDir,
+          startTime: recording.startTime,
+          pid: process.pid,
+          format: recording.format,
+          bitrate: recording.bitrate,
+        };
+        fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+      } else if (fs.existsSync(STATE_FILE)) {
+        fs.unlinkSync(STATE_FILE);
+      }
+    } catch (e) {
+      console.warn('[state] save error:', e.message);
+    }
+  }
+
+  // If another process is recording, return its state; clean up stale state otherwise
+  checkExistingRecording() {
+    const state = this.loadState();
+    if (!state) return null;
+    try {
+      process.kill(state.pid, 0); // check liveness (on Windows this throws if dead)
+      return state;
+    } catch (_) {
+      this.saveState(null);
+      return null;
+    }
+  }
+
+  // --------- Client init ---------
+  async init() {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Login timeout after 30s')), 30000);
+
+      const onReady = () => {
+        clearTimeout(timeout);
+        this.isReady = true;
+        console.log(`[recorder] Logged in as ${this.client.user.tag}`);
+        resolve();
+      };
+
+      // discord.js v14+ uses 'clientReady'
+      this.client.once('clientReady', onReady);
+      // Back-compat just in case user runs older minor
+      this.client.once('ready', onReady);
+
+      this.client.on('error', (err) => {
+        console.error('[discord] client error:', err);
+        if (!this.isReady) {
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+
+      this.client.login(this.token).catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
+  // --------- Recording core ---------
+  async startRecording(guildId, channelId, outputDir, opts = {}) {
+    const format = (opts.format || 'wav').toLowerCase();
+    const bitrate = opts.bitrate || '192k'; // for mp3
+
+    if (!this.isReady) {
+      console.error('[start] client not ready');
+      return false;
+    }
+
+    const ff = await this.checkFFmpeg();
+    if (!ff) {
+      console.error('[start] FFmpeg not found on PATH');
+      return false;
+    }
+
+    const existing = this.checkExistingRecording();
+    if (existing) {
+      console.warn('[start] another recording is already running:', existing);
+      return false;
+    }
+
+    const guild = this.client.guilds.cache.get(guildId);
+    if (!guild) {
+      console.error(`[start] guild not found: ${guildId}`);
+      return false;
+    }
+
+    const channel = guild.channels.cache.get(channelId);
+    if (!channel) {
+      console.error(`[start] channel not found: ${channelId}`);
+      return false;
+    }
+
+    // 2 is GuildVoice (in discord.js v14, ChannelType.GuildVoice = 2)
+    if (channel.type !== 2) {
+      console.error(`[start] channel is not a voice channel (type=${channel.type})`);
+      return false;
+    }
+
+    const me = guild.members.me;
+    if (!me) {
+      console.error('[start] bot member not found in guild');
+      return false;
+    }
+
+    const perms = channel.permissionsFor(me);
+    if (!perms?.has(PermissionsBitField.Flags.Connect) || !perms?.has(PermissionsBitField.Flags.ViewChannel)) {
+      console.error('[start] missing Connect or ViewChannel permission');
+      return false;
+    }
+
+    // Join voice — selfDeaf must be false to receive
+    console.log('[voice] joining channel...');
+    const connection = joinVoiceChannel({
+      channelId: channelId,
+      guildId: guildId,
+      adapterCreator: guild.voiceAdapterCreator,
+      selfDeaf: false,
+      selfMute: false,
+    });
+
+    try {
+      await entersState(connection, VoiceConnectionStatus.Ready, 20000);
+      console.log('[voice] connection ready');
+    } catch (e) {
+      console.error('[voice] failed to enter ready state:', e.message);
+      try { connection.destroy(); } catch (_) {}
+      return false;
+    }
+
+    // Keep connection alive
+    const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+    const silence = new Silence();
+    const resource = createAudioResource(silence, { inputType: StreamType.Opus });
+    connection.subscribe(player);
+    player.play(resource);
+
+    const rec = {
+      connection,
+      outputDir,
+      startTime: Date.now(),
+      userStreams: new Map(),
+      guildId,
+      channelId,
+      player,
+      format,
+      bitrate,
+      stopFlagPath: path.join(outputDir, STOP_FILENAME),
+    };
+    this.activeRecording = rec;
+
+    // Ensure output directory exists
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    this.saveState(rec);
+    this._setupReceiver(rec);
+    this._monitorStopFlag(rec);
+
+    connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      console.log('[voice] disconnected, attempting to recover...');
+      try {
+        await Promise.race([
+          entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+          entersState(connection, VoiceConnectionStatus.Connecting, 5000),
+        ]);
+        console.log('[voice] reconnected');
+      } catch (err) {
+        console.log('[voice] could not reconnect, destroying...');
+        try { connection.destroy(); } catch (_) {}
         this.activeRecording = null;
-        this.isReady = false;
-        this.shouldExit = false;
-    }
+        this.saveState(null);
+      }
+    });
 
-    // Load state from file
-    loadState() {
-        try {
-            if (fs.existsSync(STATE_FILE)) {
-                const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-                console.log('Loaded existing state:', state);
-                return state;
-            }
-        } catch (error) {
-            console.warn('Error loading state:', error.message);
-        }
-        return null;
-    }
+    console.log('[start] recording setup complete; listening for audio');
+    return true;
+  }
 
-    // Save state to file
-    saveState(recording) {
-        try {
-            const state = recording ? {
-                guildId: recording.guildId,
-                channelId: recording.channelId,
-                outputDir: recording.outputDir,
-                startTime: recording.startTime,
-                pid: process.pid
-            } : null;
+// Add this enhanced debugging to your _setupReceiver method
+  _setupReceiver(rec) {
+    const receiver = rec.connection.receiver;
+    console.log('[receiver] setting up speaking listeners');
 
-            if (state) {
-                fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
-                console.log('State saved:', state);
-            } else {
-                // Remove state file when no recording
-                if (fs.existsSync(STATE_FILE)) {
-                    fs.unlinkSync(STATE_FILE);
-                    console.log('State file removed');
-                }
-            }
-        } catch (error) {
-            console.warn('Error saving state:', error.message);
-        }
-    }
+    // Debug: List all current users in voice channel
+    const channel = rec.connection.joinConfig.channelId;
+    const guild = this.client.guilds.cache.get(rec.guildId);
+    const voiceChannel = guild.channels.cache.get(channel);
 
-    // Check if another process is recording
-    checkExistingRecording() {
-        const state = this.loadState();
-        if (!state) return null;
+    console.log(`[receiver] Voice channel members: ${voiceChannel.members.size}`);
+    voiceChannel.members.forEach(member => {
+      console.log(`[receiver] - ${member.user.username} (${member.user.id}) - Bot: ${member.user.bot}`);
+    });
 
-        // Check if the process is still running
-        try {
-            process.kill(state.pid, 0); // Signal 0 just checks if process exists
-            console.log(`Found existing recording process (PID: ${state.pid})`);
-            return state;
-        } catch (error) {
-            console.log('Previous recording process no longer exists');
-            this.saveState(null); // Clean up stale state
-            return null;
-        }
-    }
+    // Debug: Monitor speaking events more verbosely
+    receiver.speaking.on('start', (userId) => {
+      console.log(`[receiver] SPEAKING START detected for user ${userId}`);
 
-    // Check if FFmpeg is available
-    checkFFmpeg() {
-        return new Promise((resolve) => {
-            const ffmpeg = spawn('ffmpeg', ['-version'], { stdio: 'ignore' });
-            ffmpeg.on('close', (code) => {
-                resolve(code === 0);
-            });
-            ffmpeg.on('error', () => {
-                resolve(false);
-            });
+      // Get user info
+      const user = this.client.users.cache.get(userId);
+      if (user) {
+        console.log(`[receiver] User: ${user.username}#${user.discriminator}`);
+      }
+
+      // Guard: already recording this user
+      if (rec.userStreams.has(userId)) {
+        console.log(`[receiver] user ${userId} already being recorded, skipping`);
+        return;
+      }
+
+      const ts = Date.now();
+      const base = path.join(rec.outputDir, `user_${userId}_${ts}`);
+      const filename = rec.format === 'mp3' ? `${base}.mp3` : `${base}.wav`;
+      console.log(`[receiver] Creating file: ${filename}`);
+
+      try {
+        // Subscribe to Opus packets with more verbose logging
+        console.log(`[receiver] Subscribing to audio stream for user ${userId}`);
+        const opusStream = receiver.subscribe(userId, {
+          end: { behavior: EndBehaviorType.AfterSilence, duration: 2000 },
         });
-    }
 
-    async init() {
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                reject(new Error('Login timeout after 30 seconds'));
-            }, 30000);
-
-            const onReady = () => {
-                clearTimeout(timeout);
-                console.log(`Voice recorder logged in as ${this.client.user.tag}`);
-                console.log(`Bot is in ${this.client.guilds.cache.size} guilds`);
-                this.isReady = true;
-                resolve();
-            };
-
-            // Handle both old and new Discord.js versions
-            this.client.once('ready', onReady);
-            this.client.once('clientReady', onReady);
-
-            this.client.on('error', (error) => {
-                console.error('Discord client error:', error);
-                if (!this.isReady) {
-                    clearTimeout(timeout);
-                    reject(error);
-                }
-            });
-
-            this.client.login(this.token).catch((error) => {
-                clearTimeout(timeout);
-                reject(error);
-            });
+        // Add immediate data listener to see if we're getting any data
+        opusStream.on('data', (chunk) => {
+          if (streamData.bytes === 0) {
+            console.log(`[receiver] First audio data received for user ${userId}: ${chunk.length} bytes`);
+          }
+          streamData.bytes += chunk.length;
         });
-    }
 
-    async startRecording(guildId, channelId, outputDir) {
-        try {
-            console.log(`Attempting to start recording for guild ${guildId}, channel ${channelId}`);
+        // Decode Opus → PCM s16le 48kHz stereo
+        const decoder = new prism.opus.Decoder({ rate: 48000, channels: 2, frameSize: 960 });
 
-            // Check FFmpeg availability
-            const hasFFmpeg = await this.checkFFmpeg();
-            console.log(`FFmpeg available: ${hasFFmpeg}`);
-            if (!hasFFmpeg) {
-                console.warn('FFmpeg not found! Audio conversion may fail.');
-            }
+        // Spawn FFmpeg to encode PCM → WAV/MP3
+        const args = ['-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0'];
+        if (rec.format === 'mp3') {
+          args.push('-b:a', rec.bitrate, '-f', 'mp3', '-y', filename);
+        } else {
+          args.push('-acodec', 'pcm_s16le', '-f', 'wav', '-y', filename);
+        }
 
-            // Check if there's already a recording
-            const existingState = this.checkExistingRecording();
-            if (existingState) {
-                console.log('Recording already in progress by another process');
-                return false;
-            }
+        console.log(`[ffmpeg] Starting FFmpeg for ${userId}: ${args.join(' ')}`);
+        const ffmpeg = spawn('ffmpeg', args, { stdio: ['pipe', 'inherit', 'inherit'] });
 
-            if (!this.isReady) {
-                console.error('Client is not ready');
-                return false;
-            }
+        opusStream.pipe(decoder).pipe(ffmpeg.stdin);
 
-            const guild = this.client.guilds.cache.get(guildId);
-            if (!guild) {
-                console.error(`Guild ${guildId} not found`);
-                console.log('Available guilds:', Array.from(this.client.guilds.cache.values()).map(g => `${g.name} (${g.id})`));
-                return false;
-            }
+        const streamData = { opusStream, decoder, ffmpeg, filename, startTime: ts, bytes: 0, pcmBytes: 0 };
+        rec.userStreams.set(userId, streamData);
 
-            const channel = guild.channels.cache.get(channelId);
-            if (!channel) {
-                console.error(`Channel ${channelId} not found`);
-                console.log('Available channels:', Array.from(guild.channels.cache.values()).map(c => `${c.name} (${c.id}) type:${c.type}`));
-                return false;
-            }
+        decoder.on('data', (buf) => {
+          if (streamData.pcmBytes === 0) {
+            console.log(`[receiver] First PCM data decoded for user ${userId}: ${buf.length} bytes`);
+          }
+          streamData.pcmBytes += buf.length;
+        });
 
-            if (channel.type !== 2) {
-                console.error(`Channel ${channel.name} is not a voice channel (type: ${channel.type})`);
-                return false;
-            }
-
-            console.log(`Found voice channel: ${channel.name}`);
-            console.log(`Channel members: ${channel.members.size}`);
-
-            // Check permissions
-            const botMember = guild.members.me;
-            if (!botMember) {
-                console.error('Bot member not found in guild');
-                return false;
-            }
-
-            const permissions = channel.permissionsFor(botMember);
-            console.log(`Bot permissions - Connect: ${permissions.has('Connect')}, Speak: ${permissions.has('Speak')}, ViewChannel: ${permissions.has('ViewChannel')}`);
-
-            if (!permissions.has('Connect') || !permissions.has('ViewChannel')) {
-                console.error('Bot lacks required permissions');
-                return false;
-            }
-
-            console.log('Creating voice connection...');
-
-            // Create voice connection
-            const connection = joinVoiceChannel({
-                channelId: channelId,
-                guildId: guildId,
-                adapterCreator: guild.voiceAdapterCreator,
-                selfDeaf: false,  // MUST be false to receive audio
-                selfMute: false    // We don't need to send audio
-            });
-
-            console.log('Voice connection created, waiting for ready state...');
-
-            let player;
-            // Wait for connection to be ready with longer timeout
+        const endAll = () => {
+          console.log(`[receiver] Ending stream for ${userId} - Total Opus: ${streamData.bytes}b, PCM: ${streamData.pcmBytes}b`);
+          try { opusStream.destroy(); } catch (_) {}
+          try { decoder.end(); } catch (_) {}
+          if (ffmpeg.stdin && !ffmpeg.stdin.destroyed) {
             try {
-                await entersState(connection, VoiceConnectionStatus.Ready, 20000);
-                console.log('Voice connection is ready!');
-                // Keep the voice connection alive like Craig does:
-                player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
-                const silence = new Silence();
-                const resource = createAudioResource(silence, { inputType: StreamType.Opus });
-                connection.subscribe(player);
-                player.play(resource);
+              ffmpeg.stdin.end();
+              console.log(`[ffmpeg] FFmpeg stdin ended for ${userId}`);
+            } catch (_) {}
+          }
+        };
 
-            } catch (error) {
-                console.error('Failed to connect to voice channel:', error.message);
-                connection.destroy();
-                return false;
-            }
+        opusStream.on('end', () => {
+          console.log(`[receiver] OpusStream ended for ${userId}`);
+          endAll();
+        });
 
-            // Set up recording
-            const recording = {
-                connection: connection,
-                outputDir: outputDir,
-                startTime: Date.now(),
-                userStreams: new Map(),
-                guildId: guildId,
-                channelId: channelId,
-                player: player
-            };
+        opusStream.on('close', () => {
+          console.log(`[receiver] OpusStream closed for ${userId}`);
+          endAll();
+        });
 
-            this.activeRecording = recording;
-            this.saveState(recording); // Save state to file
-            this.setupRecording(recording);
+        opusStream.on('error', (e) => {
+          console.warn(`[receiver] OpusStream error ${userId}:`, e.message);
+          endAll();
+        });
 
-            // More resilient reconnect logic recommended by discord.js
-            recording.connection.on(VoiceConnectionStatus.Disconnected, async () => {
-              console.log('Voice connection disconnected, attempting to recover...');
-              try {
-                await Promise.race([
-                  entersState(recording.connection, VoiceConnectionStatus.Signalling, 5_000),
-                  entersState(recording.connection, VoiceConnectionStatus.Connecting, 5_000),
-                ]);
-                console.log('Reconnecting to voice...');
-              } catch (err) {
-                console.log('Could not reconnect, destroying connection:', err?.message || err);
-                try { recording.connection.destroy(); } catch {}
-                this.activeRecording = null;
-                this.saveState(null);
+        decoder.on('error', (e) => {
+          console.warn(`[receiver] Decoder error ${userId}:`, e.message);
+          endAll();
+        });
+
+        ffmpeg.on('close', (code) => {
+          console.log(`[ffmpeg] Process closed for ${userId} (exit code: ${code})`);
+          console.log(`[ffmpeg] Final stats for ${userId} - Opus: ${streamData.bytes}b, PCM: ${streamData.pcmBytes}b`);
+
+          try {
+            if (fs.existsSync(filename)) {
+              const size = fs.statSync(filename).size;
+              console.log(`[ffmpeg] Output file size: ${size} bytes`);
+
+              if (size < 100) {
+                console.warn(`[ffmpeg] Deleting empty file for ${userId} (${size} bytes)`);
+                fs.unlinkSync(filename);
+              } else {
+                console.log(`[ffmpeg] Successfully created: ${path.basename(filename)} (${size} bytes)`);
               }
-            });
-
-            console.log('Recording setup complete - now listening for audio');
-            return true;
-
-        } catch (error) {
-            console.error('Error starting recording:', error);
-            return false;
-        }
-    }
-
-    setupRecording(recording) {
-        const receiver = recording.connection.receiver;
-
-        console.log('Setting up audio receiver...');
-
-        // Listen for users speaking
-        receiver.speaking.on('start', (userId) => {
-            console.log(`User ${userId} started speaking`);
-
-            // Skip if already recording this user
-            if (recording.userStreams.has(userId)) {
-                return;
-            }
-
-            try {
-                // Subscribe to Opus packets from Discord
-                const audioStream = receiver.subscribe(userId, {
-                    end: { behavior: EndBehaviorType.AfterSilence, duration: 2000 }
-                });
-
-                const timestamp = Date.now();
-                const filename = path.join(recording.outputDir, `user_${userId}_${timestamp}.wav`);
-
-                console.log(`Recording Opus stream for user ${userId} -> ${filename}`);
-
-                // Spawn FFmpeg to decode Opus → WAV
-                const ffmpeg = spawn('ffmpeg', [
-                    '-hide_banner',
-                    '-loglevel', 'warning',
-                    '-f', 'opus',       // input is Opus
-                    '-ar', '48000',
-                    '-ac', '2',
-                    '-i', 'pipe:0',
-                    '-acodec', 'pcm_s16le', // decode to WAV PCM
-                    '-f', 'wav',
-                    '-y', filename
-                ], { stdio: ['pipe', 'pipe', 'pipe'] });
-
-                recording.userStreams.set(userId, {
-                    audioStream: audioStream,
-                    ffmpeg: ffmpeg,
-                    filename: filename,
-                    startTime: timestamp
-                });
-
-                let dataSize = 0;
-
-                audioStream.on('data', (chunk) => {
-                    dataSize += chunk.length;
-                    if (ffmpeg.stdin.writable) {
-                        ffmpeg.stdin.write(chunk);
-                    }
-                });
-
-                audioStream.on('end', () => {
-                    console.log(`Audio stream ended for user ${userId}, total ${dataSize} bytes`);
-                    if (ffmpeg.stdin.writable) ffmpeg.stdin.end();
-                });
-
-                audioStream.on('error', (err) => {
-                    console.error(`Audio stream error for user ${userId}:`, err.message);
-                    if (!ffmpeg.killed) ffmpeg.kill();
-                });
-
-                ffmpeg.on('close', (code) => {
-                    console.log(`FFmpeg closed for user ${userId} (code ${code})`);
-                    if (fs.existsSync(filename)) {
-                        const stats = fs.statSync(filename);
-                        if (stats.size < 1000) {
-                            console.warn(`Deleting tiny/empty file for ${userId}`);
-                            fs.unlinkSync(filename);
-                        } else {
-                            console.log(`Final file size: ${stats.size} bytes`);
-                        }
-                    }
-                    recording.userStreams.delete(userId);
-                });
-
-                ffmpeg.stderr.on('data', (data) => {
-                    const msg = data.toString().trim();
-                    if (msg) console.log(`FFmpeg (${userId}): ${msg}`);
-                });
-
-            } catch (err) {
-                console.error(`Error setting up recording for ${userId}:`, err.message);
-            }
-        });
-
-        receiver.speaking.on('end', (userId) => {
-            console.log(`User ${userId} stopped speaking`);
-        });
-    }
-
-    async stopRecording(guildId) {
-        // First check if this process has an active recording
-        if (this.activeRecording && this.activeRecording.guildId === guildId) {
-            console.log('Stopping recording in current process...');
-            return await this._stopCurrentRecording();
-        }
-
-        // Check if another process has the recording
-        const existingState = this.loadState();
-        if (!existingState || existingState.guildId !== guildId) {
-            console.log('No active recording found for guild', guildId);
-            return false;
-        }
-
-        // Try to stop the other process
-        console.log(`Found recording in process ${existingState.pid}, sending stop signal...`);
-        try {
-            // Send SIGUSR1 to signal the recording process to stop
-            process.kill(existingState.pid, 'SIGUSR1');
-
-            // Wait a bit longer for the process to handle the signal
-            await new Promise(resolve => setTimeout(resolve, 5000));
-
-            // Check if state was cleared (indicating successful stop)
-            const newState = this.loadState();
-            if (!newState || newState.guildId !== guildId) {
-                console.log('Recording stopped successfully by other process');
-                return true;
             } else {
-                console.log('Other process did not stop recording, trying SIGTERM...');
-                process.kill(existingState.pid, 'SIGTERM');
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                this.saveState(null); // Force clear state
-                return true;
+              console.warn(`[ffmpeg] Output file does not exist: ${filename}`);
             }
-        } catch (error) {
-            console.warn('Error stopping other process:', error.message);
-            this.saveState(null); // Clear stale state
-            return false;
+          } catch (e) {
+            console.warn(`[ffmpeg] File handling error for ${userId}:`, e.message);
+          }
+          rec.userStreams.delete(userId);
+        });
+
+        ffmpeg.on('error', (e) => {
+          console.error(`[ffmpeg] Process error for ${userId}:`, e.message);
+          endAll();
+        });
+
+      } catch (e) {
+        console.error(`[receiver] Setup failure for ${userId}:`, e.message);
+      }
+    });
+
+    receiver.speaking.on('end', (userId) => {
+      const user = this.client.users.cache.get(userId);
+      const username = user ? user.username : 'Unknown';
+      console.log(`[receiver] SPEAKING END detected for user ${userId} (${username})`);
+    });
+
+    // Additional debugging: Monitor connection state
+    rec.connection.on('stateChange', (oldState, newState) => {
+      console.log(`[voice] Connection state changed: ${oldState.status} -> ${newState.status}`);
+    });
+
+    // Log initial connection state
+    console.log(`[voice] Initial connection state: ${rec.connection.state.status}`);
+  }  _monitorStopFlag(rec) {
+    const interval = setInterval(async () => {
+      if (this.shouldExit) {
+        clearInterval(interval);
+        return;
+      }
+      try {
+        if (fs.existsSync(rec.stopFlagPath)) {
+          console.log('[stop] stop flag detected');
+          clearInterval(interval);
+          await this._stopCurrentRecording();
+          console.log('[stop] stopped via flag');
         }
+      } catch (e) {
+        console.warn('[stop] monitor error:', e.message);
+      }
+    }, 1000);
+  }
+
+  async stopRecording(guildId) {
+    // If current process owns the recording
+    if (this.activeRecording && this.activeRecording.guildId === guildId) {
+      console.log('[stop] stopping current process recording...');
+      return await this._stopCurrentRecording();
     }
 
-    async _stopCurrentRecording() {
-        if (!this.activeRecording) {
-            return false;
-        }
+    const state = this.loadState();
+    if (!state || state.guildId !== guildId) {
+      console.log('[stop] no active recording state for this guild');
+      return false;
+    }
 
-        console.log('Stopping recording...');
-        const recording = this.activeRecording;
+    // Cross-process stop: write stop.flag in outputDir
+    const stopPath = path.join(state.outputDir, STOP_FILENAME);
+    try {
+      fs.writeFileSync(stopPath, '');
+      console.log(`[stop] wrote stop flag at ${stopPath}`);
+    } catch (e) {
+      console.warn('[stop] could not write stop flag:', e.message);
+    }
 
-        // Stop all user streams
-        for (const [userId, streamData] of recording.userStreams) {
-            console.log(`Stopping stream for user ${userId}`);
-            try {
-                if (streamData.audioStream) {
-                    streamData.audioStream.destroy();
-                }
-                if (streamData.ffmpeg && !streamData.ffmpeg.killed) {
-                    if (streamData.ffmpeg.stdin && streamData.ffmpeg.stdin.writable) {
-                        streamData.ffmpeg.stdin.end();
-                    }
-                    setTimeout(() => {
-                        if (!streamData.ffmpeg.killed) {
-                            streamData.ffmpeg.kill('SIGTERM');
-                        }
-                    }, 3000);
-                }
-            } catch (error) {
-                console.warn(`Error stopping stream for user ${userId}:`, error.message);
-            }
-        }
-
-        // 🟢 Stop the silence player if it exists
-        if (recording.player) {
-            try { recording.player.stop(); } catch {}
-        }
-
-        // Wait for processes to finish
-        console.log('Waiting for audio processing to complete...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
-
-        // Destroy connection
-        if (recording.connection) {
-            recording.connection.destroy();
-        }
-
-        this.activeRecording = null;
-        this.saveState(null); // Clear state file
-        console.log('Recording stopped');
+    // Wait up to 8s for state to clear
+    for (let i = 0; i < 16; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      const s = this.loadState();
+      if (!s || s.guildId !== guildId) {
+        console.log('[stop] state cleared (other process stopped)');
         return true;
+      }
     }
 
-    async cleanup() {
-        console.log('Cleaning up recorder...');
+    console.warn('[stop] other process did not clear state in time (it may still be stopping)');
+    // As a last resort, try to terminate (works on Windows but may be abrupt)
+    try {
+      process.kill(state.pid);
+      console.warn('[stop] sent terminate to other process');
+      this.saveState(null);
+      return true;
+    } catch (e) {
+      console.warn('[stop] terminate failed:', e.message);
+      return false;
+    }
+  }
 
-        if (this.activeRecording) {
-            await this._stopCurrentRecording();
-        }
+  async _stopCurrentRecording() {
+    if (!this.activeRecording) return false;
 
-        if (this.client && this.client.isReady()) {
-            try {
-                await this.client.destroy();
-            } catch (error) {
-                console.warn('Error destroying client:', error.message);
-            }
-        }
+    const rec = this.activeRecording;
+    console.log('[cleanup] stopping user streams...');
 
-        console.log('Cleanup complete');
+    for (const [userId, s] of rec.userStreams) {
+      console.log(`[cleanup] user ${userId}`);
+      try { s.opusStream?.destroy(); } catch (_) {}
+      try { s.decoder?.end(); } catch (_) {}
+      try {
+        if (s.ffmpeg && s.ffmpeg.stdin && !s.ffmpeg.stdin.destroyed) s.ffmpeg.stdin.end();
+        setTimeout(() => {
+          try { s.ffmpeg?.kill('SIGTERM'); } catch (_) {}
+        }, 1500);
+      } catch (_) {}
     }
 
-    // Keep the process alive while recording
-    keepAlive() {
-        const checkInterval = setInterval(() => {
-            if (this.shouldExit || !this.activeRecording) {
-                console.log('No active recording or exit requested, stopping...');
-                clearInterval(checkInterval);
-                this.cleanup().then(() => {
-                    process.exit(0);
-                });
-            }
-        }, 5000);
+    console.log('[cleanup] waiting 3s for encoders to flush...');
+    await new Promise((r) => setTimeout(r, 3000));
+
+    if (rec.player) { try { rec.player.stop(); } catch (_) {} }
+    if (rec.connection) { try { rec.connection.destroy(); } catch (_) {} }
+
+    this.activeRecording = null;
+    this.saveState(null);
+    try { if (fs.existsSync(rec.stopFlagPath)) fs.unlinkSync(rec.stopFlagPath); } catch (_) {}
+
+    console.log('[cleanup] recording stopped');
+    return true;
+  }
+
+  async cleanup() {
+    console.log('[cleanup] global cleanup...');
+    if (this.activeRecording) await this._stopCurrentRecording();
+    if (this.client && this.client.isReady()) {
+      try { await this.client.destroy(); } catch (e) { console.warn('[cleanup] client destroy:', e.message); }
     }
+    console.log('[cleanup] done');
+  }
 }
 
-// CLI interface
+// ---------------- CLI ----------------
 if (require.main === module) {
-    const [,, action, ...args] = process.argv;
+  const [,, action, ...rest] = process.argv;
 
-    if (!process.env.DISCORD_BOT_TOKEN) {
-        console.error('DISCORD_BOT_TOKEN environment variable not set');
+  if (!process.env.DISCORD_BOT_TOKEN) {
+    console.error('DISCORD_BOT_TOKEN env not set');
+    process.exit(1);
+  }
+
+  // Parse simple flags from tail (supports --format, --bitrate)
+  const parseFlags = (args) => {
+    const out = { _: [] };
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === '--format') { out.format = (args[++i] || 'wav'); continue; }
+      if (a === '--bitrate') { out.bitrate = (args[++i] || '192k'); continue; }
+      out._.push(a);
+    }
+    return out;
+  };
+
+  const recorder = new VoiceRecorder(process.env.DISCORD_BOT_TOKEN);
+
+  const shutdown = async (signal) => {
+    console.log(`\n[proc] received ${signal}, shutdown...`);
+    recorder.shouldExit = true;
+    await recorder.cleanup();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  process.on('uncaughtException', async (err) => { console.error('[uncaught]', err); await recorder.cleanup(); process.exit(1); });
+  process.on('unhandledRejection', async (reason) => { console.error('[unhandled]', reason); await recorder.cleanup(); process.exit(1); });
+
+  recorder.init().then(async () => {
+    switch (action) {
+      case 'start': {
+        const flags = parseFlags(rest);
+        const [guildId, channelId, outputDir] = flags._;
+        if (!guildId || !channelId || !outputDir) {
+          console.error('Usage: node voice_recorder.js start <guildId> <channelId> <outputDir> [--format wav|mp3] [--bitrate 192k]');
+          process.exit(1);
+        }
+
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+        const ok = await recorder.startRecording(guildId, channelId, outputDir, { format: flags.format, bitrate: flags.bitrate });
+        if (ok) {
+          console.log('[cli] recording started; process will stay alive until stop.flag is created or process is terminated');
+          // Keep process alive
+          setInterval(() => {}, 1 << 30);
+        } else {
+          console.error('[cli] failed to start');
+          await recorder.cleanup();
+          process.exit(1);
+        }
+        break;
+      }
+      case 'stop': {
+        const [guildId] = rest;
+        if (!guildId) {
+          console.error('Usage: node voice_recorder.js stop <guildId>');
+          process.exit(1);
+        }
+        const ok = await recorder.stopRecording(guildId);
+        console.log(ok ? '[cli] stop requested successfully' : '[cli] stop failed or nothing to stop');
+        await recorder.cleanup();
+        process.exit(0);
+      }
+      default:
+        console.error('Usage: node voice_recorder.js <start|stop> ...');
+        console.error('  start <guildId> <channelId> <outputDir> [--format wav|mp3] [--bitrate 192k]');
+        console.error('  stop <guildId>');
+        await recorder.cleanup();
         process.exit(1);
     }
-
-    const recorder = new VoiceRecorder(process.env.DISCORD_BOT_TOKEN);
-
-    // Graceful shutdown handlers
-    const shutdown = async (signal) => {
-        console.log(`\nReceived ${signal}, shutting down gracefully...`);
-        recorder.shouldExit = true;
-        await recorder.cleanup();
-        process.exit(0);
-    };
-
-    // Handle stop signal from other processes
-    process.on('SIGUSR1', async () => {
-        console.log('Received stop signal from another process');
-        recorder.shouldExit = true;
-        if (recorder.activeRecording) {
-            await recorder._stopCurrentRecording();
-        }
-        console.log('Recording stopped by external signal, exiting...');
-        process.exit(0);
-    });
-
-    process.on('SIGINT', () => shutdown('SIGINT'));
-    process.on('SIGTERM', () => shutdown('SIGTERM'));
-
-    process.on('uncaughtException', async (error) => {
-        console.error('Uncaught exception:', error);
-        await recorder.cleanup();
-        process.exit(1);
-    });
-
-    process.on('unhandledRejection', async (reason, promise) => {
-        console.error('Unhandled rejection:', reason);
-        await recorder.cleanup();
-        process.exit(1);
-    });
-
-    recorder.init().then(async () => {
-        console.log('Recorder initialized successfully');
-
-        switch(action) {
-            case 'start':
-                const [guildId, channelId, outputDir] = args;
-                if (!guildId || !channelId || !outputDir) {
-                    console.error('Usage: node voice_recorder.js start <guildId> <channelId> <outputDir>');
-                    process.exit(1);
-                }
-
-                // Ensure output directory exists
-                if (!fs.existsSync(outputDir)) {
-                    fs.mkdirSync(outputDir, { recursive: true });
-                    console.log(`Created output directory: ${outputDir}`);
-                }
-
-                console.log('Attempting to start recording...');
-                const success = await recorder.startRecording(guildId, channelId, outputDir);
-
-                if (success) {
-                    console.log('Recording started successfully! Keeping process alive...');
-                    recorder.keepAlive();
-                } else {
-                    console.error('Failed to start recording');
-                    await recorder.cleanup();
-                    process.exit(1);
-                }
-                break;
-
-            case 'stop':
-                const [stopGuildId] = args;
-                if (!stopGuildId) {
-                    console.error('Usage: node voice_recorder.js stop <guildId>');
-                    process.exit(1);
-                }
-
-                const stopped = await recorder.stopRecording(stopGuildId);
-                if (stopped) {
-                    console.log('Recording stopped successfully');
-                } else {
-                    console.log('No active recording found to stop');
-                }
-
-                await recorder.cleanup();
-                process.exit(0);
-                break;
-
-            default:
-                console.error('Usage: node voice_recorder.js <start|stop> [args...]');
-                console.error('Commands:');
-                console.error('  start <guildId> <channelId> <outputDir> - Start recording');
-                console.error('  stop <guildId> - Stop recording');
-                process.exit(1);
-        }
-    }).catch(async (error) => {
-        console.error('Failed to initialize recorder:', error);
-        await recorder.cleanup();
-        process.exit(1);
-    });
+  }).catch(async (err) => {
+    console.error('[init] failed:', err);
+    await recorder.cleanup();
+    process.exit(1);
+  });
 }
 
 module.exports = VoiceRecorder;

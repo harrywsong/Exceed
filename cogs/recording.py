@@ -413,14 +413,62 @@ class Recording(commands.Cog):
                     stop_process.terminate()
                     self.bot.logger.warning("Stop command timed out")
 
-            # Wait for files to be processed
-            await asyncio.sleep(5)
-
-            # Count audio files
+            # Wait longer for files to be processed and check multiple times
+            max_wait_time = 15  # seconds
+            check_interval = 2  # seconds
             files_created = []
-            if os.path.exists(recording['dir']):
+
+            for i in range(0, max_wait_time, check_interval):
+                await asyncio.sleep(check_interval)
+
+                if os.path.exists(recording['dir']):
+                    all_files = os.listdir(recording['dir'])
+                    # Check for any audio files, including small ones
+                    potential_files = [f for f in all_files if
+                                       f.endswith(('.wav', '.mp3', '.m4a')) and not f.startswith('stop')]
+
+                    # Log what we found
+                    self.bot.logger.info(
+                        f"Check {i // check_interval + 1}: Found {len(potential_files)} potential audio files")
+                    for f in potential_files:
+                        file_path = os.path.join(recording['dir'], f)
+                        if os.path.exists(file_path):
+                            size = os.path.getsize(file_path)
+                            self.bot.logger.info(f"  - {f}: {size} bytes")
+
+                    # If we found files, give them a bit more time to finalize
+                    if potential_files and i < max_wait_time - check_interval:
+                        await asyncio.sleep(check_interval)
+                        # Re-check to see if file sizes changed (still being written)
+                        stable_files = []
+                        for f in potential_files:
+                            file_path = os.path.join(recording['dir'], f)
+                            if os.path.exists(file_path):
+                                new_size = os.path.getsize(file_path)
+                                if new_size > 0:  # Accept any non-empty file
+                                    stable_files.append(f)
+
+                        if stable_files:
+                            files_created = stable_files
+                            break
+                    elif potential_files:
+                        files_created = [f for f in potential_files if
+                                         os.path.getsize(os.path.join(recording['dir'], f)) > 0]
+                        break
+
+            # Final comprehensive check
+            if not files_created and os.path.exists(recording['dir']):
                 all_files = os.listdir(recording['dir'])
-                files_created = [f for f in all_files if f.endswith(('.wav', '.mp3', '.m4a'))]
+                self.bot.logger.info(f"Final check - All files in directory: {all_files}")
+
+                # Look for ANY audio files, even 0-byte ones for debugging
+                for f in all_files:
+                    if f.endswith(('.wav', '.mp3', '.m4a')):
+                        file_path = os.path.join(recording['dir'], f)
+                        size = os.path.getsize(file_path)
+                        self.bot.logger.info(f"Audio file found: {f} ({size} bytes)")
+                        if size > 0:
+                            files_created.append(f)
 
             duration = datetime.now() - recording['start_time']
             duration_str = str(duration).split('.')[0]
@@ -445,9 +493,21 @@ class Recording(commands.Cog):
             else:
                 embed.add_field(name="Status", value="❌ No audio files were created", inline=False)
                 embed.color = discord.Color.red()
+
+                # More detailed debugging info
+                if os.path.exists(recording['dir']):
+                    all_files = os.listdir(recording['dir'])
+                    debug_info = f"Files in directory: {len(all_files)}\n"
+                    for f in all_files[:5]:  # Show first 5 files
+                        size = os.path.getsize(os.path.join(recording['dir'], f))
+                        debug_info += f"• {f} ({size} bytes)\n"
+                    if len(all_files) > 5:
+                        debug_info += f"• ... and {len(all_files) - 5} more"
+                    embed.add_field(name="Debug Info", value=f"```{debug_info}```", inline=False)
+
                 embed.add_field(
                     name="Possible Issues",
-                    value="• No one spoke during recording\n• FFmpeg not installed\n• Permission issues",
+                    value="• No one spoke during recording\n• Audio files were too small and deleted\n• FFmpeg processing issues\n• Permission issues",
                     inline=False
                 )
 
@@ -471,7 +531,6 @@ class Recording(commands.Cog):
                 del self.recordings[interaction.guild.id]
             await interaction.followup.send("⚠️ Recording stopped but there may have been processing errors.",
                                             ephemeral=True)
-
 
 async def setup(bot):
     await bot.add_cog(Recording(bot))
