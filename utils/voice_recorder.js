@@ -442,7 +442,7 @@ class VoiceRecorder {
 
   // --------- Recording core ---------
   async startRecording(guildId, channelId, outputDir, opts = {}) {
-    const format = (opts.format || 'wav').toLowerCase();
+    const format = (opts.format || 'mp3').toLowerCase();
     const bitrate = opts.bitrate || '192k';
 
     if (!this.isReady) {
