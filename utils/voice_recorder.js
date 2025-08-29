@@ -256,10 +256,8 @@ class VoiceRecorder {
             try {
                 // Create audio stream for this user with better options
                 const audioStream = receiver.subscribe(userId, {
-                    end: {
-                        behavior: EndBehaviorType.AfterSilence,
-                        duration: 2000  // Wait 2 seconds after silence before ending
-                    }
+                    end: { behavior: EndBehaviorType.AfterSilence, duration: 2000 },
+                    encoder: 'opus' // <--- force opus packets
                 });
 
                 const timestamp = Date.now();
