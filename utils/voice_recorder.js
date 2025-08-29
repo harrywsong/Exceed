@@ -1,4 +1,4 @@
-// voice_recorder.js — 긴 녹음(1-2시간+) 및 한국어 지원 버전
+// voice_recorder.js — 긴 녹음(1-2시간+) 및 한국어 지원 버전 - 동기화된 트랙
 //
 // 주요 수정사항:
 // 1. 1-2시간 이상의 긴 녹음을 위한 메모리 및 성능 최적화
@@ -7,6 +7,8 @@
 //    - 폴더: YYYY-MM-DD_HH-MM-SS 형식
 //    - 파일: user_(discord_id)_(discord_username).mp3
 // 4. 메모리 사용량 모니터링 및 가비지 컬렉션 최적화
+// 5. 동기화된 트랙: 모든 사용자 트랙이 녹음 시작 시간부터 동일한 길이로 생성
+// 6. 연속 녹음: 사용자 부재 시에도 침묵으로 트랙 연속성 유지
 
 const { Client, GatewayIntentBits, Partials, PermissionsBitField } = require('discord.js');
 const {
@@ -44,7 +46,7 @@ const GC_INTERVAL = 120000; // 2분마다 가비지 컬렉션
 function sanitizeKoreanUsername(username) {
   // 한국어, 영어, 숫자, 일부 특수문자만 허용
   return username
-    .replace(/[^\w가-힣ㄱ-ㅎㅏ-ㅣ\-_]/g, '') // 허용되지 않은 문자 제거
+    .replace(/[^\wㄱ-힣ㄱ-ㅎㅏ-ㅣ\-_]/g, '') // 허용되지 않은 문자 제거
     .substring(0, 32); // 최대 32자로 제한
 }
 
@@ -111,7 +113,7 @@ class OptimizedSilenceGenerator extends Readable {
   }
 }
 
-// 메모리 최적화된 오디오 믹서 (긴 녹음용)
+// 메모리 최적화된 오디오 믹서 (연속 녹음용)
 class MemoryOptimizedAudioMixer extends PassThrough {
   constructor(options = {}) {
     super({
@@ -122,14 +124,15 @@ class MemoryOptimizedAudioMixer extends PassThrough {
     this.silenceGenerator = null;
     this.currentVoiceStream = null;
     this.destroyed = false;
+    this.isContinuousRecording = true; // 항상 녹음 (부재 시에도 침묵 기록)
 
-    this._startSilenceMode();
+    this._startContinuousRecording();
   }
 
-  _startSilenceMode() {
+  _startContinuousRecording() {
     if (this.destroyed) return;
 
-    console.log('[믹서] 침묵 모드 시작');
+    console.log('[믹서] 연속 녹음 모드 시작 (침묵/음성 모두 기록)');
     this.isReceivingVoice = false;
 
     if (this.silenceGenerator) {
@@ -139,7 +142,8 @@ class MemoryOptimizedAudioMixer extends PassThrough {
     this.silenceGenerator = new OptimizedSilenceGenerator();
 
     this.silenceGenerator.on('data', (chunk) => {
-      if (!this.isReceivingVoice && !this.destroyed) {
+      // 연속 녹음을 위해 항상 데이터 기록
+      if (!this.destroyed) {
         this.write(chunk);
       }
     });
@@ -152,10 +156,10 @@ class MemoryOptimizedAudioMixer extends PassThrough {
   switchToVoice(voiceStream) {
     if (this.destroyed) return;
 
-    console.log('[믹서] 음성 모드로 전환');
+    console.log('[믹서] 음성 모드로 전환 (연속 녹음 유지)');
     this.isReceivingVoice = true;
 
-    // 침묵 생성 중지
+    // 침묵 생성 중지하지만 스트림은 계속 유지
     if (this.silenceGenerator) {
       this.silenceGenerator.destroy();
       this.silenceGenerator = null;
@@ -164,20 +168,48 @@ class MemoryOptimizedAudioMixer extends PassThrough {
     this.currentVoiceStream = voiceStream;
 
     voiceStream.on('data', (chunk) => {
-      if (this.isReceivingVoice && !this.destroyed) {
+      if (!this.destroyed) {
         this.write(chunk);
       }
     });
 
     voiceStream.on('end', () => {
-      console.log('[믹서] 음성 스트림 종료, 침묵 모드로 복귀');
-      this._startSilenceMode();
+      console.log('[믹서] 음성 스트림 종료, 침묵 모드로 복귀 (연속 녹음 유지)');
+      this._startContinuousRecording();
     });
 
     voiceStream.on('error', (err) => {
       console.warn('[믹서] 음성 스트림 오류:', err.message);
-      this._startSilenceMode();
+      this._startContinuousRecording();
     });
+  }
+
+  // 수동 침묵 주입 (간격 채우기용)
+  injectSilence(durationMs) {
+    if (this.destroyed) return;
+
+    const totalSamples = Math.floor(SAMPLE_RATE * durationMs / 1000);
+    const totalBytes = totalSamples * CHANNELS * BYTES_PER_SAMPLE;
+
+    // 메모리 문제 방지를 위해 1초 단위로 침묵 주입
+    const chunkDurationMs = 1000;
+    const chunkSamples = Math.floor(SAMPLE_RATE * chunkDurationMs / 1000);
+    const chunkBytes = chunkSamples * CHANNELS * BYTES_PER_SAMPLE;
+    const silenceChunk = Buffer.alloc(chunkBytes, 0);
+
+    let remainingBytes = totalBytes;
+    while (remainingBytes > 0 && !this.destroyed) {
+      const currentChunkSize = Math.min(remainingBytes, chunkBytes);
+      if (currentChunkSize === chunkBytes) {
+        this.write(Buffer.from(silenceChunk));
+      } else {
+        const partialChunk = Buffer.alloc(currentChunkSize, 0);
+        this.write(partialChunk);
+      }
+      remainingBytes -= currentChunkSize;
+    }
+
+    console.log(`[믹서] ${Math.round(durationMs/1000)}초 침묵 수동 주입 완료`);
   }
 
   destroy() {
@@ -204,12 +236,14 @@ class UserTrackManager {
     this.outputDir = outputDir;
     this.format = format;
     this.bitrate = bitrate;
-    this.recordingStartTime = recordingStartTime;
+    this.recordingStartTime = recordingStartTime; // 전역 녹음 시작 시간
 
     this.isPresent = false;
     this.isReceivingAudio = false;
     this.joinTime = null;
     this.leaveTime = null;
+    this.presenceHistory = []; // 입장/퇴장 이벤트 추적 (침묵 계산용)
+    this.hasStartedRecording = false; // FFmpeg 프로세스 시작 여부 추적
 
     // 메모리 최적화된 오디오 파이프라인
     this.audioMixer = new MemoryOptimizedAudioMixer();
@@ -229,12 +263,195 @@ class UserTrackManager {
 
     console.log(`[트랙] 사용자 ${this.username}(${userId})의 파일: ${path.basename(this.filename)}`);
 
-    this._setupFFmpeg();
     this._setupMemoryMonitoring();
   }
 
+  _setupMemoryMonitoring() {
+    // 긴 녹음을 위한 메모리 모니터링
+    this.memoryCheckInterval = setInterval(() => {
+      const memoryUsage = process.memoryUsage();
+      const memoryMB = Math.round(memoryUsage.heapUsed / 1024 / 1024);
+
+      if (memoryMB > MAX_MEMORY_USAGE_MB) {
+        console.warn(`[메모리] 사용자 ${this.username} 높은 메모리 사용량: ${memoryMB}MB`);
+
+        // 강제 가비지 컬렉션 시도
+        if (global.gc) {
+          global.gc();
+          console.log(`[메모리] 가비지 컬렉션 실행됨`);
+        }
+      }
+    }, MEMORY_CHECK_INTERVAL);
+  }
+
+  userJoined(joinTime = Date.now()) {
+    const joinDate = new Date(joinTime).toLocaleString('ko-KR');
+    console.log(`[트랙] 사용자 ${this.username}가 ${joinDate}에 입장`);
+
+    this.isPresent = true;
+    this.joinTime = joinTime;
+
+    // 출입 이벤트 기록
+    this.presenceHistory.push({
+      type: 'join',
+      timestamp: joinTime
+    });
+
+    // 첫 입장이고 아직 녹음을 시작하지 않았다면 초기화
+    if (!this.hasStartedRecording) {
+      this._initializeRecording(joinTime);
+    }
+  }
+
+  userLeft(leaveTime = Date.now()) {
+    const leaveDate = new Date(leaveTime).toLocaleString('ko-KR');
+    console.log(`[트랙] 사용자 ${this.username}가 ${leaveDate}에 퇴장`);
+
+    this.isPresent = false;
+    this.leaveTime = leaveTime;
+
+    // 출입 이벤트 기록
+    this.presenceHistory.push({
+      type: 'leave',
+      timestamp: leaveTime
+    });
+
+    this._stopCurrentAudioStream();
+    // 주의: 트랙을 완전히 중지하지 않고 침묵으로 계속 진행
+  }
+
+  _initializeRecording(userJoinTime = Date.now()) {
+    if (this.hasStartedRecording) return;
+
+    // 녹음 시작부터 사용자 첫 입장까지 필요한 침묵 계산
+    const silenceNeeded = userJoinTime - this.recordingStartTime;
+
+    this._setupFFmpeg();
+
+    if (silenceNeeded > 0) {
+      console.log(`[트랙] 사용자 ${this.username}: ${Math.round(silenceNeeded/1000)}초 초기 침묵 추가`);
+      this._addInitialSilence(silenceNeeded);
+    }
+
+    this.hasStartedRecording = true;
+  }
+
+  _addInitialSilence(silenceDurationMs) {
+    // 침묵 기간에 필요한 정확한 샘플 수 계산
+    const totalSamples = Math.floor(SAMPLE_RATE * silenceDurationMs / 1000);
+    const totalBytes = totalSamples * CHANNELS * BYTES_PER_SAMPLE;
+
+    // 메모리 문제 방지를 위해 청크 단위로 침묵 생성
+    const chunkSize = SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE; // 1초 청크
+    const chunks = Math.floor(totalBytes / chunkSize);
+    const remainder = totalBytes % chunkSize;
+
+    console.log(`[침묵] 사용자 ${this.username}: ${totalBytes}바이트 침묵 생성 중`);
+
+    // 침묵으로 미리 채우기 - 녹음 시작부터 동기화 보장
+    const silenceBuffer = Buffer.alloc(chunkSize, 0);
+
+    // 초기 침묵 청크 작성
+    for (let i = 0; i < chunks; i++) {
+      this.audioMixer.injectSilence(1000); // 1초씩 주입
+    }
+
+    // 나머지가 있으면 작성
+    if (remainder > 0) {
+      const remainderMs = (remainder / (SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE)) * 1000;
+      this.audioMixer.injectSilence(remainderMs);
+    }
+  }
+
+  startReceivingAudio(opusStream) {
+    console.log(`[트랙] 사용자 ${this.username} 오디오 수신 시작`);
+
+    // 녹음이 초기화되었는지 확인
+    if (!this.hasStartedRecording) {
+      this._initializeRecording();
+    }
+
+    // 사용자가 부재였다면 간격에 대한 침묵 추가
+    this._addSilenceForAbsence();
+
+    this._stopCurrentAudioStream();
+
+    this.isReceivingAudio = true;
+    this.currentOpusStream = opusStream;
+
+    // Opus 디코더 설정 (긴 녹음 최적화)
+    this.currentDecoder = new prism.opus.Decoder({
+      rate: SAMPLE_RATE,
+      channels: CHANNELS,
+      frameSize: FRAME_SIZE
+    });
+
+    this.currentDecoder.on('error', (err) => {
+      console.error(`[디코더] 사용자 ${this.username} 오류:`, err.message);
+      this._stopCurrentAudioStream();
+    });
+
+    opusStream.on('end', () => {
+      console.log(`[Opus] 사용자 ${this.username} 스트림 종료`);
+      this._stopCurrentAudioStream();
+    });
+
+    opusStream.on('error', (err) => {
+      console.error(`[Opus] 사용자 ${this.username} 스트림 오류:`, err.message);
+      this._stopCurrentAudioStream();
+    });
+
+    // 스트림 파이프라인: Opus -> 디코더 -> 믹서
+    opusStream.pipe(this.currentDecoder);
+    this.audioMixer.switchToVoice(this.currentDecoder);
+  }
+
+  _addSilenceForAbsence() {
+    const now = Date.now();
+
+    // 마지막 퇴장 시간을 찾고 침묵이 필요한 기간 계산
+    const lastLeave = this.presenceHistory
+      .filter(event => event.type === 'leave')
+      .pop();
+
+    if (lastLeave && !this.isPresent) {
+      const absenceDuration = now - lastLeave.timestamp;
+      if (absenceDuration > 1000) { // 1초보다 긴 간격에만 침묵 추가
+        this._addSilencePeriod(absenceDuration);
+        console.log(`[침묵] 사용자 ${this.username}: ${Math.round(absenceDuration/1000)}초 부재 침묵 추가`);
+      }
+    }
+  }
+
+  _addSilencePeriod(durationMs) {
+    this.audioMixer.injectSilence(durationMs);
+  }
+
+  stopReceivingAudio() {
+    console.log(`[트랙] 사용자 ${this.username} 오디오 수신 중지`);
+    this._stopCurrentAudioStream();
+  }
+
+  _stopCurrentAudioStream() {
+    this.isReceivingAudio = false;
+
+    if (this.currentOpusStream) {
+      try {
+        this.currentOpusStream.destroy();
+      } catch (_) {}
+      this.currentOpusStream = null;
+    }
+
+    if (this.currentDecoder) {
+      try {
+        this.currentDecoder.end();
+      } catch (_) {}
+      this.currentDecoder = null;
+    }
+  }
+
   _setupFFmpeg() {
-    // 긴 녹음을 위한 최적화된 FFmpeg 설정
+    // 동기화된 녹음을 위한 향상된 FFmpeg 설정
     const args = [
       '-f', 's16le',
       '-ar', SAMPLE_RATE.toString(),
@@ -296,97 +513,6 @@ class UserTrackManager {
     this.audioMixer.pipe(this.ffmpegProcess.stdin);
   }
 
-  _setupMemoryMonitoring() {
-    // 긴 녹음을 위한 메모리 모니터링
-    this.memoryCheckInterval = setInterval(() => {
-      const memoryUsage = process.memoryUsage();
-      const memoryMB = Math.round(memoryUsage.heapUsed / 1024 / 1024);
-
-      if (memoryMB > MAX_MEMORY_USAGE_MB) {
-        console.warn(`[메모리] 사용자 ${this.username} 높은 메모리 사용량: ${memoryMB}MB`);
-
-        // 강제 가비지 컬렉션 시도
-        if (global.gc) {
-          global.gc();
-          console.log(`[메모리] 가비지 컬렉션 실행됨`);
-        }
-      }
-    }, MEMORY_CHECK_INTERVAL);
-  }
-
-  userJoined(joinTime = Date.now()) {
-    const joinDate = new Date(joinTime).toLocaleString('ko-KR');
-    console.log(`[트랙] 사용자 ${this.username}가 ${joinDate}에 입장`);
-    this.isPresent = true;
-    this.joinTime = joinTime;
-  }
-
-  userLeft(leaveTime = Date.now()) {
-    const leaveDate = new Date(leaveTime).toLocaleString('ko-KR');
-    console.log(`[트랙] 사용자 ${this.username}가 ${leaveDate}에 퇴장`);
-    this.isPresent = false;
-    this.leaveTime = leaveTime;
-    this._stopCurrentAudioStream();
-  }
-
-  startReceivingAudio(opusStream) {
-    console.log(`[트랙] 사용자 ${this.username} 오디오 수신 시작`);
-
-    this._stopCurrentAudioStream();
-
-    this.isReceivingAudio = true;
-    this.currentOpusStream = opusStream;
-
-    // Opus 디코더 설정 (긴 녹음 최적화)
-    this.currentDecoder = new prism.opus.Decoder({
-      rate: SAMPLE_RATE,
-      channels: CHANNELS,
-      frameSize: FRAME_SIZE
-    });
-
-    this.currentDecoder.on('error', (err) => {
-      console.error(`[디코더] 사용자 ${this.username} 오류:`, err.message);
-      this._stopCurrentAudioStream();
-    });
-
-    opusStream.on('end', () => {
-      console.log(`[Opus] 사용자 ${this.username} 스트림 종료`);
-      this._stopCurrentAudioStream();
-    });
-
-    opusStream.on('error', (err) => {
-      console.error(`[Opus] 사용자 ${this.username} 스트림 오류:`, err.message);
-      this._stopCurrentAudioStream();
-    });
-
-    // 스트림 파이프라인: Opus -> 디코더 -> 믹서
-    opusStream.pipe(this.currentDecoder);
-    this.audioMixer.switchToVoice(this.currentDecoder);
-  }
-
-  stopReceivingAudio() {
-    console.log(`[트랙] 사용자 ${this.username} 오디오 수신 중지`);
-    this._stopCurrentAudioStream();
-  }
-
-  _stopCurrentAudioStream() {
-    this.isReceivingAudio = false;
-
-    if (this.currentOpusStream) {
-      try {
-        this.currentOpusStream.destroy();
-      } catch (_) {}
-      this.currentOpusStream = null;
-    }
-
-    if (this.currentDecoder) {
-      try {
-        this.currentDecoder.end();
-      } catch (_) {}
-      this.currentDecoder = null;
-    }
-  }
-
   cleanup() {
     console.log(`[트랙] 사용자 ${this.username} 정리 중`);
 
@@ -441,7 +567,7 @@ class UserTrackManager {
         } else if (durationEstimate > 7200) { // 2시간 초과
           console.warn(`[트랙] 사용자 ${this.username} 파일이 의심스럽게 큼 - 타이밍 문제 가능성`);
         } else {
-          console.log(`[트랙] 사용자 ${this.username} 파일이 정상적으로 보임`);
+          console.log(`[트랙] 사용자 ${this.username} 파일이 정상적으로 보관`);
         }
       } else {
         console.warn(`[트랙] 사용자 ${this.username} 출력 파일 누락: ${this.filename}`);
@@ -655,7 +781,7 @@ class VoiceRecorder {
     this._setupVoiceStateTracking(rec);
     this._monitorStopFlag(rec);
 
-    // 기존 사용자들을 위한 트랙 초기화
+    // 기존 사용자들을 위한 트랙 초기화 (동기화된 시작 시간으로)
     for (const member of channel.members.values()) {
       if (!member.user.bot) {
         await this._initializeUserTrack(rec, member.user.id, member.user.username);
@@ -691,10 +817,13 @@ class VoiceRecorder {
         rec.outputDir,
         rec.format,
         rec.bitrate,
-        rec.recordingStartTime
+        rec.recordingStartTime // 전역 녹음 시작 시간 전달
       );
       rec.userTracks.set(userId, trackManager);
-      trackManager.userJoined(rec.recordingStartTime);
+
+      // 즉시 녹음 초기화 (녹음 시작부터 적절한 침묵 패딩과 함께)
+      const currentTime = Date.now();
+      trackManager.userJoined(currentTime);
     }
   }
 
@@ -710,19 +839,27 @@ class VoiceRecorder {
 
       const now = Date.now();
 
+      // 사용자가 녹음 채널에 입장
       if (!oldState.channelId && newState.channelId === rec.channelId) {
         console.log(`[음성] 사용자 ${username}(${userId})가 녹음 채널에 입장`);
-        await this._initializeUserTrack(rec, userId, username);
+
+        // 트랙이 존재하지 않으면 초기화
+        if (!rec.userTracks.has(userId)) {
+          await this._initializeUserTrack(rec, userId, username);
+        }
+
         const track = rec.userTracks.get(userId);
-        if (track && !track.isPresent) {
+        if (track) {
           track.userJoined(now);
         }
       }
+      // 사용자가 녹음 채널에서 퇴장
       else if (oldState.channelId === rec.channelId && !newState.channelId) {
         console.log(`[음성] 사용자 ${username}(${userId})가 녹음 채널에서 퇴장`);
         const track = rec.userTracks.get(userId);
-        if (track && track.isPresent) {
+        if (track) {
           track.userLeft(now);
+          // 주의: 트랙을 완전히 중지하지 않음 - 침묵으로 계속 진행
         }
       }
     });
