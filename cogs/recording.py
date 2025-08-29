@@ -108,6 +108,25 @@ class Recording(commands.Cog):
             return
 
         channel = interaction.user.voice.channel
+
+        # Add this debugging section after: channel = interaction.user.voice.channel
+        try:
+            # Log detailed channel information
+            self.bot.logger.info(f"Debug - Guild ID: {interaction.guild.id}")
+            self.bot.logger.info(f"Debug - Channel ID: {channel.id}")
+            self.bot.logger.info(f"Debug - Channel Name: {channel.name}")
+            self.bot.logger.info(f"Debug - User in channel: {interaction.user.display_name}")
+            self.bot.logger.info(f"Debug - Bot can see channel: {channel is not None}")
+
+            # Check bot permissions
+            bot_member = interaction.guild.get_member(self.bot.user.id)
+            if bot_member:
+                permissions = channel.permissions_for(bot_member)
+                self.bot.logger.info(
+                    f"Debug - Bot permissions - Connect: {permissions.connect}, Speak: {permissions.speak}")
+
+        except Exception as debug_error:
+            self.bot.logger.error(f"Debug error: {debug_error}")
         recording_id = str(int(datetime.now().timestamp()))
         recording_dir = os.path.join(self.recordings_path, recording_id)
         os.makedirs(recording_dir, exist_ok=True)
