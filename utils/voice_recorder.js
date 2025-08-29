@@ -368,8 +368,8 @@ class VoiceRecorder {
             // Send SIGUSR1 to signal the recording process to stop
             process.kill(existingState.pid, 'SIGUSR1');
 
-            // Wait a bit for the process to handle the signal
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Wait a bit longer for the process to handle the signal
+            await new Promise(resolve => setTimeout(resolve, 5000));
 
             // Check if state was cleared (indicating successful stop)
             const newState = this.loadState();
@@ -379,7 +379,7 @@ class VoiceRecorder {
             } else {
                 console.log('Other process did not stop recording, trying SIGTERM...');
                 process.kill(existingState.pid, 'SIGTERM');
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, 3000));
                 this.saveState(null); // Force clear state
                 return true;
             }
@@ -486,10 +486,12 @@ if (require.main === module) {
     // Handle stop signal from other processes
     process.on('SIGUSR1', async () => {
         console.log('Received stop signal from another process');
+        recorder.shouldExit = true;
         if (recorder.activeRecording) {
             await recorder._stopCurrentRecording();
         }
-        console.log('Recording stopped by external signal');
+        console.log('Recording stopped by external signal, exiting...');
+        process.exit(0);
     });
 
     process.on('SIGINT', () => shutdown('SIGINT'));
