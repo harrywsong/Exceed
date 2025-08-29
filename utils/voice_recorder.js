@@ -1,5 +1,10 @@
 const { Client, GatewayIntentBits } = require('discord.js');
-const { joinVoiceChannel, VoiceConnectionStatus, EndBehaviorType } = require('@discordjs/voice');
+const {
+    joinVoiceChannel,
+    VoiceConnectionStatus,
+    EndBehaviorType,
+    entersState  // Add this missing import
+} = require('@discordjs/voice');
 const prism = require('prism-media');
 const fs = require('fs');
 const path = require('path');
