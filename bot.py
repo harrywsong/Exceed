@@ -638,6 +638,7 @@ class MyBot(commands.Bot):
             'cogs.welcomegoodbye',
             'cogs.message_history',
             'cogs.recording',
+            'cogs.admin',
         ]
 
         # Casino extensions (depend on coins)
@@ -646,7 +647,13 @@ class MyBot(commands.Bot):
             'cogs.casino_blackjack',
             'cogs.casino_roulette',
             'cogs.casino_dice',
-            'cogs.casino_slots_cards'
+            'cogs.casino_coinflip',
+            'cogs.casino_hilow',
+            'cogs.casino_lottery',
+            'cogs.casino_crash',
+            'cogs.casino_minesweeper',
+            'cogs.casino_slots',
+            'cogs.casino_bingo'
         ]
 
         # Database-dependent extensions

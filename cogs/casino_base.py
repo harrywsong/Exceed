@@ -68,7 +68,7 @@ class CasinoBaseCog(commands.Cog):
         """
         # Check cooldown
         if not self.check_game_cooldown(interaction.user.id, game_type):
-            return False, "⏳ 잠시만 기다려주세요!"
+            return False, "⏳ 잠시 기다렸다가 다시 해주세요!"
 
         # Check channel restriction
         if not self.check_channel_restriction(game_type, interaction.channel.id):

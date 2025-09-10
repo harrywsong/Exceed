@@ -85,26 +85,26 @@ class BlackjackView(discord.ui.View):
         dealer_value = self.calculate_hand_value(self.dealer_hand)
 
         if self.player_blackjack and self.dealer_blackjack and final:
-            title = "🤝 Both Blackjack - Push!"
+            title = "🤝 양쪽 블랙잭 - Push! (무승부)"
             color = discord.Color.blue()
         elif self.player_blackjack and not self.dealer_blackjack:
-            title = "🎊 BLACKJACK!"
+            title = "🎊 블랙잭!"
             color = discord.Color.gold()
         elif player_value > 21:
-            title = "💥 BUST!"
+            title = "💥 버스트!"
             color = discord.Color.red()
         elif final and dealer_value > 21:
-            title = "🎉 Dealer Bust - You Win!"
+            title = "🎉 딜러 버스트 - 승리!"
             color = discord.Color.green()
         elif final:
             if player_value > dealer_value:
-                title = "🏆 Victory!"
+                title = "🏆 승리!"
                 color = discord.Color.green()
             elif player_value < dealer_value:
-                title = "😞 Dealer Wins"
+                title = "😞 딜러 승리"
                 color = discord.Color.red()
             else:
-                title = "🤝 Push (Tie)"
+                title = "🤝 Push (무승부)"
                 color = discord.Color.blue()
         else:
             title = "🃏 블랙잭"
@@ -316,9 +316,9 @@ class BlackjackCog(commands.Cog):
         self.logger.info("블랙잭 시스템이 초기화되었습니다.")
 
     @app_commands.command(name="블랙잭", description="전문적인 블랙잭 게임 (더블다운, 보험 포함)")
-    @app_commands.describe(bet="베팅할 코인 수 (20-5000)")
+    @app_commands.describe(bet="베팅할 코인 수 (20-200)")
     async def blackjack(self, interaction: discord.Interaction, bet: int):
-        if bet < 20 or bet > 5000:
+        if bet < 20 or bet > 200:
             await interaction.response.send_message("❌ 베팅은 20~5000 코인 사이만 가능합니다.", ephemeral=True)
             return
 

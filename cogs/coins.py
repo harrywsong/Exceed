@@ -79,14 +79,14 @@ class CoinsView(discord.ui.View):
                 await self.bot.pool.execute("""
                         INSERT INTO coin_transactions (user_id, amount, transaction_type, description)
                         VALUES ($1, $2, $3, $4)
-                    """, user_id, 10, "daily_claim", "Daily coin claim")
+                    """, user_id, 50, "daily_claim", "Daily coin claim")
 
                 # Trigger leaderboard update
                 self.bot.loop.create_task(coins_cog.schedule_leaderboard_update())
 
                 embed = discord.Embed(
                     title="💰 일일 코인 지급!",
-                    description=f"✅ 10 코인을 받았습니다!\n현재 잔액: **{result['coins']} 코인**",
+                    description=f"✅ 50 코인을 받았습니다!\n현재 잔액: **{result['coins']} 코인**",
                     color=discord.Color.gold(),
                     timestamp=datetime.now(timezone.utc)
                 )
