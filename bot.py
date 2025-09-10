@@ -177,6 +177,9 @@ def bot_status():
 
         latency_ms = round(bot.latency * 1000, 2) if bot.latency else 'N/A'
 
+        # Check if coins system is loaded
+        coins_loaded = 'cogs.coins' in bot.extensions
+
         return jsonify({
             "status": "Online",
             "uptime": uptime_str,
@@ -185,6 +188,7 @@ def bot_status():
             "user_count": len(bot.users),
             "commands_used_today": getattr(bot, 'total_commands_today', 0),
             "database_available": bool(bot.pool),
+            "coins_system_loaded": coins_loaded,
             "cogs_loaded": list(bot.extensions.keys()),
             "message": "Bot is running and ready."
         })
@@ -591,9 +595,20 @@ class MyBot(commands.Bot):
         # Add persistent views
         try:
             self.add_view(PersistentAchievementView(self))
-            self.logger.info("✅ Persistent AchievementView가 성공적으로 등록되었습니다.")
+
+            # Add coins persistent views
+            from cogs.coins import CoinsView, LeaderboardView
+            self.add_view(CoinsView(self))
+            self.add_view(LeaderboardView(self))
+
+            self.logger.info("✅ Persistent views가 성공적으로 등록되었습니다.")
         except Exception as e:
             self.logger.error(f"❌ Persistent view 등록 실패: {e}", exc_info=True)
+
+        import pathlib
+        data_dir = pathlib.Path("data")
+        data_dir.mkdir(exist_ok=True)
+        self.logger.info("✅ 데이터 디렉토리 준비 완료")
 
     async def _handle_startup_logs(self):
         """Handle existing log files on startup"""
@@ -615,13 +630,23 @@ class MyBot(commands.Bot):
 
     async def _load_extensions_with_dependencies(self):
         """Load extensions with proper dependency order"""
-        # Core extensions (no dependencies)
+        # Core extensions (no dependencies) - COINS MUST BE FIRST
         core_extensions = [
+            'cogs.coins',  # Move this to the very beginning
             'cogs.clear_messages',
             'cogs.voice',
             'cogs.welcomegoodbye',
             'cogs.message_history',
             'cogs.recording',
+        ]
+
+        # Casino extensions (depend on coins)
+        casino_extensions = [
+            'cogs.casino_base',
+            'cogs.casino_blackjack',
+            'cogs.casino_roulette',
+            'cogs.casino_dice',
+            'cogs.casino_slots_cards'
         ]
 
         # Database-dependent extensions
@@ -639,6 +664,7 @@ class MyBot(commands.Bot):
 
         extension_groups = [
             ("핵심", core_extensions),
+            ("카지노", casino_extensions),
             ("데이터베이스", db_extensions),
             ("API", api_extensions)
         ]
@@ -847,14 +873,19 @@ class MyBot(commands.Bot):
         self.logger.info("🛑 봇 종료 시작...")
 
         try:
-            # Cancel all background tasks
+            # Cancel all background tasks including coins tasks
             tasks_to_cancel = [
                 ('update_presence', self.update_presence),
                 ('daily_log_uploader', self.daily_log_uploader)
             ]
 
+            # Add coins tasks if they exist
+            coins_cog = self.get_cog('CoinsCog')
+            if coins_cog and hasattr(coins_cog, 'maintenance_leaderboard_update'):
+                tasks_to_cancel.append(('coins_maintenance', coins_cog.maintenance_leaderboard_update))
+
             for task_name, task in tasks_to_cancel:
-                if task.is_running():
+                if hasattr(task, 'is_running') and task.is_running():
                     self.logger.info(f"🛑 {task_name} 작업 중지 중...")
                     task.cancel()
                     try:
@@ -937,6 +968,9 @@ async def main():
         ]
     )
     startup_logger = logging.getLogger('startup')
+
+    if hasattr(config, 'LEADERBOARD_CHANNEL_ID') and not config.LEADERBOARD_CHANNEL_ID:
+        startup_logger.warning("⚠️ LEADERBOARD_CHANNEL_ID가 설정되지 않았습니다. 코인 리더보드가 작동하지 않을 수 있습니다.")
 
     # Validate critical configuration
     validation_errors = []
