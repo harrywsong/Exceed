@@ -56,6 +56,8 @@ class BotManager:
 # Global bot manager
 bot_manager = BotManager.get_instance()
 
+global bot_instance
+bot_instance = None
 
 # --- Database Functions (Enhanced with better error handling) ---
 async def create_db_pool_in_bot():
@@ -130,6 +132,105 @@ LEVEL_MAP = {
     'WARN': logging.WARNING
 }
 
+@api_app.route('/config', methods=['GET'])
+def get_bot_config():
+    """
+    API endpoint to retrieve non-sensitive configuration data from utils.config.
+    """
+    if not bot_instance or not hasattr(bot_instance, 'logger') or bot_instance.logger is None:
+        current_logger = logging.getLogger(__name__)
+    else:
+        current_logger = bot_instance.logger
+
+    try:
+        sensitive_keywords = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'DATABASE_URL', 'API', 'WEBHOOK']
+        safe_config = {}
+        # inspect.getmembers를 사용하여 config 모듈의 모든 멤버를 순회합니다.
+        for name, value in inspect.getmembers(config):
+            # Dunder (dunder, double underscore) 속성, 모듈, 함수, 클래스는 건너뜁니다.
+            if name.startswith('__') or inspect.ismodule(value) or inspect.isfunction(value) or inspect.isclass(value):
+                continue
+            # 민감한 키워드를 포함하는 변수는 건너뜁니다.
+            if any(keyword in name.upper() for keyword in sensitive_keywords):
+                continue
+            # 안전한 설정 값을 문자열로 변환하여 저장합니다.
+            safe_config[name] = str(value)
+
+        current_logger.info("API: Successfully retrieved non-sensitive bot configuration.")
+        return jsonify({"status": "success", "config": safe_config}), 200
+
+    except Exception as e:
+        current_logger.error(f"API Error: Failed to retrieve bot configuration from utils.config. Error: {e}",
+                             exc_info=True)
+        return jsonify({"status": "error", "error": f"Failed to retrieve bot configuration: {e}"}), 500
+
+@api_app.route('/logs', methods=['GET'])
+def get_recent_logs():
+    """
+    Returns recent log entries from the bot's log file.
+    """
+    try:
+        # 로그 파일 경로를 절대 경로로 정확하게 지정해야 합니다.
+        # 예: pathlib.Path(__file__).parent / "logs" / "log.log"
+        # 여기서는 utils.logger.LOG_FILE_PATH를 사용한다고 가정합니다.
+        log_file_path = logger_module.LOG_FILE_PATH
+        if not log_file_path.exists():
+            # 봇 인스턴스의 로거를 사용하여 오류 기록
+            if bot_instance and hasattr(bot_instance, 'logger'):
+                bot_instance.logger.error(f"Log file not found at: {log_file_path}")
+            else:
+                logging.getLogger().error(f"Log file not found at: {log_file_path}")
+            return jsonify({"status": "error", "message": "Log file not found."}), 404
+
+        with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+            recent_logs = []
+            # 로그 형식에 맞는 정규 표현식 (예: [YYYY-MM-DD HH:MM:SS] [LEVEL....] [LOGGER_NAME] Message)
+            log_pattern = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(.*?)(?:\.<(\d+))?\] \[(.*?)\] (.*)$')
+
+            # 최신 200줄을 읽어와 효율성을 높입니다.
+            for line in reversed(lines[-200:]):
+                match = log_pattern.match(line.strip())
+                if match:
+                    timestamp, level_raw, thread_id_part, logger_name, message = match.groups()
+                    # level_raw에서 불필요한 부분 제거 (예: "INFO...." -> "INFO")
+                    level = level_raw.split('.')[0]
+                    recent_logs.append({
+                        "timestamp": timestamp,
+                        "level": level.upper(), # 레벨을 대문자로 통일
+                        "logger_name": logger_name,
+                        "message": message
+                    })
+                else:
+                    # 패턴에 맞지 않는 줄을 위한 대체 처리 (예: 로그 레벨 추출 시도)
+                    level = "UNKNOWN"
+                    if "DEBUG" in line.upper(): level = "DEBUG"
+                    elif "INFO" in line.upper(): level = "INFO"
+                    elif "WARNING" in line.upper(): level = "WARNING"
+                    elif "ERROR" in line.upper(): level = "ERROR"
+                    elif "CRITICAL" in line.upper(): level = "CRITICAL"
+
+                    # 표시용 메시지 길이 제한
+                    message_part = line.strip()
+                    if len(message_part) > 200:
+                        message_part = message_part[:200] + "..."
+
+                    recent_logs.append({
+                        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # 파싱되지 않은 로그에는 현재 시간 사용
+                        "level": level,
+                        "logger_name": "Unparsed",
+                        "message": message_part
+                    })
+
+        # 최신 로그가 맨 아래에 오도록 순서를 다시 뒤집습니다.
+        return jsonify({"status": "success", "logs": recent_logs[::-1]}), 200
+    except Exception as e:
+        # 봇 인스턴스의 로거를 사용하여 오류 기록
+        if bot_instance and hasattr(bot_instance, 'logger'):
+            bot_instance.logger.error(f"Error retrieving logs: {e}", exc_info=True)
+        else:
+            logging.getLogger().error(f"Error retrieving logs: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": f"Failed to retrieve logs: {e}"}), 500
 
 @api_app.route('/health')
 def health_check():
