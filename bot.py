@@ -204,6 +204,23 @@ def bot_status():
             "error": "Bot is not ready or offline."
         }), 503
 
+@api_app.route('/api/guilds', methods=['GET'])
+def get_guilds():
+    try:
+        bot_instance = bot_manager.get_bot()
+        if not bot_instance or not bot_instance.is_ready():
+            return jsonify({"status": "error", "error": "Bot is not ready."}), 503
+
+        guild_list = []
+        for guild in bot_instance.guilds:
+            guild_list.append({
+                "id": str(guild.id),
+                "name": guild.name,
+                "icon_url": str(guild.icon.url) if guild.icon else None
+            })
+        return jsonify({"status": "success", "guilds": guild_list}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 @api_app.route('/command_stats')
 def command_stats():
