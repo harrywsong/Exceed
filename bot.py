@@ -216,9 +216,13 @@ def get_guilds():
             guild_list.append({
                 "id": str(guild.id),
                 "name": guild.name,
-                "icon_url": str(guild.icon.url) if guild.icon else None
+                "icon_url": str(guild.icon.url) if guild.icon else None,
+                "member_count": guild.member_count,
+                "channel_count": len(guild.channels),
+                "owner_name": str(guild.owner),
+                "owner_id": str(guild.owner_id)
             })
-        return jsonify({"status": "success", "guilds": guild_list}), 200
+        return jsonify(guild_list), 200
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
 
