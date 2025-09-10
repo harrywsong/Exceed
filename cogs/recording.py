@@ -52,7 +52,7 @@ class Recording(commands.Cog):
                     bot_member = guild.get_member(self.bot.user.id)
                     if bot_member:
                         original_nickname = recording.get('original_nickname', None)
-                        if original_nickname and original_nickname != "(음성 녹화중) 겨울봇":
+                        if original_nickname and original_nickname != "(음성 녹화중) 아날로그":
                             asyncio.create_task(bot_member.edit(nick=original_nickname))
                         else:
                             asyncio.create_task(bot_member.edit(nick=None))
@@ -340,8 +340,8 @@ class Recording(commands.Cog):
                 bot_member = interaction.guild.get_member(self.bot.user.id)
                 if bot_member:
                     original_nickname = bot_member.display_name
-                    await bot_member.edit(nick="(음성 녹화중) 겨울봇")
-                    self.bot.logger.info(f"봇 닉네임을 '(음성 녹화중) 겨울봇'로 변경")
+                    await bot_member.edit(nick="(음성 녹화중) 아날로그")
+                    self.bot.logger.info(f"봇 닉네임을 '(음성 녹화중) 아날로그'로 변경")
                 else:
                     original_nickname = None
             except discord.Forbidden:
@@ -582,7 +582,7 @@ class Recording(commands.Cog):
                 bot_member = interaction.guild.get_member(self.bot.user.id)
                 if bot_member:
                     original_nickname = recording.get('original_nickname', None)
-                    if original_nickname and original_nickname != "(음성 녹화중) 겨울봇":
+                    if original_nickname and original_nickname != "(음성 녹화중) 아날로그":
                         await bot_member.edit(nick=original_nickname)
                         self.bot.logger.info(f"봇 닉네임을 '{original_nickname}'로 복원")
                     else:
@@ -608,7 +608,7 @@ class Recording(commands.Cog):
                     bot_member = interaction.guild.get_member(self.bot.user.id)
                     if bot_member:
                         original_nickname = recording.get('original_nickname', None)
-                        if original_nickname and original_nickname != "(음성 녹화중) 겨울봇":
+                        if original_nickname and original_nickname != "(음성 녹화중) 아날로그":
                             await bot_member.edit(nick=original_nickname)
                         else:
                             await bot_member.edit(nick=None)

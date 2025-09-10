@@ -132,7 +132,7 @@ class WelcomeCog(commands.Cog):
             embed.add_field(name="・서버 규칙을 꼭 확인해 주세요", value=f"<#{config.RULES_CHANNEL_ID}>", inline=False)
             if file:
                 embed.set_image(url="attachment://welcome.png")
-            embed.set_footer(text="겨울봇 • 환영 메시지", icon_url=self.bot.user.display_avatar.url)
+            embed.set_footer(text="아날로그 • 환영 메시지", icon_url=self.bot.user.display_avatar.url)
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
             self.logger.debug(f"📝 [welcome] {member.display_name}님을 위한 임베드 빌드 완료.")
         except Exception as e:
@@ -182,7 +182,7 @@ class WelcomeCog(commands.Cog):
                 timestamp=datetime.now(timezone.utc)
             )
             embed.set_thumbnail(url=member.display_avatar.url)
-            embed.set_footer(text="겨울봇 • 작별 인사", icon_url=self.bot.user.display_avatar.url)
+            embed.set_footer(text="아날로그 • 작별 인사", icon_url=self.bot.user.display_avatar.url)
 
             self.logger.info(f"👋 {member.display_name}님이 서버를 떠났습니다. 작별 메시지 전송 중…")
             await ch.send(embed=embed)
