@@ -106,7 +106,7 @@ class TempVoice(commands.Cog):
                     )
 
                 new_channel = await category.create_voice_channel(
-                    name=f"🎙️・{member.display_name}님의 채널",
+                    name=f"〔🔊〕{member.display_name}님의 음성채널",
                     overwrites=overwrites,
                     user_limit=None
                 )

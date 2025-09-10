@@ -634,11 +634,7 @@ class MyBot(commands.Bot):
 
         # API-dependent extensions
         api_extensions = [
-            'cogs.scraper',
-            'cogs.clanstats',
-            'cogs.leaderboard',
             'cogs.autoguest',
-            'cogs.interview',
         ]
 
         extension_groups = [
@@ -697,7 +693,7 @@ class MyBot(commands.Bot):
                 status=discord.Status.online,
                 activity=discord.Activity(
                     type=discord.ActivityType.playing,
-                    name=f"클랜원 관리 중 | {guild_count}개의 서버에 있음"
+                    name=f"서버 관리 중 | {guild_count}개의 서버에 있음"
                 )
             )
         except Exception as e:

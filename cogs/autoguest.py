@@ -5,10 +5,16 @@ import traceback
 from utils.logger import get_logger
 from utils import config
 
+# The ID for the UNVERIFIED role
+UNVERIFIED_ROLE_ID = 1415129066121597039
+
+
 class AutoRoleCog(commands.Cog):
     def __init__(self, bot, role_ids: list[int]):
         self.bot = bot
-        self.role_ids = role_ids
+        # Combine the auto-roles from config with the UNVERIFIED role
+        self.role_ids = role_ids + [UNVERIFIED_ROLE_ID]
+
         self.logger = get_logger(
             "자동 역할 (게스트)",
             bot=self.bot,
@@ -28,7 +34,9 @@ class AutoRoleCog(commands.Cog):
             if role:
                 roles_to_add.append(role)
             else:
-                self.logger.warning(f"Role with ID {role_id} not found in guild {member.guild.name} ({member.guild.id}) for auto-role.")
+                self.logger.warning(
+                    f"Role with ID {role_id} not found in guild {member.guild.name} ({member.guild.id}) for auto-role."
+                )
 
         if roles_to_add:
             try:

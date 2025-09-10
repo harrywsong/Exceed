@@ -68,7 +68,7 @@ class PersistentAchievementView(discord.ui.View):
         embed = await self.get_current_embed(cog, members)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="« First", style=discord.ButtonStyle.blurple, custom_id="persistent_first_page_button")
+    @discord.ui.button(label="« 처음", style=discord.ButtonStyle.blurple, custom_id="persistent_first_page_button")
     async def first(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page = 0
         await self.update_response(interaction)
@@ -78,12 +78,12 @@ class PersistentAchievementView(discord.ui.View):
         self.current_page = max(0, self.current_page - 5)
         await self.update_response(interaction)
 
-    @discord.ui.button(label="‹ Prev", style=discord.ButtonStyle.secondary, custom_id="persistent_prev_page_button")
+    @discord.ui.button(label="‹ 뒤로", style=discord.ButtonStyle.secondary, custom_id="persistent_prev_page_button")
     async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.current_page = max(0, self.current_page - 1)
         await self.update_response(interaction)
 
-    @discord.ui.button(label="Next ›", style=discord.ButtonStyle.secondary, custom_id="persistent_next_page_button")
+    @discord.ui.button(label="다음 ›", style=discord.ButtonStyle.secondary, custom_id="persistent_next_page_button")
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         cog, members = await self._get_data()
         if not members:
@@ -103,7 +103,7 @@ class PersistentAchievementView(discord.ui.View):
         self.current_page = min(len(members) - 1, self.current_page + 5)
         await self.update_response(interaction)
 
-    @discord.ui.button(label="Last »", style=discord.ButtonStyle.blurple, custom_id="persistent_last_page_button")
+    @discord.ui.button(label="마지막 »", style=discord.ButtonStyle.blurple, custom_id="persistent_last_page_button")
     async def last(self, interaction: discord.Interaction, button: discord.ui.Button):
         cog, members = await self._get_data()
         if not members:

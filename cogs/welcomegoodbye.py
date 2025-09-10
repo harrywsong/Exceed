@@ -125,16 +125,14 @@ class WelcomeCog(commands.Cog):
         try:
             embed = discord.Embed(
                 title=f"{member.display_name}님, 환영합니다!",
-                description="Exceed 클랜에 오신 것을 환영합니다! 함께 멋진 활동을 시작해요.",
+                description="서버에 오신 것을 환영합니다! 함께 멋진 활동을 시작해요.",
                 color=discord.Color.green(),
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.add_field(name="1️⃣ 서버 규칙을 꼭 확인해 주세요", value=f"<#{config.RULES_CHANNEL_ID}>", inline=False)
-            embed.add_field(name="2️⃣ 클랜에 지원하여 전체 서버에 접근해 보세요!", value=f"<#{config.INTERVIEW_PUBLIC_CHANNEL_ID}>",
-                            inline=False)
+            embed.add_field(name="・서버 규칙을 꼭 확인해 주세요", value=f"<#{config.RULES_CHANNEL_ID}>", inline=False)
             if file:
                 embed.set_image(url="attachment://welcome.png")
-            embed.set_footer(text="Exceed • 환영 메시지", icon_url=self.bot.user.display_avatar.url)
+            embed.set_footer(text="겨울봇 • 환영 메시지", icon_url=self.bot.user.display_avatar.url)
             embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
             self.logger.debug(f"📝 [welcome] {member.display_name}님을 위한 임베드 빌드 완료.")
         except Exception as e:
@@ -184,7 +182,7 @@ class WelcomeCog(commands.Cog):
                 timestamp=datetime.now(timezone.utc)
             )
             embed.set_thumbnail(url=member.display_avatar.url)
-            embed.set_footer(text="Exceed • 작별 인사", icon_url=self.bot.user.display_avatar.url)
+            embed.set_footer(text="겨울봇 • 작별 인사", icon_url=self.bot.user.display_avatar.url)
 
             self.logger.info(f"👋 {member.display_name}님이 서버를 떠났습니다. 작별 메시지 전송 중…")
             await ch.send(embed=embed)
