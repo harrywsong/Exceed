@@ -523,11 +523,12 @@ class BlackjackCog(commands.Cog):
         # Disable buttons based on game state
         for item in view.children:
             if hasattr(item, 'custom_id'):
-                if item.custom_id == "split" and not view.can_split():
+                if item.custom_id == "insurance" and not view.can_insure:
+                    item.disabled = True
+                elif item.custom_id == "split" and not view.can_split():
                     item.disabled = True
                 elif view.game_over:  # Disable all if blackjack
                     item.disabled = True
-                # DO NOT disable insurance button here - let it handle its own state
 
         embed = await view.create_embed()
 
