@@ -65,11 +65,11 @@ class CoinsView(discord.ui.View):
                 # Update the database directly for daily claims to include last_claim_date
                 update_query = """
                         INSERT INTO user_coins (user_id, coins, last_claim_date, total_earned)
-                        VALUES ($1, 10, $2, 10)
+                        VALUES ($1, 50, $2, 50)
                         ON CONFLICT (user_id) 
                         DO UPDATE SET 
-                            coins = user_coins.coins + 10,
-                            total_earned = user_coins.total_earned + 10,
+                            coins = user_coins.coins + 50,
+                            total_earned = user_coins.total_earned + 50,
                             last_claim_date = EXCLUDED.last_claim_date
                         RETURNING coins
                     """
