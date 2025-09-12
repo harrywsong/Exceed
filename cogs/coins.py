@@ -97,6 +97,8 @@ class CoinsView(discord.ui.View):
         except Exception as e:
             await interaction.followup.send(f"❌ 오류가 발생했습니다: {e}", ephemeral=True)
             self.bot.logger.error(f"Daily coin claim error for {user_id}: {e}")
+
+
 class LeaderboardView(discord.ui.View):
     """Persistent view for coin leaderboard navigation"""
 
@@ -207,6 +209,9 @@ class CoinsCog(commands.Cog):
         self.leaderboard_message_id = None
         self.claim_message_id = None
 
+        # Admin role ID - users with this role can use admin commands
+        self.ADMIN_ROLE_ID = 1415128727112781824
+
         # Real-time update controls
         self.pending_leaderboard_update = False
         self.update_delay = 3  # seconds to debounce updates
@@ -219,6 +224,16 @@ class CoinsCog(commands.Cog):
 
         # Start tasks after bot is ready
         self.bot.loop.create_task(self.wait_and_start_tasks())
+
+    def has_admin_permissions(self, member: discord.Member) -> bool:
+        """Check if member has admin permissions (either administrator permission or specific role)"""
+        # Check if user has administrator permissions
+        if member.guild_permissions.administrator:
+            return True
+
+        # Check if user has the specific admin role
+        admin_role = discord.utils.get(member.roles, id=self.ADMIN_ROLE_ID)
+        return admin_role is not None
 
     async def wait_and_start_tasks(self):
         """Wait for bot to be ready then start tasks"""
@@ -707,8 +722,8 @@ class CoinsCog(commands.Cog):
     ])
     async def admin_manage_coins(self, interaction: discord.Interaction, user: discord.Member, action: str,
                                  amount: int):
-        # Check if user has admin permissions
-        if not interaction.user.guild_permissions.administrator:
+        # Check if user has admin permissions (either administrator or specific role)
+        if not self.has_admin_permissions(interaction.user):
             await interaction.response.send_message("❌ 관리자 권한이 필요합니다.", ephemeral=True)
             return
 

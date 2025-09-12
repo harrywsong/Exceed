@@ -277,29 +277,48 @@ class BlackjackView(discord.ui.View):
             hand_value = self.calculate_hand_value(hand)
 
             if hand_value > 21:
-                results.append(f"핸드 {i + 1}: 버스트 (-{self.bet} 코인)")
+                # Hand busts - player loses the bet for this hand (no payout)
+                results.append(f"핸드 {i + 1}: 버스트 (손실: {self.bet} 코인)")
             elif dealer_value > 21 or hand_value > dealer_value:
-                payout = self.bet * 2
+                # Hand wins - player gets back bet + winnings
+                payout = self.bet * 2  # Original bet + winnings
                 total_payout += payout
-                results.append(f"핸드 {i + 1}: 승리 (+{payout} 코인)")
+                results.append(f"핸드 {i + 1}: 승리 (획득: {payout} 코인)")
             elif hand_value == dealer_value:
-                payout = self.bet
+                # Push - player gets back original bet only
+                payout = self.bet  # Just return the original bet
                 total_payout += payout
-                results.append(f"핸드 {i + 1}: 무승부 (+{payout} 코인)")
+                results.append(f"핸드 {i + 1}: 무승부 (반환: {payout} 코인)")
             else:
-                results.append(f"핸드 {i + 1}: 패배 (-{self.bet} 코인)")
+                # Hand loses - player loses the bet for this hand (no payout)
+                results.append(f"핸드 {i + 1}: 패배 (손실: {self.bet} 코인)")
+
+        # Calculate net result for summary
+        total_bet = self.bet * 2  # Player paid for both hands
+        net_result = total_payout - total_bet
 
         if total_payout > 0:
             await coins_cog.add_coins(self.user_id, total_payout, "blackjack_split_win", "Blackjack split payout")
 
         embed = await self.create_split_embed(final=True)
-        embed.add_field(name="결과", value="\n".join(results), inline=False)
+
+        # Add individual hand results
+        embed.add_field(name="핸드별 결과", value="\n".join(results), inline=False)
+
+        # Add overall summary
+        if net_result > 0:
+            summary = f"🎉 총 {net_result} 코인 획득!"
+        elif net_result == 0:
+            summary = f"🤝 무승부 (손익 없음)"
+        else:
+            summary = f"😞 총 {abs(net_result)} 코인 손실"
+
+        embed.add_field(name="최종 결과", value=summary, inline=False)
 
         new_balance = await coins_cog.get_user_coins(self.user_id)
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         await interaction.edit_original_response(embed=embed, view=self)
-
     @discord.ui.button(label="히트", style=discord.ButtonStyle.primary, emoji="➕")
     async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id or self.game_over:
