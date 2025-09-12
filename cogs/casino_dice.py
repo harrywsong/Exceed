@@ -17,6 +17,25 @@ class DiceGameCog(commands.Cog):
         self.logger = get_logger("주사위", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
         self.logger.info("주사위 게임 시스템이 초기화되었습니다.")
 
+    def get_dice_visual(self, value):
+        """Get visual representation of dice value"""
+        dice_visuals = {
+            1: "🎲[1]",
+            2: "🎲[2]",
+            3: "🎲[3]",
+            4: "🎲[4]",
+            5: "🎲[5]",
+            6: "🎲[6]"
+        }
+        return dice_visuals.get(value, f"🎲[{value}]")
+
+    def create_dice_display(self, die1, die2, total, rolling=False):
+        """Create visual dice display"""
+        if rolling:
+            return f"{self.get_dice_visual(die1)} {self.get_dice_visual(die2)}\n🎯 합계: ❓"
+        else:
+            return f"{self.get_dice_visual(die1)} {self.get_dice_visual(die2)}\n🎯 **합계: {total}**"
+
     async def validate_game(self, interaction: discord.Interaction, bet: int):
         """Validate game using casino base"""
         casino_base = self.bot.get_cog('CasinoBaseCog')
@@ -49,18 +68,26 @@ class DiceGameCog(commands.Cog):
 
         await interaction.response.defer()
 
+        # Show initial bet
+        embed = discord.Embed(
+            title="🎲 주사위 게임",
+            description=f"예상 합계: **{guess}**\n베팅 금액: **{bet:,}** 코인",
+            color=discord.Color.blue()
+        )
+        await interaction.edit_original_response(embed=embed)
+        await asyncio.sleep(1)
+
         # Rolling animation
-        dice_emojis = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
-        for i in range(5):
+        for i in range(6):
             die1 = random.randint(1, 6)
             die2 = random.randint(1, 6)
             embed = discord.Embed(
                 title="🎲 주사위 굴리는 중...",
-                description=f"{dice_emojis[die1 - 1]} {dice_emojis[die2 - 1]}\n합계: ?",
+                description=f"🌟 굴리는 중... {i + 1}/6\n\n{self.create_dice_display(die1, die2, 0, rolling=True)}",
                 color=discord.Color.blue()
             )
             await interaction.edit_original_response(embed=embed)
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.7)
 
         # Final roll
         die1 = random.randint(1, 6)
@@ -78,18 +105,36 @@ class DiceGameCog(commands.Cog):
         if won:
             embed = discord.Embed(
                 title="🎉 정확히 맞혔습니다!",
-                description=f"{dice_emojis[die1 - 1]} {dice_emojis[die2 - 1]}\n합계: **{total}**\n\n{payout:,} 코인 획득! ({payout_multipliers[guess]}배)",
                 color=discord.Color.green()
             )
+            result_desc = f"{self.create_dice_display(die1, die2, total)}\n\n"
+            result_desc += f"🎯 예상: **{guess}** ✅\n"
+            result_desc += f"💎 배율: **{payout_multipliers[guess]}배**\n"
+            result_desc += f"💰 획득: **{payout:,}** 코인"
         else:
             embed = discord.Embed(
                 title="💸 아쉽네요!",
-                description=f"{dice_emojis[die1 - 1]} {dice_emojis[die2 - 1]}\n합계: **{total}** (예상: {guess})\n\n{bet:,} 코인 손실",
                 color=discord.Color.red()
             )
+            result_desc = f"{self.create_dice_display(die1, die2, total)}\n\n"
+            result_desc += f"🎯 예상: **{guess}** ❌\n"
+            result_desc += f"💸 손실: **{bet:,}** 코인"
+
+        embed.description = result_desc
 
         new_balance = await coins_cog.get_user_coins(interaction.user.id)
-        embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
+        embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=False)
+
+        # Add odds table for reference
+        odds_text = "**📊 배당표:**\n"
+        odds_text += "2, 12: 35배 💎\n"
+        odds_text += "3, 11: 17배 💰\n"
+        odds_text += "4, 10: 11배 🏆\n"
+        odds_text += "5, 9: 8배 ⭐\n"
+        odds_text += "6, 8: 6배 💚\n"
+        odds_text += "7: 5배 💙"
+
+        embed.add_field(name="ℹ️ 참고", value=odds_text, inline=False)
 
         await interaction.edit_original_response(embed=embed)
         self.logger.info(f"{interaction.user}가 주사위에서 {bet} 코인 {'승리' if won else '패배'}")

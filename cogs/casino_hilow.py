@@ -17,6 +17,38 @@ class HiLowCog(commands.Cog):
         self.logger = get_logger("하이로우", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
         self.logger.info("하이로우 게임 시스템이 초기화되었습니다.")
 
+    def get_dice_visual(self, value):
+        """Get visual representation of dice value"""
+        dice_visuals = {
+            1: "🔴[1]",
+            2: "🟠[2]",
+            3: "🟡[3]",
+            4: "🟢[4]",
+            5: "🔵[5]",
+            6: "🟣[6]"
+        }
+        return dice_visuals.get(value, f"🎲[{value}]")
+
+    def create_dice_display(self, die1, die2, total, rolling=False):
+        """Create visual dice display with total analysis"""
+        dice_display = f"{self.get_dice_visual(die1)} {self.get_dice_visual(die2)}"
+
+        if rolling:
+            return f"{dice_display}\n🎯 합계: ❓"
+
+        # Add visual indicator for hi/low
+        if total > 7:
+            indicator = "📈 HIGH"
+            color_emoji = "🔥"
+        elif total < 7:
+            indicator = "📉 LOW"
+            color_emoji = "❄️"
+        else:
+            indicator = "🎯 SEVEN"
+            color_emoji = "⚡"
+
+        return f"{dice_display}\n🎯 **합계: {total}** {color_emoji}\n{indicator}"
+
     async def validate_game(self, interaction: discord.Interaction, bet: int):
         """Validate game using casino base"""
         casino_base = self.bot.get_cog('CasinoBaseCog')
@@ -33,8 +65,8 @@ class HiLowCog(commands.Cog):
         choice="7보다 높을지(high) 낮을지(low)"
     )
     @app_commands.choices(choice=[
-        app_commands.Choice(name="높음 (8-12)", value="high"),
-        app_commands.Choice(name="낮음 (2-6)", value="low")
+        app_commands.Choice(name="📈 높음 (8-12)", value="high"),
+        app_commands.Choice(name="📉 낮음 (2-6)", value="low")
     ])
     async def hilow(self, interaction: discord.Interaction, bet: int, choice: str):
         can_start, error_msg = await self.validate_game(interaction, bet)
@@ -49,21 +81,28 @@ class HiLowCog(commands.Cog):
 
         await interaction.response.defer()
 
-        # Roll two dice
-        dice_emojis = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"]
+        choice_display = {"high": "📈 높음 (8-12)", "low": "📉 낮음 (2-6)"}
 
-        # Animation
-        for i in range(4):
+        # Show bet information
+        embed = discord.Embed(
+            title="🎲 하이로우 게임",
+            description=f"예상: **{choice_display[choice]}**\n베팅: **{bet:,}** 코인\n\n기준점: **7** ⚡",
+            color=discord.Color.blue()
+        )
+        await interaction.edit_original_response(embed=embed)
+        await asyncio.sleep(1.5)
+
+        # Rolling animation
+        for i in range(5):
             temp_die1 = random.randint(1, 6)
             temp_die2 = random.randint(1, 6)
-            temp_total = temp_die1 + temp_die2
             embed = discord.Embed(
                 title="🎲 하이로우 - 굴리는 중...",
-                description=f"{dice_emojis[temp_die1 - 1]} {dice_emojis[temp_die2 - 1]}\n합계: {temp_total}",
+                description=f"🌀 굴리는 중... {i + 1}/5\n\n{self.create_dice_display(temp_die1, temp_die2, 0, rolling=True)}",
                 color=discord.Color.blue()
             )
             await interaction.edit_original_response(embed=embed)
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(0.7)
 
         # Final result
         die1 = random.randint(1, 6)
@@ -71,41 +110,66 @@ class HiLowCog(commands.Cog):
         total = die1 + die2
 
         won = False
+        result_type = ""
         if choice == "high" and total > 7:
             won = True
+            result_type = "win"
         elif choice == "low" and total < 7:
             won = True
+            result_type = "win"
         elif total == 7:
+            result_type = "push"
             # Push - return bet
             await coins_cog.add_coins(interaction.user.id, bet, "hilow_push", "Hi-Low push (7)")
+        else:
+            result_type = "loss"
 
         if won:
             payout = bet * 2
             await coins_cog.add_coins(interaction.user.id, payout, "hilow_win", f"Hi-Low win: {total}")
 
-        choice_korean = {"high": "높음", "low": "낮음"}
-
+        # Create result embed
         if total == 7:
             embed = discord.Embed(
                 title="🤝 무승부!",
-                description=f"{dice_emojis[die1 - 1]} {dice_emojis[die2 - 1]}\n합계: **{total}** (정확히 7!)\n\n베팅 금액 반환",
                 color=discord.Color.blue()
             )
+            result_desc = f"{self.create_dice_display(die1, die2, total)}\n\n"
+            result_desc += f"🎯 예상: **{choice_display[choice]}**\n"
+            result_desc += f"⚡ 정확히 **7**이 나왔습니다!\n"
+            result_desc += f"💰 베팅 금액 **{bet:,} 코인** 반환"
+
         elif won:
             embed = discord.Embed(
                 title="🎉 승리!",
-                description=f"{dice_emojis[die1 - 1]} {dice_emojis[die2 - 1]}\n합계: **{total}** ({choice_korean[choice]} 맞음!)\n\n{payout:,} 코인 획득!",
                 color=discord.Color.green()
             )
+            result_desc = f"{self.create_dice_display(die1, die2, total)}\n\n"
+            result_desc += f"🎯 예상: **{choice_display[choice]}** ✅\n"
+            result_desc += f"💎 2배 배당!\n"
+            result_desc += f"💰 획득: **{payout:,}** 코인"
+
         else:
             embed = discord.Embed(
                 title="💸 패배!",
-                description=f"{dice_emojis[die1 - 1]} {dice_emojis[die2 - 1]}\n합계: **{total}** ({choice_korean[choice]} 틀림)\n\n{bet:,} 코인 손실",
                 color=discord.Color.red()
             )
+            result_desc = f"{self.create_dice_display(die1, die2, total)}\n\n"
+            result_desc += f"🎯 예상: **{choice_display[choice]}** ❌\n"
+            result_desc += f"💸 손실: **{bet:,}** 코인"
+
+        embed.description = result_desc
 
         new_balance = await coins_cog.get_user_coins(interaction.user.id)
-        embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
+        embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=False)
+
+        # Add game rules
+        rules_text = "**📋 게임 규칙:**\n"
+        rules_text += "📈 **높음**: 8-12 (2배)\n"
+        rules_text += "📉 **낮음**: 2-6 (2배)\n"
+        rules_text += "⚡ **7**: 무승부 (환불)"
+
+        embed.add_field(name="ℹ️ 참고", value=rules_text, inline=False)
 
         await interaction.edit_original_response(embed=embed)
         self.logger.info(f"{interaction.user}가 하이로우에서 {bet} 코인 {'승리' if won else '패배' if total != 7 else '무승부'}")

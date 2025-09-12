@@ -348,13 +348,19 @@ class CrashCog(commands.Cog):
         return await casino_base.validate_game_start(interaction, "crash", bet, 10, 2000)
 
     def generate_crash_point(self) -> float:
-        """Generate realistic crash point with house edge"""
-        house_edge = 0.03  # 3% house edge
-        e = 2 ** 32
-        h = random.randint(0, e - 1)
-        if h % (100 / house_edge) == 0:
-            return 1.0
-        return math.floor((100 * e - h) / (e - h)) / 100
+        """Generate crash point with custom odds distribution"""
+        rand = random.random()
+
+        if rand <= 0.50:  # 50% chance for 1.1x - 2.0x (safe cashouts)
+            return round(random.uniform(1.1, 2.0), 2)
+        elif rand <= 0.85:  # 35% chance for 2.0x - 4.0x (moderate risk)
+            return round(random.uniform(2.0, 4.0), 2)
+        elif rand <= 0.95:  # 10% chance for 4.0x - 10.0x (good multipliers)
+            return round(random.uniform(4.0, 10.0), 2)
+        elif rand <= 0.99:  # 4% chance for 10.0x - 50.0x (high risk/reward)
+            return round(random.uniform(10.0, 50.0), 2)
+        else:  # 1% chance for 100.0x (jackpot)
+            return 100.0
 
     async def announce_crash_point(self, crash_point: float):
         """Announce crash point to the announcement channel"""
