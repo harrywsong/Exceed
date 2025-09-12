@@ -32,7 +32,7 @@ class BlackjackView(discord.ui.View):
         self.player_hand = [self.draw_card(), self.draw_card()]
         self.dealer_hand = [self.draw_card(), self.draw_card()]
 
-        # Check for dealer ace (insurance option) - Fixed logic
+        # Check for dealer ace (insurance option) - Insurance is based on the UP card (first card)
         self.can_insure = self.dealer_hand[0]['rank'] == 'A'
 
         # Check for natural blackjack
@@ -79,7 +79,9 @@ class BlackjackView(discord.ui.View):
     def hand_to_string(self, hand: List[Dict], hide_first: bool = False) -> str:
         """Convert hand to display string"""
         if hide_first:
-            return f"🔒 {hand[1]['rank']}{hand[1]['suit']}"
+            # FIXED: Show the first card (up card) when hiding the second card (hole card)
+            # This matches proper blackjack where the up card is visible and hole card is hidden
+            return f"🔒 {hand[0]['rank']}{hand[0]['suit']}"
         return ' '.join(f"{card['rank']}{card['suit']}" for card in hand)
 
     def can_double_down(self) -> bool:
@@ -462,8 +464,12 @@ class BlackjackView(discord.ui.View):
             await interaction.response.send_message("❌ 권한이 없습니다!", ephemeral=True)
             return
 
-        if not self.can_insure or self.insurance_bet > 0:
-            await interaction.response.send_message("❌ 보험을 걸 수 없습니다!", ephemeral=True)
+        if not self.can_insure:
+            await interaction.response.send_message("❌ 딜러의 오픈 카드가 에이스가 아닙니다!", ephemeral=True)
+            return
+
+        if self.insurance_bet > 0:
+            await interaction.response.send_message("❌ 이미 보험에 가입했습니다!", ephemeral=True)
             return
 
         await interaction.response.defer()
