@@ -82,7 +82,7 @@ class TempVoice(commands.Cog):
                 #
                 # <--- CHANGE THE ROLE ID ON THIS LINE
                 #
-                allowed_role = guild.get_role(1389711143756501012)
+                allowed_role = guild.get_role(1415129126817239211)
 
                 overwrites = {
                     guild.default_role: discord.PermissionOverwrite(connect=False),
