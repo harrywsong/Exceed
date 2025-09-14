@@ -490,7 +490,7 @@ def control_bot_api(action):
                                         cwd=os.getcwd(), timeout=60)
                 if result.returncode == 0:
                     bot.logger.info(f"Git pull 성공: {result.stdout.strip()}")
-                    return jsonify({"status": "success", "message": "Git pull successful. Bot restarting."})
+                    return jsonify({"status": "success", "message": "Git pull successful."})
                 else:
                     bot.logger.error(f"Git pull 실패: {result.stderr.strip()}")
                     return jsonify({"status": "error", "error": f"Git pull failed: {result.stderr.strip()}"}), 500
