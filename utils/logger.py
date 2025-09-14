@@ -4,8 +4,9 @@ import logging
 import sys
 import pathlib
 import asyncio
+import threading
 from logging.handlers import TimedRotatingFileHandler
-import discord # Ensure discord is imported
+import discord  # Ensure discord is imported
 
 LOG_FILE_PATH = pathlib.Path(__file__).parent.parent / "logs" / "log.log"
 LOG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -37,32 +38,50 @@ class DiscordHandler(logging.Handler):
         self.channel_id = channel_id
         self._message_buffer = []
         self._send_task = None  # Task is initially None, started when bot is ready
-        self._buffer_lock = asyncio.Lock()
-        self.stopped = False # Flag to indicate if the handler is closing
-
-        # The level for this specific handler is set in _configure_root_handlers
-        # self.setLevel(logging.WARNING) # This line is now effectively managed externally
+        self._buffer_lock = threading.Lock()  # Use threading.Lock for synchronous access
+        self.stopped = False  # Flag to indicate if the handler is closing
 
     def emit(self, record):
+        """
+        Emit a log record. This method is called synchronously by the logging system,
+        so we need to handle the buffering without async operations.
+        """
         log_entry = self.format(record)
-        if self.stopped: # Don't buffer if closing
+        if self.stopped:  # Don't buffer if closing
             return
-        try:
-            # Schedule _add_to_buffer. It will ensure the _send_task is created only once ready.
-            asyncio.ensure_future(self._add_to_buffer(log_entry))
-        except RuntimeError:
-            # This happens if there's no running event loop yet (very early startup)
-            # Just add to buffer, the start_sending_logs will handle creating the task later
-            print(f"DEBUG: No running event loop for DiscordHandler. Buffering for later: {log_entry}", file=sys.stderr)
+
+        # Use thread-safe buffer access since emit() is called synchronously
+        with self._buffer_lock:
             self._message_buffer.append(log_entry)
 
-    async def _add_to_buffer(self, msg):
-        async with self._buffer_lock:
-            self._message_buffer.append(msg)
-            # The _send_task will now be started by the bot's on_ready event.
-            # We remove the creation here to avoid the premature wait_until_ready() call.
-            # if self._send_task is None or self._send_task.done():
-            #     self._send_task = asyncio.create_task(self._send_buffered_logs())
+        # Try to ensure the send task is running, but don't create coroutines here
+        self._ensure_send_task()
+
+    def _ensure_send_task(self):
+        """
+        Ensures the send task is running if we have an event loop and the bot is ready.
+        This is called from emit() but doesn't create async operations.
+        """
+        try:
+            # Check if there's a running event loop
+            loop = asyncio.get_running_loop()
+            if loop and (self._send_task is None or self._send_task.done()):
+                # Only schedule if we don't already have a pending task
+                if not hasattr(self, '_task_scheduled'):
+                    self._task_scheduled = True
+                    # Use call_soon_threadsafe since emit() might be called from another thread
+                    loop.call_soon_threadsafe(self._schedule_send_task)
+        except RuntimeError:
+            # No running event loop - this is fine, the task will be started when bot is ready
+            pass
+
+    def _schedule_send_task(self):
+        """
+        Schedules the send task from within the event loop.
+        """
+        if self._send_task is None or self._send_task.done():
+            self._send_task = asyncio.create_task(self._send_buffered_logs())
+        self._task_scheduled = False
 
     async def _send_buffered_logs(self):
         """
@@ -76,45 +95,49 @@ class DiscordHandler(logging.Handler):
             print("DiscordHandler: Bot not ready, _send_buffered_logs cannot proceed.", file=sys.stderr)
             return
 
-        print("DiscordHandler: Bot is ready, starting to send buffered logs.") # Debug print
+        print("DiscordHandler: Bot is ready, starting to send buffered logs.")  # Debug print
 
         while not self.stopped:
             try:
                 await asyncio.sleep(5)  # Adjust sending interval as needed
 
-                async with self._buffer_lock:
-                    if not self._message_buffer:
-                        continue # Nothing to send
-
-                    channel = self.bot.get_channel(self.channel_id)
-                    if not channel:
-                        print(f"❌ Discord log channel {self.channel_id} not found. Clearing {len(self._message_buffer)} buffered logs.", file=sys.stderr)
+                # Use thread-safe buffer access
+                messages_to_send = []
+                with self._buffer_lock:
+                    if self._message_buffer:
+                        messages_to_send = self._message_buffer[:]
                         self._message_buffer.clear()
-                        continue
 
-                    # Take a copy and clear the buffer for the next cycle
-                    messages_to_send = self._message_buffer[:]
-                    self._message_buffer.clear()
+                if not messages_to_send:
+                    continue  # Nothing to send
+
+                channel = self.bot.get_channel(self.channel_id)
+                if not channel:
+                    print(
+                        f"❌ Discord log channel {self.channel_id} not found. Clearing {len(messages_to_send)} buffered logs.",
+                        file=sys.stderr)
+                    continue
 
                 for msg_content in messages_to_send:
                     try:
                         # Chunk messages to fit Discord's limit
                         for chunk in self._chunk_message(msg_content, 1900):
                             await channel.send(f"```\n{chunk}\n```")
-                            await asyncio.sleep(0.7) # Delay to respect Discord's rate limits
+                            await asyncio.sleep(0.7)  # Delay to respect Discord's rate limits
                     except discord.Forbidden:
-                        print(f"❌ DiscordHandler: Missing permissions to send messages to log channel {self.channel_id}.", file=sys.stderr)
-                        break # Stop trying to send if permissions are an issue
+                        print(
+                            f"❌ DiscordHandler: Missing permissions to send messages to log channel {self.channel_id}.",
+                            file=sys.stderr)
+                        break  # Stop trying to send if permissions are an issue
                     except discord.HTTPException as e:
                         print(f"❌ Discord HTTP error sending log chunk: {e}", file=sys.stderr)
                     except Exception as e:
                         print(f"❌ Failed to send log to Discord channel: {e}", file=sys.stderr)
             except asyncio.CancelledError:
                 print("DiscordHandler: _send_buffered_logs task cancelled.")
-                break # Exit the loop if cancelled
+                break  # Exit the loop if cancelled
             except Exception as e:
                 print(f"DiscordHandler: Unexpected error in send loop: {e}", file=sys.stderr)
-
 
     def _chunk_message(self, msg, max_length):
         """Splits a message into chunks that fit Discord's character limit."""
@@ -122,7 +145,8 @@ class DiscordHandler(logging.Handler):
         chunk = ""
         for line in lines:
             if len(chunk) + len(line) > max_length:
-                yield chunk
+                if chunk:
+                    yield chunk
                 chunk = line
             else:
                 chunk += line
@@ -136,17 +160,12 @@ class DiscordHandler(logging.Handler):
         """
         if self._send_task is None or self._send_task.done():
             self._send_task = asyncio.create_task(self._send_buffered_logs())
-            print("DiscordHandler: Log sending task created and started.") # Debug print
+            print("DiscordHandler: Log sending task created and started.")  # Debug print
 
     def close(self):
-        self.stopped = True # Signal the task to stop
+        self.stopped = True  # Signal the task to stop
         if self._send_task and not self._send_task.done():
             self._send_task.cancel()
-            # In a clean shutdown, you might want to await its completion:
-            # try:
-            #     asyncio.get_event_loop().run_until_complete(self._send_task)
-            # except:
-            #     pass
         self._send_task = None
         super().close()
 
@@ -207,7 +226,8 @@ def get_logger(name: str, level=logging.INFO, **kwargs) -> logging.Logger:
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.propagate = True # Allow logs to propagate to root handlers (including DiscordHandler)
+    logger.propagate = True  # Allow logs to propagate to root handlers (including DiscordHandler)
     return logger
+
 
 logging.getLogger('discord').setLevel(logging.INFO)
