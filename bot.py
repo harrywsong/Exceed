@@ -484,13 +484,12 @@ def control_bot_api(action):
                 return jsonify({"status": "error", "error": f"Failed to reload cogs: {e}"}), 500
 
         elif action == 'update_git':
-            bot.logger.info("API 요청: Git 업데이트 및 재시작 준비 중...")
+            bot.logger.info("API 요청: Git 업데이트 중...")
             try:
                 result = subprocess.run(['git', 'pull'], capture_output=True, text=True,
                                         cwd=os.getcwd(), timeout=60)
                 if result.returncode == 0:
                     bot.logger.info(f"Git pull 성공: {result.stdout.strip()}")
-                    asyncio.run_coroutine_threadsafe(bot.graceful_shutdown(), bot.loop)
                     return jsonify({"status": "success", "message": "Git pull successful. Bot restarting."})
                 else:
                     bot.logger.error(f"Git pull 실패: {result.stderr.strip()}")
