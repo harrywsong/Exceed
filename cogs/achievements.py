@@ -1,3 +1,4 @@
+# cogs/achievements.py - Updated for multi-server support
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -10,37 +11,42 @@ import asyncio
 import traceback
 from typing import Optional
 
-from utils.config import ACHIEVEMENT_DATA_PATH, GHOST_HUNTER_ID, HOLIDAYS, ACHIEVEMENT_CHANNEL_ID, \
-    ACHIEVEMENT_ALERT_CHANNEL_ID, GUILD_ID, \
-    ACHIEVEMENT_EMOJIS, LOG_CHANNEL_ID
+# Updated imports for multi-server config
+from utils.config import (
+    ACHIEVEMENT_DATA_PATH,
+    HOLIDAYS,
+    ACHIEVEMENT_EMOJIS,
+    get_channel_id,
+    get_role_id,
+    is_feature_enabled,
+    is_server_configured,
+    get_server_setting,
+    get_all_server_configs
+)
 from utils.logger import get_logger
 
 
 class PersistentAchievementView(discord.ui.View):
-    def __init__(self, bot, members=None):
+    def __init__(self, bot, guild_id, members=None):
         super().__init__(timeout=None)
         self.bot = bot
+        self.guild_id = guild_id
         self.current_page = 0
-        # If members are passed in, use them. Otherwise, the view will fetch them later.
         self.members = members
         self.max_pages = len(self.members) - 1 if self.members else 0
         self.update_buttons()
 
     async def _get_data(self):
-        # Get the cog instance at the top of the function.
         cog = self.bot.get_cog("Achievements")
         if not cog:
-            # If the cog can't be found for any reason, return safely.
             cog.logger.error("PersistentAchievementView: Achievements cog not found")
             return None, None
 
-        # Now, check if members need to be fetched.
         if not self.members:
-            self.members = await cog._get_sorted_members()
+            self.members = await cog._get_sorted_members(self.guild_id)
 
         self.max_pages = len(self.members) - 1 if self.members else 0
         self.update_buttons()
-        # 'cog' is now guaranteed to exist here.
         return cog, self.members
 
     def update_buttons(self):
@@ -113,16 +119,24 @@ class PersistentAchievementView(discord.ui.View):
         self.current_page = len(members) - 1
         await self.update_response(interaction)
 
-    async def post_achievements_display(self):
-        channel = self.bot.get_channel(ACHIEVEMENT_CHANNEL_ID)
+    async def post_achievements_display(self, guild_id):
+        # Get achievement channel for this specific server
+        achievement_channel_id = get_channel_id(guild_id, 'achievement_channel')
+        if not achievement_channel_id:
+            cog = self.bot.get_cog("Achievements")
+            if cog:
+                cog.logger.warning(f"No achievement channel configured for guild {guild_id}")
+            return
+
+        channel = self.bot.get_channel(achievement_channel_id)
         if not channel:
             cog = self.bot.get_cog("Achievements")
             if cog:
-                cog.logger.error(f"Achievement channel with ID {ACHIEVEMENT_CHANNEL_ID} not found.")
+                cog.logger.error(f"Achievement channel {achievement_channel_id} not found for guild {guild_id}")
             return
 
         try:
-            # 이전 메시지를 삭제합니다.
+            # Delete previous messages
             async for message in channel.history(limit=50):
                 if message.author == self.bot.user and message.embeds and (
                         "업적 현황" in message.embeds[0].title or "업적 목록 및 힌트" in message.embeds[0].title
@@ -132,36 +146,26 @@ class PersistentAchievementView(discord.ui.View):
                         cog = self.bot.get_cog("Achievements")
                         if cog:
                             cog.logger.info(f"이전 업적 메시지 삭제 완료 (ID: {message.id})")
-                    except discord.Forbidden:
-                        cog = self.bot.get_cog("Achievements")
-                        if cog:
-                            cog.logger.error("삭제 권한이 없습니다.")
-                    except discord.NotFound:
-                        cog = self.bot.get_cog("Achievements")
-                        if cog:
-                            cog.logger.warning("메시지를 찾을 수 없어 삭제를 건너뜁니다.")
+                    except (discord.Forbidden, discord.NotFound):
+                        pass
 
-            # 새로운 임베드를 생성하고 지속적인 뷰와 함께 게시합니다.
             cog = self.bot.get_cog("Achievements")
             if not cog:
                 return
 
-            members = await self._get_sorted_members()
+            members = await cog._get_sorted_members(guild_id)
             if members:
-                # 뷰 객체 생성 시 봇 인스턴스만 전달합니다.
-                view = PersistentAchievementView(self.bot, members=members)
-                # 뷰의 get_current_embed 메서드를 사용하여 초기 임베드를 가져옵니다.
+                view = PersistentAchievementView(self.bot, guild_id, members=members)
                 initial_embed = await view.get_current_embed(cog, members)
-
                 await channel.send(embed=initial_embed, view=view)
-                cog.logger.info("업적 현황 메시지 게시 완료")
+                cog.logger.info(f"업적 현황 메시지 게시 완료 for guild {guild_id}")
             else:
                 await channel.send(embed=discord.Embed(description="No members found with achievements."))
 
         except Exception as e:
             cog = self.bot.get_cog("Achievements")
             if cog:
-                cog.logger.error(f"업적 메시지 생성 및 전송 실패: {e}\n{traceback.format_exc()}")
+                cog.logger.error(f"업적 메시지 생성 및 전송 실패 for guild {guild_id}: {e}\n{traceback.format_exc()}")
 
 
 class Achievements(commands.Cog):
@@ -250,11 +254,7 @@ class Achievements(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "업적 시스템",
-            bot=bot,
-            discord_log_channel_id=LOG_CHANNEL_ID,
-        )
+        self.logger = get_logger("업적 시스템", bot=bot)
         self.logger.info("업적 시스템이 초기화되었습니다.")
 
         self.data = defaultdict(lambda: {
@@ -292,7 +292,6 @@ class Achievements(commands.Cog):
         self.load_data()
         self.voice_update_task.start()
         self.daily_achievements_update.start()
-        self.current_message = None
 
     def load_data(self):
         if os.path.exists(ACHIEVEMENT_DATA_PATH):
@@ -397,10 +396,21 @@ class Achievements(commands.Cog):
         self.logger.info("업적 시스템 Cog 언로드됨")
 
     async def _send_achievement_notification(self, member, achievement_name, is_hidden):
+        # Check if achievements are enabled for this server
+        if not is_feature_enabled(member.guild.id, 'achievements'):
+            return
+
         try:
-            channel = self.bot.get_channel(ACHIEVEMENT_ALERT_CHANNEL_ID)
+            # Get server-specific achievement alert channel
+            achievement_alert_channel_id = get_channel_id(member.guild.id, 'achievement_alert_channel')
+            if not achievement_alert_channel_id:
+                self.logger.warning(f"No achievement alert channel configured for guild {member.guild.id}")
+                return
+
+            channel = self.bot.get_channel(achievement_alert_channel_id)
             if not channel:
-                self.logger.error(f"업적 알림 채널 ID {ACHIEVEMENT_ALERT_CHANNEL_ID}를 찾을 수 없습니다.")
+                self.logger.error(
+                    f"Achievement alert channel {achievement_alert_channel_id} not found for guild {member.guild.id}")
                 return
 
             emoji = self.ACHIEVEMENT_EMOJI_MAP.get(achievement_name, '🏆' if not is_hidden else '🤫')
@@ -421,42 +431,48 @@ class Achievements(commands.Cog):
                 embed.set_thumbnail(url=member.avatar.url)
 
             await channel.send(embed=embed)
-            self.logger.info(f"업적 알림 전송 완료: {member.name} ({achievement_name})")
+            self.logger.info(f"업적 알림 전송 완료: {member.name} ({achievement_name}) for guild {member.guild.id}")
 
         except Exception as e:
             self.logger.error(f"업적 알림 전송 실패 - 사용자: {member.id}, 업적: {achievement_name}: {e}\n{traceback.format_exc()}")
 
     def unlock_achievement(self, user, achievement_name, is_hidden=False):
+        # Check if achievements are enabled for this server
+        if hasattr(user, 'guild') and user.guild and not is_feature_enabled(user.guild.id, 'achievements'):
+            return False
+
         user_id = user.id
         user_data = self.data[user_id]
         unlocked_list = user_data["hidden_unlocked"] if is_hidden else user_data["general_unlocked"]
+
         if achievement_name not in unlocked_list:
             unlocked_list.append(achievement_name)
             self.save_data()
             achievement_type = "히든" if is_hidden else "일반"
             self.logger.info(f"업적 달성: {user.name} (ID: {user_id}) - {achievement_name} ({achievement_type})")
-            self.bot.loop.create_task(self._send_achievement_notification(user, achievement_name, is_hidden))
-            self.bot.loop.create_task(self.post_achievements_display())
+
+            # Send notification and update display for the specific guild
+            if hasattr(user, 'guild') and user.guild:
+                self.bot.loop.create_task(self._send_achievement_notification(user, achievement_name, is_hidden))
+                self.bot.loop.create_task(self.post_achievements_display(user.guild.id))
 
             if not is_hidden and len(user_data["general_unlocked"]) >= 10:
                 self.unlock_achievement(user, "Achievement Hunter")
             return True
         return False
 
-    async def _get_sorted_members(self):
-        guild = self.bot.get_guild(GUILD_ID)
+    async def _get_sorted_members(self, guild_id):
+        guild = self.bot.get_guild(guild_id)
         if not guild:
-            self.logger.error(f"길드 ID {GUILD_ID}를 찾을 수 없습니다.")
+            self.logger.error(f"길드 ID {guild_id}를 찾을 수 없습니다.")
             return []
 
-        # Force chunking if not already complete
         if not guild.chunked:
-            self.logger.info("길드가 완전히 청크되지 않음. 청크 요청 중...")
+            self.logger.info(f"길드 {guild_id}가 완전히 청크되지 않음. 청크 요청 중...")
             await guild.chunk()
 
-        # Debug log to confirm total members fetched
         total_members = len([m for m in guild.members if not m.bot])
-        self.logger.info(f"청크 완료 후 총 비봇 멤버 수: {total_members}")
+        self.logger.info(f"청크 완료 후 총 비봇 멤버 수 (Guild {guild_id}): {total_members}")
 
         member_achievements = []
         for member in guild.members:
@@ -468,10 +484,19 @@ class Achievements(commands.Cog):
         sorted_members = sorted(member_achievements, key=lambda x: x['count'], reverse=True)
         return [item['member'] for item in sorted_members]
 
-    async def post_achievements_display(self):
-        channel = self.bot.get_channel(ACHIEVEMENT_CHANNEL_ID)
+    async def post_achievements_display(self, guild_id):
+        # Check if achievements are enabled for this server
+        if not is_feature_enabled(guild_id, 'achievements'):
+            return
+
+        achievement_channel_id = get_channel_id(guild_id, 'achievement_channel')
+        if not achievement_channel_id:
+            self.logger.warning(f"No achievement channel configured for guild {guild_id}")
+            return
+
+        channel = self.bot.get_channel(achievement_channel_id)
         if not channel:
-            self.logger.error(f"업적 채널 ID {ACHIEVEMENT_CHANNEL_ID}를 찾을 수 없습니다.")
+            self.logger.error(f"Achievement channel {achievement_channel_id} not found for guild {guild_id}")
             return
 
         try:
@@ -483,31 +508,29 @@ class Achievements(commands.Cog):
                     try:
                         await message.delete()
                         deleted_count += 1
-                        self.logger.debug(f"이전 업적 메시지 삭제 (ID: {message.id})")
+                        self.logger.debug(f"이전 업적 메시지 삭제 (ID: {message.id}) for guild {guild_id}")
                     except discord.NotFound:
                         pass
 
             if deleted_count > 0:
-                self.logger.info(f"{deleted_count}개의 이전 업적 메시지 삭제 완료")
+                self.logger.info(f"{deleted_count}개의 이전 업적 메시지 삭제 완료 for guild {guild_id}")
 
             list_embed = await self._create_achievement_list_embed()
             await channel.send(embed=list_embed)
-            self.logger.info("업적 목록 및 힌트 메시지 게시 완료")
+            self.logger.info(f"업적 목록 및 힌트 메시지 게시 완료 for guild {guild_id}")
 
-            sorted_members = await self._get_sorted_members()
+            sorted_members = await self._get_sorted_members(guild_id)
             if sorted_members:
-                view = PersistentAchievementView(self.bot, members=sorted_members)
-
-                cog = self.bot.get_cog("Achievements")
-                initial_embed = await view.get_current_embed(cog, sorted_members)
-                self.current_message = await channel.send(embed=initial_embed, view=view)
-                self.logger.info(f"업적 현황 메시지 게시 완료 (ID: {self.current_message.id})")
+                view = PersistentAchievementView(self.bot, guild_id, members=sorted_members)
+                initial_embed = await view.get_current_embed(self, sorted_members)
+                current_message = await channel.send(embed=initial_embed, view=view)
+                self.logger.info(f"업적 현황 메시지 게시 완료 (ID: {current_message.id}) for guild {guild_id}")
             else:
                 await channel.send("업적을 달성한 멤버가 없습니다.")
-                self.logger.warning("업적을 달성한 멤버가 없습니다.")
+                self.logger.warning(f"업적을 달성한 멤버가 없습니다 for guild {guild_id}")
 
         except Exception as e:
-            self.logger.error(f"업적 현황 메시지 게시 실패: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"업적 현황 메시지 게시 실패 for guild {guild_id}: {e}\n{traceback.format_exc()}")
 
     async def _create_achievements_embed(self, member: discord.Member, rank: int, total_members: int) -> discord.Embed:
         user_id = member.id
@@ -567,23 +590,32 @@ class Achievements(commands.Cog):
     async def on_ready(self):
         self.logger.info("업적 시스템 준비 완료")
 
-        guild = self.bot.get_guild(GUILD_ID)
-        if guild:
-            self.logger.info("봇 시작 시 길드 청킹 강제 실행 중...")
-            await guild.chunk()
-            total_members = len([m for m in guild.members if not m.bot])
-            self.logger.info(f"길드 청킹 완료. 총 비봇 멤버 수: {total_members}")
+        # Post achievement displays for all configured servers
+        all_configs = get_all_server_configs()
+        for guild_id_str, config in all_configs.items():
+            if config.get('features', {}).get('achievements', False):
+                guild_id = int(guild_id_str)
+                guild = self.bot.get_guild(guild_id)
+                if guild:
+                    self.logger.info(f"봇 시작 시 길드 {guild_id} 청킹 강제 실행 중...")
+                    await guild.chunk()
+                    total_members = len([m for m in guild.members if not m.bot])
+                    self.logger.info(f"길드 {guild_id} 청킹 완료. 총 비봇 멤버 수: {total_members}")
 
-        if ACHIEVEMENT_CHANNEL_ID:
-            self.logger.info("봇 시작 중. 업적 디스플레이 게시 시작.")
-            await self.post_achievements_display()
-            self.logger.info("초기 업적 디스플레이 게시 완료.")
+                    await self.post_achievements_display(guild_id)
 
     @tasks.loop(time=dt_time(hour=4, minute=0))
     async def daily_achievements_update(self):
         try:
             self.logger.info("일일 업적 업데이트 시작.")
-            await self.post_achievements_display()
+
+            # Update achievements for all configured servers
+            all_configs = get_all_server_configs()
+            for guild_id_str, config in all_configs.items():
+                if config.get('features', {}).get('achievements', False):
+                    guild_id = int(guild_id_str)
+                    await self.post_achievements_display(guild_id)
+
             self.logger.info("일일 업적 업데이트 완료.")
         except Exception as e:
             self.logger.error(f"일일 업적 업데이트 실패: {e}\n{traceback.format_exc()}")
@@ -599,21 +631,29 @@ class Achievements(commands.Cog):
             return
         self.data[member.id]["join_date"] = member.joined_at.isoformat()
         self.save_data()
-        self.logger.info(f"새 멤버 가입 기록: {member.name} (ID: {member.id})")
+        self.logger.info(f"새 멤버 가입 기록: {member.name} (ID: {member.id}) in guild {member.guild.id}")
 
     @commands.Cog.listener()
     async def on_member_update(self, before, after):
+        # Only track if achievements are enabled for this server
+        if not is_feature_enabled(after.guild.id, 'achievements'):
+            return
+
         if before.premium_since is None and after.premium_since is not None:
             user_data = self.data[after.id]
             if not user_data.get("has_boosted"):
                 self.unlock_achievement(after, "Boost Buddy")
                 user_data["has_boosted"] = True
                 self.save_data()
-                self.logger.info(f"서버 부스팅 업적 달성: {after.name} (ID: {after.id})")
+                self.logger.info(f"서버 부스팅 업적 달성: {after.name} (ID: {after.id}) in guild {after.guild.id}")
 
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot:
+            return
+
+        # Skip if not in a guild or achievements not enabled
+        if not message.guild or not is_feature_enabled(message.guild.id, 'achievements'):
             return
 
         user_id = message.author.id
@@ -739,8 +779,14 @@ class Achievements(commands.Cog):
             self.unlock_achievement(message.author, "I'm Not Listening", is_hidden=True)
         if '❄️' in message.content:
             self.unlock_achievement(message.author, "Code Breaker", is_hidden=True)
-        if message.mentions and message.mentions[0].id == GHOST_HUNTER_ID:
-            self.unlock_achievement(message.author, "Ghost Hunter", is_hidden=True)
+
+        # Ghost Hunter - check for specific role mention
+        ghost_hunter_role_id = get_role_id(message.guild.id, 'ghost_hunter_role')
+        if ghost_hunter_role_id and message.mentions:
+            for mentioned_user in message.mentions:
+                if mentioned_user.id == ghost_hunter_role_id:
+                    self.unlock_achievement(message.author, "Ghost Hunter", is_hidden=True)
+
         if '||' in message.content:
             self.unlock_achievement(message.author, "Invisible Ink", is_hidden=True)
 
@@ -758,11 +804,22 @@ class Achievements(commands.Cog):
             self.unlock_achievement(message.author, "Shadow Lurker", is_hidden=True)
         user_data["last_lurker_message"] = now
 
+        # Ping Master achievement - check if bot is mentioned
+        if self.bot.user in message.mentions:
+            if not user_data.get("bot_pinged"):
+                self.unlock_achievement(message.author, "Ping Master", is_hidden=True)
+                user_data["bot_pinged"] = True
+
         self.save_data()
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
         if payload.member and payload.member.bot:
+            return
+
+        # Check if achievements are enabled for this server
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild or not is_feature_enabled(guild.id, 'achievements'):
             return
 
         user_id = payload.user_id
@@ -795,11 +852,16 @@ class Achievements(commands.Cog):
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):
-            self.unlock_achievement(ctx.author, "Error 404", is_hidden=True)
+            if ctx.guild and is_feature_enabled(ctx.guild.id, 'achievements'):
+                self.unlock_achievement(ctx.author, "Error 404", is_hidden=True)
 
     @commands.Cog.listener()
     async def on_message_edit(self, before, after):
         if after.author.bot:
+            return
+
+        # Check if achievements are enabled for this server
+        if not after.guild or not is_feature_enabled(after.guild.id, 'achievements'):
             return
 
         user_id = after.author.id
@@ -819,45 +881,55 @@ class Achievements(commands.Cog):
         if member.bot:
             return
 
+        # Check if achievements are enabled for this server
+        if not is_feature_enabled(member.guild.id, 'achievements'):
+            return
+
         if before.channel is None and after.channel is not None:
             # Member joined voice channel
             self.data[member.id]["voice_join_time"] = datetime.datetime.now()
-            self.logger.debug(f"음성 채널 입장: {member.name}")
+            self.logger.debug(f"음성 채널 입장: {member.name} in guild {member.guild.id}")
         elif before.channel is not None and after.channel is None and "voice_join_time" in self.data[member.id]:
             # Member left voice channel
             duration = datetime.datetime.now() - self.data[member.id]["voice_join_time"]
             self.data[member.id]["voice_time"] += duration.total_seconds()
             del self.data[member.id]["voice_join_time"]
-            self.logger.debug(f"음성 채널 퇴장: {member.name}, 세션 시간: {duration.total_seconds():.1f}초")
+            self.logger.debug(
+                f"음성 채널 퇴장: {member.name}, 세션 시간: {duration.total_seconds():.1f}초 in guild {member.guild.id}")
             self.save_data()
 
     @tasks.loop(minutes=1)
     async def voice_update_task(self):
-        guild = self.bot.get_guild(GUILD_ID)
-        if not guild:
-            return
+        # Update voice time for all configured servers
+        all_configs = get_all_server_configs()
+        for guild_id_str, config in all_configs.items():
+            if config.get('features', {}).get('achievements', False):
+                guild_id = int(guild_id_str)
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    continue
 
-        now = datetime.datetime.now()
-        updated_count = 0
+                now = datetime.datetime.now()
+                updated_count = 0
 
-        for member_id, user_data in self.data.items():
-            member = guild.get_member(member_id)
-            voice_join_time = user_data.get("voice_join_time")
-            if member and member.voice and member.voice.channel and voice_join_time:
-                duration = now - voice_join_time
-                user_data["voice_time"] += duration.total_seconds()
-                user_data["voice_join_time"] = now
-                updated_count += 1
+                for member_id, user_data in self.data.items():
+                    member = guild.get_member(member_id)
+                    voice_join_time = user_data.get("voice_join_time")
+                    if member and member.voice and member.voice.channel and voice_join_time:
+                        duration = now - voice_join_time
+                        user_data["voice_time"] += duration.total_seconds()
+                        user_data["voice_join_time"] = now
+                        updated_count += 1
 
-                # Check for voice achievements
-                if user_data["voice_time"] >= 36000:  # 10 hours
-                    self.unlock_achievement(member, "Voice Veteran")
-                if user_data["voice_time"] >= 180000:  # 50 hours
-                    self.unlock_achievement(member, "Loyal Listener")
+                        # Check for voice achievements
+                        if user_data["voice_time"] >= 36000:  # 10 hours
+                            self.unlock_achievement(member, "Voice Veteran")
+                        if user_data["voice_time"] >= 180000:  # 50 hours
+                            self.unlock_achievement(member, "Loyal Listener")
 
-        if updated_count > 0:
-            self.save_data()
-            self.logger.debug(f"음성 시간 업데이트: {updated_count}명")
+                if updated_count > 0:
+                    self.save_data()
+                    self.logger.debug(f"음성 시간 업데이트: {updated_count}명 in guild {guild_id}")
 
     @voice_update_task.before_loop
     async def before_voice_update_task(self):
@@ -867,32 +939,36 @@ class Achievements(commands.Cog):
     @app_commands.command(name="achievements", description="Shows a member's achievements.")
     async def achievements_command(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
         try:
-            sorted_members = await self._get_sorted_members()
+            # Check if achievements are enabled for this server
+            if not is_feature_enabled(interaction.guild.id, 'achievements'):
+                await interaction.response.send_message("Achievement system is not enabled in this server.",
+                                                        ephemeral=True)
+                return
+
+            sorted_members = await self._get_sorted_members(interaction.guild.id)
             if not sorted_members:
                 await interaction.response.send_message("No members found with achievements.", ephemeral=True)
                 return
 
-            cog = self.bot.get_cog("Achievements")
-
             if member:
                 try:
                     index = next(i for i, m in enumerate(sorted_members) if m.id == member.id)
-                    view = PersistentAchievementView(self.bot, members=sorted_members)
+                    view = PersistentAchievementView(self.bot, interaction.guild.id, members=sorted_members)
                     view.current_page = index
-                    initial_embed = await view.get_current_embed(cog, sorted_members)
+                    initial_embed = await view.get_current_embed(self, sorted_members)
                     await interaction.response.send_message(embed=initial_embed, view=view, ephemeral=True)
-                    self.logger.info(f"업적 명령어 실행 (특정 멤버): {member.name}")
+                    self.logger.info(f"업적 명령어 실행 (특정 멤버): {member.name} in guild {interaction.guild.id}")
                 except StopIteration:
                     await interaction.response.send_message(
                         f"Member {member.display_name} not found in the achievement leaderboard.", ephemeral=True)
             else:
-                view = PersistentAchievementView(self.bot, members=sorted_members)
-                initial_embed = await view.get_current_embed(cog, sorted_members)
+                view = PersistentAchievementView(self.bot, interaction.guild.id, members=sorted_members)
+                initial_embed = await view.get_current_embed(self, sorted_members)
                 await interaction.response.send_message(embed=initial_embed, view=view)
-                self.logger.info("업적 명령어 실행 (전체 리더보드)")
+                self.logger.info(f"업적 명령어 실행 (전체 리더보드) in guild {interaction.guild.id}")
 
         except Exception as e:
-            self.logger.error(f"업적 명령어 실행 실패: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"업적 명령어 실행 실패 in guild {interaction.guild.id}: {e}\n{traceback.format_exc()}")
             if not interaction.response.is_done():
                 await interaction.response.send_message("업적 데이터를 불러오는 중 오류가 발생했습니다.", ephemeral=True)
 

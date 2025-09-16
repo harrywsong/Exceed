@@ -1,10 +1,16 @@
-# cogs/admin.py
+# cogs/admin.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
 import traceback
 from typing import Optional
+
+from utils.config import (
+    get_channel_id,
+    get_all_server_configs,
+    is_server_configured
+)
 
 
 class DevToolsCog(commands.Cog):
@@ -194,7 +200,7 @@ class DevToolsCog(commands.Cog):
 
             if any(word in cog_name.lower() for word in ['casino', 'slot', 'coin', 'game']):
                 casino_cogs.append(cog_name)
-            elif any(word in cog_name.lower() for word in ['admin', 'dev', 'util', 'log']):
+            elif any(word in cog_name.lower() for word in ['admin', 'dev', 'util', 'log', 'setup']):
                 utility_cogs.append(cog_name)
             else:
                 other_cogs.append(cog_name)
@@ -216,6 +222,71 @@ class DevToolsCog(commands.Cog):
             value=f"**Total Loaded:** {len(loaded_cogs)} cogs",
             inline=False
         )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="serverstatus", description="Show multi-server configuration status")
+    async def server_status(self, interaction: discord.Interaction):
+        """Show status of all configured servers"""
+        all_configs = get_all_server_configs()
+
+        if not all_configs:
+            embed = discord.Embed(
+                title="📊 Multi-Server Status",
+                description="No servers are currently configured.",
+                color=discord.Color.orange()
+            )
+        else:
+            embed = discord.Embed(
+                title="📊 Multi-Server Status",
+                description=f"Bot is serving **{len(self.bot.guilds)}** servers, **{len(all_configs)}** configured",
+                color=discord.Color.blue()
+            )
+
+            # Show configured servers
+            server_list = []
+            for guild_id_str, config in list(all_configs.items())[:10]:  # Show first 10
+                guild = self.bot.get_guild(int(guild_id_str))
+                guild_name = guild.name if guild else config.get('guild_name', 'Unknown Server')
+
+                enabled_features = sum(config.get('features', {}).values())
+                configured_channels = len([c for c in config.get('channels', {}).values() if c])
+
+                status = "🟢 Online" if guild else "🔴 Offline"
+                server_list.append(
+                    f"{status} **{guild_name}**\n└ Features: {enabled_features}, Channels: {configured_channels}")
+
+            if server_list:
+                embed.add_field(
+                    name="🔗 Configured Servers",
+                    value="\n\n".join(server_list),
+                    inline=False
+                )
+
+                if len(all_configs) > 10:
+                    embed.add_field(
+                        name="📋 Additional",
+                        value=f"...and {len(all_configs) - 10} more configured servers",
+                        inline=False
+                    )
+
+            # Show current server status
+            if interaction.guild:
+                current_config = all_configs.get(str(interaction.guild.id))
+                if current_config:
+                    enabled_features = list(current_config.get('features', {}).keys())
+                    enabled_count = sum(current_config.get('features', {}).values())
+                    embed.add_field(
+                        name=f"⚙️ Current Server ({interaction.guild.name})",
+                        value=f"Status: ✅ Configured\nEnabled Features: {enabled_count}\nFeatures: {', '.join(enabled_features) if enabled_features else 'None'}",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=f"⚙️ Current Server ({interaction.guild.name})",
+                        value="Status: ❌ Not Configured\nRun `/봇셋업` to configure this server",
+                        inline=False
+                    )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -296,14 +367,40 @@ class DevToolsCog(commands.Cog):
             inline=True
         )
 
+        # Multi-server stats
+        all_configs = get_all_server_configs()
+        configured_servers = len(all_configs)
+        total_servers = len(self.bot.guilds)
+
+        embed.add_field(
+            name="🌐 Multi-Server Stats",
+            value=f"**Total Servers:** {total_servers}\n"
+                  f"**Configured:** {configured_servers}\n"
+                  f"**Configuration Rate:** {(configured_servers / total_servers * 100):.1f}%" if total_servers > 0 else "0%",
+            inline=True
+        )
+
         # System info
         embed.add_field(
             name="🤖 Bot Status",
             value=f"**Loaded Cogs:** {len(self.bot.extensions)}\n"
-                  f"**Guilds:** {len(self.bot.guilds)}\n"
-                  f"**Users:** {len(self.bot.users)}",
+                  f"**Total Users:** {len(self.bot.users)}\n"
+                  f"**Latency:** {self.bot.latency * 1000:.1f}ms",
             inline=True
         )
+
+        # Feature usage stats
+        if all_configs:
+            feature_stats = {}
+            for config in all_configs.values():
+                for feature, enabled in config.get('features', {}).items():
+                    if enabled:
+                        feature_stats[feature] = feature_stats.get(feature, 0) + 1
+
+            if feature_stats:
+                top_features = sorted(feature_stats.items(), key=lambda x: x[1], reverse=True)[:5]
+                feature_text = "\n".join([f"• {feature}: {count} servers" for feature, count in top_features])
+                embed.add_field(name="🚀 Most Used Features", value=feature_text, inline=False)
 
         # Last reload info
         if self.reload_stats['last_reload_time']:

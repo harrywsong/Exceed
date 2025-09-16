@@ -1,4 +1,7 @@
-# cogs/casino_hilow.py
+# =============================================================================
+# cogs/casino_hilow.py - Updated for multi-server support
+# =============================================================================
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,15 +9,18 @@ import asyncio
 import random
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    is_feature_enabled,
+    get_server_setting
+)
 
 
 class HiLowCog(commands.Cog):
-    """Hi-Low dice game"""
+    """Hi-Low dice game - Multi-server aware"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("하이로우", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("하이로우", bot=bot)
         self.logger.info("하이로우 게임 시스템이 초기화되었습니다.")
 
     def get_dice_visual(self, value):
@@ -55,13 +61,17 @@ class HiLowCog(commands.Cog):
         if not casino_base:
             return False, "카지노 시스템을 찾을 수 없습니다!"
 
+        # Get server-specific limits
+        min_bet = get_server_setting(interaction.guild.id, 'hilow_min_bet', 10)
+        max_bet = get_server_setting(interaction.guild.id, 'hilow_max_bet', 200)
+
         return await casino_base.validate_game_start(
-            interaction, "hilow", bet, 10, 200
+            interaction, "hilow", bet, min_bet, max_bet
         )
 
     @app_commands.command(name="하이로우", description="7을 기준으로 높음/낮음 맞히기")
     @app_commands.describe(
-        bet="베팅 금액 (10-200)",
+        bet="베팅 금액",
         choice="7보다 높을지(high) 낮을지(low)"
     )
     @app_commands.choices(choice=[
@@ -69,6 +79,11 @@ class HiLowCog(commands.Cog):
         app_commands.Choice(name="📉 낮음 (2-6)", value="low")
     ])
     async def hilow(self, interaction: discord.Interaction, bet: int, choice: str):
+        # Check if casino games are enabled for this server
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
+            return
+
         can_start, error_msg = await self.validate_game(interaction, bet)
         if not can_start:
             await interaction.response.send_message(error_msg, ephemeral=True)
@@ -89,6 +104,7 @@ class HiLowCog(commands.Cog):
             description=f"예상: **{choice_display[choice]}**\n베팅: **{bet:,}** 코인\n\n기준점: **7** ⚡",
             color=discord.Color.blue()
         )
+        embed.set_footer(text=f"Server: {interaction.guild.name}")
         await interaction.edit_original_response(embed=embed)
         await asyncio.sleep(1.5)
 
@@ -101,6 +117,7 @@ class HiLowCog(commands.Cog):
                 description=f"🌀 굴리는 중... {i + 1}/5\n\n{self.create_dice_display(temp_die1, temp_die2, 0, rolling=True)}",
                 color=discord.Color.blue()
             )
+            embed.set_footer(text=f"Server: {interaction.guild.name}")
             await interaction.edit_original_response(embed=embed)
             await asyncio.sleep(0.7)
 
@@ -125,7 +142,9 @@ class HiLowCog(commands.Cog):
             result_type = "loss"
 
         if won:
-            payout = bet * 2
+            # Get server-specific payout multiplier
+            payout_multiplier = get_server_setting(interaction.guild.id, 'hilow_payout', 2.0)
+            payout = int(bet * payout_multiplier)
             await coins_cog.add_coins(interaction.user.id, payout, "hilow_win", f"Hi-Low win: {total}")
 
         # Create result embed
@@ -144,9 +163,10 @@ class HiLowCog(commands.Cog):
                 title="🎉 승리!",
                 color=discord.Color.green()
             )
+            payout_multiplier = get_server_setting(interaction.guild.id, 'hilow_payout', 2.0)
             result_desc = f"{self.create_dice_display(die1, die2, total)}\n\n"
             result_desc += f"🎯 예상: **{choice_display[choice]}** ✅\n"
-            result_desc += f"💎 2배 배당!\n"
+            result_desc += f"💎 {payout_multiplier}배 배당!\n"
             result_desc += f"💰 획득: **{payout:,}** 코인"
 
         else:
@@ -164,15 +184,17 @@ class HiLowCog(commands.Cog):
         embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         # Add game rules
+        payout_multiplier = get_server_setting(interaction.guild.id, 'hilow_payout', 2.0)
         rules_text = "**📋 게임 규칙:**\n"
-        rules_text += "📈 **높음**: 8-12 (2배)\n"
-        rules_text += "📉 **낮음**: 2-6 (2배)\n"
+        rules_text += f"📈 **높음**: 8-12 ({payout_multiplier}배)\n"
+        rules_text += f"📉 **낮음**: 2-6 ({payout_multiplier}배)\n"
         rules_text += "⚡ **7**: 무승부 (환불)"
 
         embed.add_field(name="ℹ️ 참고", value=rules_text, inline=False)
+        embed.set_footer(text=f"Server: {interaction.guild.name}")
 
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 하이로우에서 {bet} 코인 {'승리' if won else '패배' if total != 7 else '무승부'}")
+        self.logger.info(f"{interaction.user}가 하이로우에서 {bet} 코인 {'승리' if won else '패배' if total != 7 else '무승부'} (Guild: {interaction.guild.id})")
 
 
 async def setup(bot):

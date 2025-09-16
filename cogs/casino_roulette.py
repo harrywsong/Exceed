@@ -1,4 +1,4 @@
-# cogs/casino_roulette_simple.py
+# cogs/casino_roulette.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,15 +6,18 @@ import asyncio
 import random
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    is_feature_enabled,
+    get_server_setting
+)
 
 
 class RouletteSimpleCog(commands.Cog):
-    """Simple roulette game with single command"""
+    """Simple roulette game with single command - Multi-server aware"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("룰렛", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("룰렛", bot=bot)
 
         # Roulette setup
         self.red_numbers = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
@@ -33,7 +36,7 @@ class RouletteSimpleCog(commands.Cog):
 
     @app_commands.command(name="룰렛", description="룰렛 게임 (색깔 또는 숫자)")
     @app_commands.describe(
-        bet="베팅 금액 (20-200)",
+        bet="베팅 금액",
         bet_type="베팅 타입",
         value="베팅할 값 (색깔: red/black, 숫자: 0-36)"
     )
@@ -42,12 +45,19 @@ class RouletteSimpleCog(commands.Cog):
         app_commands.Choice(name="숫자 (36배)", value="number")
     ])
     async def roulette(self, interaction: discord.Interaction, bet: int, bet_type: str, value: str):
+        # Check if casino games are enabled for this server
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
+            return
+
         # Validation based on bet type
         if bet_type == "color":
             if value.lower() not in ["red", "black"]:
                 await interaction.response.send_message("색깔은 'red' 또는 'black'만 가능합니다!", ephemeral=True)
                 return
-            min_bet, max_bet = 20, 200
+            # Get server-specific limits for color bets
+            min_bet = get_server_setting(interaction.guild.id, 'roulette_color_min_bet', 20)
+            max_bet = get_server_setting(interaction.guild.id, 'roulette_color_max_bet', 200)
         else:  # number
             try:
                 num_value = int(value)
@@ -57,7 +67,9 @@ class RouletteSimpleCog(commands.Cog):
             except ValueError:
                 await interaction.response.send_message("유효한 숫자를 입력해주세요!", ephemeral=True)
                 return
-            min_bet, max_bet = 10, 500
+            # Get server-specific limits for number bets
+            min_bet = get_server_setting(interaction.guild.id, 'roulette_number_min_bet', 10)
+            max_bet = get_server_setting(interaction.guild.id, 'roulette_number_max_bet', 500)
 
         can_start, error_msg = await self.validate_game(interaction, bet, min_bet, max_bet)
         if not can_start:
@@ -82,6 +94,7 @@ class RouletteSimpleCog(commands.Cog):
                 description=f"{color_emoji} **{temp_num}** 🎡\n\n{'⚪' * (i % 4 + 1)} 스피닝... {'⚪' * (3 - i % 4)}",
                 color=discord.Color.blue()
             )
+            embed.set_footer(text=f"Server: {interaction.guild.name}")
             await interaction.edit_original_response(embed=embed)
             await asyncio.sleep(0.5)
 
@@ -93,12 +106,16 @@ class RouletteSimpleCog(commands.Cog):
         won = False
         payout = 0
 
+        # Get server-specific payout multipliers
+        color_multiplier = get_server_setting(interaction.guild.id, 'roulette_color_multiplier', 2)
+        number_multiplier = get_server_setting(interaction.guild.id, 'roulette_number_multiplier', 36)
+
         if bet_type == "color" and value.lower() == winning_color:
             won = True
-            payout = bet * 2
+            payout = bet * color_multiplier
         elif bet_type == "number" and int(value) == winning_number:
             won = True
-            payout = bet * 36
+            payout = bet * number_multiplier
 
         if won:
             await coins_cog.add_coins(interaction.user.id, payout, "roulette_win", f"Roulette win: {winning_number}")
@@ -111,16 +128,17 @@ class RouletteSimpleCog(commands.Cog):
             )
         else:
             embed = discord.Embed(
-                title="💸 아쉽네요!",
+                title="💸 패배!",
                 description=f"{color_emoji} **{winning_number}** ({winning_color})\n예상: {value}\n\n{bet:,} 코인 손실",
                 color=discord.Color.red()
             )
 
         new_balance = await coins_cog.get_user_coins(interaction.user.id)
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
+        embed.set_footer(text=f"Server: {interaction.guild.name}")
 
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 룰렛에서 {bet} 코인 {'승리' if won else '패배'}")
+        self.logger.info(f"{interaction.user}가 룰렛에서 {bet} 코인 {'승리' if won else '패배'} (Guild: {interaction.guild.id})")
 
 
 async def setup(bot):

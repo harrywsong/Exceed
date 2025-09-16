@@ -1,4 +1,4 @@
-# cogs/casino_bingo.py
+# cogs/casino_bingo.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -7,7 +7,10 @@ import random
 from typing import Dict, List, Optional
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    is_feature_enabled,
+    is_server_configured
+)
 
 
 class BingoCard:
@@ -109,11 +112,12 @@ class BingoPlayer:
 
 
 class MultiBingoView(discord.ui.View):
-    """Interactive multiplayer bingo game view - NO CARD BUTTON"""
+    """Interactive multiplayer bingo game view - Multi-server aware"""
 
-    def __init__(self, bot, channel_id: int, initial_user_id: int, initial_bet: int):
+    def __init__(self, bot, guild_id: int, channel_id: int, initial_user_id: int, initial_bet: int):
         super().__init__(timeout=180)  # 3 minutes for joining
         self.bot = bot
+        self.guild_id = guild_id
         self.channel_id = channel_id
         self.players: Dict[int, BingoPlayer] = {}
         self.called_numbers = []
@@ -201,7 +205,7 @@ class MultiBingoView(discord.ui.View):
             await self.end_game(interaction, f"{len(new_winners)}명의 플레이어가 빙고를 달성했습니다!")
             return
 
-        # CRITICAL: Update the embed with all updated cards - THIS IS THE KEY FIX
+        # Update the embed with all updated cards
         try:
             embed = self.create_game_embed(called_number)
             await interaction.edit_original_response(embed=embed, view=self)
@@ -247,7 +251,7 @@ class MultiBingoView(discord.ui.View):
 
         embed = discord.Embed(title=title, description=description, color=color)
 
-        # THIS IS THE CRITICAL PART: Show ALL player cards publicly during game
+        # Show ALL player cards publicly during game
         if self.players and (self.game_started or self.game_over):
             for player in self.players.values():
                 status_emoji = "🏆" if player.has_bingo else "🎲"
@@ -428,11 +432,11 @@ class MultiBingoView(discord.ui.View):
 
 
 class BingoCog(commands.Cog):
-    """Casino Bingo game"""
+    """Casino Bingo game - Multi-server aware"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("빙고", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("빙고", bot=bot)
         self.active_games: Dict[int, MultiBingoView] = {}  # channel_id -> game
         self.logger.info("빙고 게임 시스템이 초기화되었습니다.")
 
@@ -449,6 +453,11 @@ class BingoCog(commands.Cog):
     @app_commands.command(name="빙고", description="멀티플레이어 빙고 게임을 시작하거나 참가합니다")
     @app_commands.describe(bet="베팅 금액 (30-500코인)")
     async def bingo(self, interaction: discord.Interaction, bet: int = 50):
+        # Check if casino games are enabled for this server
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
+            return
+
         channel_id = interaction.channel_id
 
         # Check if there's already an active game in this channel
@@ -480,7 +489,7 @@ class BingoCog(commands.Cog):
             return
 
         # Create new game
-        game_view = MultiBingoView(self.bot, channel_id, interaction.user.id, bet)
+        game_view = MultiBingoView(self.bot, interaction.guild.id, channel_id, interaction.user.id, bet)
         self.active_games[channel_id] = game_view
 
         # Update the first player with the actual username
@@ -504,7 +513,7 @@ class BingoCog(commands.Cog):
         if channel_id in self.active_games and self.active_games[channel_id].game_over:
             del self.active_games[channel_id]
 
-        self.logger.info(f"{interaction.user}가 {bet}코인으로 멀티플레이어 빙고 게임을 시작했습니다")
+        self.logger.info(f"{interaction.user}가 {bet}코인으로 멀티플레이어 빙고 게임을 시작했습니다 (Guild: {interaction.guild.id})")
 
 
 async def setup(bot):

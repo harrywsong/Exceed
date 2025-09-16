@@ -59,13 +59,14 @@ bot_manager = BotManager.get_instance()
 global bot_instance
 bot_instance = None
 
+
 # --- Database Functions (Enhanced with better error handling) ---
 async def create_db_pool_in_bot():
     """Creates and returns a PostgreSQL connection pool with enhanced error handling."""
     try:
-        database_url = os.getenv("DATABASE_URL")
+        database_url = config.DATABASE_URL
         if not database_url:
-            raise ValueError("DATABASE_URL 환경 변수가 설정되지 않았습니다.")
+            raise ValueError("DATABASE_URL environment variable not set.")
 
         # Test connection first
         test_conn = await asyncpg.connect(database_url)
@@ -82,7 +83,7 @@ async def create_db_pool_in_bot():
         )
         return pool
     except Exception as e:
-        print(f"❌ 환경 변수의 DATABASE_URL을 사용하여 데이터베이스 풀 생성 실패: {e}", file=sys.stderr)
+        print(f"Failed to create database pool using DATABASE_URL: {e}", file=sys.stderr)
         raise
 
 
@@ -132,6 +133,7 @@ LEVEL_MAP = {
     'WARN': logging.WARNING
 }
 
+
 @api_app.route('/config', methods=['GET'])
 def get_bot_config():
     """
@@ -145,24 +147,26 @@ def get_bot_config():
     try:
         sensitive_keywords = ['TOKEN', 'SECRET', 'KEY', 'PASSWORD', 'DATABASE_URL', 'API', 'WEBHOOK']
         safe_config = {}
-        # inspect.getmembers를 사용하여 config 모듈의 모든 멤버를 순회합니다.
-        for name, value in inspect.getmembers(config):
-            # Dunder (dunder, double underscore) 속성, 모듈, 함수, 클래스는 건너뜁니다.
-            if name.startswith('__') or inspect.ismodule(value) or inspect.isfunction(value) or inspect.isclass(value):
-                continue
-            # 민감한 키워드를 포함하는 변수는 건너뜁니다.
-            if any(keyword in name.upper() for keyword in sensitive_keywords):
-                continue
-            # 안전한 설정 값을 문자열로 변환하여 저장합니다.
-            safe_config[name] = str(value)
+
+        # Get global config
+        global_config = config.get_global_config()
+        for key, value in global_config.items():
+            if not any(keyword in key.upper() for keyword in sensitive_keywords):
+                safe_config[key] = str(value) if value is not None else None
+
+        # Add server count info
+        if bot_instance and bot_instance.is_ready():
+            all_server_configs = config.get_all_server_configs()
+            safe_config['configured_servers'] = len(all_server_configs)
+            safe_config['total_servers'] = len(bot_instance.guilds)
 
         current_logger.info("API: Successfully retrieved non-sensitive bot configuration.")
         return jsonify({"status": "success", "config": safe_config}), 200
 
     except Exception as e:
-        current_logger.error(f"API Error: Failed to retrieve bot configuration from utils.config. Error: {e}",
-                             exc_info=True)
+        current_logger.error(f"API Error: Failed to retrieve bot configuration: {e}", exc_info=True)
         return jsonify({"status": "error", "error": f"Failed to retrieve bot configuration: {e}"}), 500
+
 
 @api_app.route('/logs', methods=['GET'])
 def get_recent_logs():
@@ -170,12 +174,8 @@ def get_recent_logs():
     Returns recent log entries from the bot's log file.
     """
     try:
-        # 로그 파일 경로를 절대 경로로 정확하게 지정해야 합니다.
-        # 예: pathlib.Path(__file__).parent / "logs" / "log.log"
-        # 여기서는 utils.logger.LOG_FILE_PATH를 사용한다고 가정합니다.
         log_file_path = logger_module.LOG_FILE_PATH
         if not log_file_path.exists():
-            # 봇 인스턴스의 로거를 사용하여 오류 기록
             if bot_instance and hasattr(bot_instance, 'logger'):
                 bot_instance.logger.error(f"Log file not found at: {log_file_path}")
             else:
@@ -185,52 +185,54 @@ def get_recent_logs():
         with open(log_file_path, 'r', encoding='utf-8', errors='ignore') as f:
             lines = f.readlines()
             recent_logs = []
-            # 로그 형식에 맞는 정규 표현식 (예: [YYYY-MM-DD HH:MM:SS] [LEVEL....] [LOGGER_NAME] Message)
-            log_pattern = re.compile(r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(.*?)(?:\.<(\d+))?\] \[(.*?)\] (.*)$')
+            log_pattern = re.compile(
+                r'^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[(.*?)(?:\.<(\d+))?\] \[(.*?)\] (.*)$')
 
-            # 최신 200줄을 읽어와 효율성을 높입니다.
+            # Read latest 200 lines for efficiency
             for line in reversed(lines[-200:]):
                 match = log_pattern.match(line.strip())
                 if match:
                     timestamp, level_raw, thread_id_part, logger_name, message = match.groups()
-                    # level_raw에서 불필요한 부분 제거 (예: "INFO...." -> "INFO")
                     level = level_raw.split('.')[0]
                     recent_logs.append({
                         "timestamp": timestamp,
-                        "level": level.upper(), # 레벨을 대문자로 통일
+                        "level": level.upper(),
                         "logger_name": logger_name,
                         "message": message
                     })
                 else:
-                    # 패턴에 맞지 않는 줄을 위한 대체 처리 (예: 로그 레벨 추출 시도)
+                    # Pattern doesn't match - try to extract level
                     level = "UNKNOWN"
-                    if "DEBUG" in line.upper(): level = "DEBUG"
-                    elif "INFO" in line.upper(): level = "INFO"
-                    elif "WARNING" in line.upper(): level = "WARNING"
-                    elif "ERROR" in line.upper(): level = "ERROR"
-                    elif "CRITICAL" in line.upper(): level = "CRITICAL"
+                    if "DEBUG" in line.upper():
+                        level = "DEBUG"
+                    elif "INFO" in line.upper():
+                        level = "INFO"
+                    elif "WARNING" in line.upper():
+                        level = "WARNING"
+                    elif "ERROR" in line.upper():
+                        level = "ERROR"
+                    elif "CRITICAL" in line.upper():
+                        level = "CRITICAL"
 
-                    # 표시용 메시지 길이 제한
                     message_part = line.strip()
                     if len(message_part) > 200:
                         message_part = message_part[:200] + "..."
 
                     recent_logs.append({
-                        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'), # 파싱되지 않은 로그에는 현재 시간 사용
+                        "timestamp": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         "level": level,
                         "logger_name": "Unparsed",
                         "message": message_part
                     })
 
-        # 최신 로그가 맨 아래에 오도록 순서를 다시 뒤집습니다.
         return jsonify({"status": "success", "logs": recent_logs[::-1]}), 200
     except Exception as e:
-        # 봇 인스턴스의 로거를 사용하여 오류 기록
         if bot_instance and hasattr(bot_instance, 'logger'):
             bot_instance.logger.error(f"Error retrieving logs: {e}", exc_info=True)
         else:
             logging.getLogger().error(f"Error retrieving logs: {e}", exc_info=True)
         return jsonify({"status": "error", "message": f"Failed to retrieve logs: {e}"}), 500
+
 
 @api_app.route('/health')
 def health_check():
@@ -281,11 +283,16 @@ def bot_status():
         # Check if coins system is loaded
         coins_loaded = 'cogs.coins' in bot.extensions
 
+        # Get configured server count
+        all_server_configs = config.get_all_server_configs()
+        configured_servers = len(all_server_configs)
+
         return jsonify({
             "status": "Online",
             "uptime": uptime_str,
             "latency_ms": latency_ms,
             "guild_count": len(bot.guilds),
+            "configured_servers": configured_servers,
             "user_count": len(bot.users),
             "commands_used_today": getattr(bot, 'total_commands_today', 0),
             "database_available": bool(bot.pool),
@@ -299,11 +306,13 @@ def bot_status():
             "uptime": "N/A",
             "latency_ms": "N/A",
             "guild_count": 0,
+            "configured_servers": 0,
             "user_count": 0,
             "commands_today": 0,
             "database_available": False,
             "error": "Bot is not ready or offline."
         }), 503
+
 
 @api_app.route('/api/guilds', methods=['GET'])
 def get_guilds():
@@ -313,7 +322,12 @@ def get_guilds():
             return jsonify({"status": "error", "error": "Bot is not ready."}), 503
 
         guild_list = []
+        all_server_configs = config.get_all_server_configs()
+
         for guild in bot_instance.guilds:
+            is_configured = str(guild.id) in all_server_configs
+            guild_config = all_server_configs.get(str(guild.id), {})
+
             guild_list.append({
                 "id": str(guild.id),
                 "name": guild.name,
@@ -321,11 +335,15 @@ def get_guilds():
                 "member_count": guild.member_count,
                 "channel_count": len(guild.channels),
                 "owner_name": str(guild.owner),
-                "owner_id": str(guild.owner_id)
+                "owner_id": str(guild.owner_id),
+                "configured": is_configured,
+                "features_enabled": len(
+                    [f for f in guild_config.get('features', {}).values() if f]) if is_configured else 0
             })
         return jsonify(guild_list), 200
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
+
 
 @api_app.route('/command_stats')
 def command_stats():
@@ -467,12 +485,12 @@ def control_bot_api(action):
 
     try:
         if action == 'restart':
-            bot.logger.info("API 요청: 봇 재시작 중...")
+            bot.logger.info("API request: Bot restart initiated...")
             asyncio.run_coroutine_threadsafe(bot.graceful_shutdown(), bot.loop)
             return jsonify({"status": "success", "message": "Bot restart initiated."})
 
         elif action == 'reload_cogs':
-            bot.logger.info("API 요청: 모든 Cog 재로드 중...")
+            bot.logger.info("API request: Reloading all cogs...")
             future = asyncio.run_coroutine_threadsafe(bot.reload_all_cogs(), bot.loop)
             try:
                 future.result(timeout=30)  # 30 second timeout
@@ -480,24 +498,24 @@ def control_bot_api(action):
             except asyncio.TimeoutError:
                 return jsonify({"status": "error", "error": "Cog reload timed out"}), 504
             except Exception as e:
-                bot.logger.error(f"Cog 재로드 실패: {e}")
+                bot.logger.error(f"Cog reload failed: {e}")
                 return jsonify({"status": "error", "error": f"Failed to reload cogs: {e}"}), 500
 
         elif action == 'update_git':
-            bot.logger.info("API 요청: Git 업데이트 중...")
+            bot.logger.info("API request: Git update...")
             try:
                 result = subprocess.run(['git', 'pull'], capture_output=True, text=True,
                                         cwd=os.getcwd(), timeout=60)
                 if result.returncode == 0:
-                    bot.logger.info(f"Git pull 성공: {result.stdout.strip()}")
+                    bot.logger.info(f"Git pull successful: {result.stdout.strip()}")
                     return jsonify({"status": "success", "message": "Git pull successful."})
                 else:
-                    bot.logger.error(f"Git pull 실패: {result.stderr.strip()}")
+                    bot.logger.error(f"Git pull failed: {result.stderr.strip()}")
                     return jsonify({"status": "error", "error": f"Git pull failed: {result.stderr.strip()}"}), 500
             except subprocess.TimeoutExpired:
                 return jsonify({"status": "error", "error": "Git pull timed out"}), 504
             except Exception as e:
-                bot.logger.error(f"Git 업데이트 중 오류 발생: {e}")
+                bot.logger.error(f"Error during git update: {e}")
                 return jsonify({"status": "error", "error": f"Error during git update: {e}"}), 500
         else:
             return jsonify(
@@ -538,7 +556,7 @@ def send_announcement_api():
             future = asyncio.run_coroutine_threadsafe(channel.send(message), bot.loop)
             future.result(timeout=10)  # 10 second timeout
 
-            bot.logger.info(f"API 요청: 채널 {channel_id}에 공지 전송 완료.")
+            bot.logger.info(f"API request: Announcement sent to channel {channel_id}.")
             return jsonify({"status": "success", "message": "Announcement sent successfully."})
 
         except ValueError:
@@ -550,7 +568,7 @@ def send_announcement_api():
 
     except Exception as e:
         if bot and hasattr(bot, 'logger'):
-            bot.logger.error(f"공지 전송 실패: {e}", exc_info=True)
+            bot.logger.error(f"Announcement send failed: {e}", exc_info=True)
         return jsonify({"status": "error", "error": f"Unexpected error: {e}"}), 500
 
 
@@ -575,7 +593,6 @@ def get_reaction_roles_api():
         return jsonify({"error": "Failed to fetch reaction roles."}), 500
 
 
-# Keep other existing API endpoints...
 @api_app.route('/api/reaction_roles/add', methods=['POST'])
 def add_reaction_role_api():
     bot = bot_manager.get_bot()
@@ -624,7 +641,6 @@ def add_reaction_role_api():
         return jsonify({"error": "Internal server error"}), 500
 
 
-# Keep remaining API endpoints with similar enhancements...
 async def fetch_reaction_roles_from_db(pool):
     """Fetches reaction roles from the database."""
     async with pool.acquire() as conn:
@@ -645,7 +661,7 @@ def run_api_server():
         sock.close()
 
         if result == 0:
-            print("⚠️ Port 5001 already in use. API server not started.")
+            print("Port 5001 already in use. API server not started.")
             return
 
         api_app.run(
@@ -680,25 +696,28 @@ class MyBot(commands.Bot):
         # Initialize database pool with graceful degradation
         try:
             self.pool = await create_db_pool_in_bot()
-            self.logger.info("✅ 데이터베이스 연결 풀이 성공적으로 생성되었습니다.")
+            self.logger.info("✅ Database connection pool created successfully.")
         except Exception as e:
-            self.logger.error(f"❌ 데이터베이스 풀 생성 실패: {e}", exc_info=True)
-            self.logger.warning("⚠️ 데이터베이스 없이 제한된 모드로 실행합니다.")
+            self.logger.error(f"❌ Database pool creation failed: {e}", exc_info=True)
+            self.logger.warning("⚠️ Running in limited mode without database.")
             self.pool = None
 
         # Handle existing log files
         await self._handle_startup_logs()
 
+        # Get a valid log channel from any configured server for global logging
+        log_channel_id = self._get_global_log_channel()
+
         # Configure enhanced logging
         try:
             logger_module._configure_root_handlers(
                 bot=self,
-                discord_log_channel_id=config.LOG_CHANNEL_ID
+                discord_log_channel_id=log_channel_id
             )
-            self.logger = logging.getLogger('기본 로그')
-            self.logger.info("✅ 봇 로거가 성공적으로 설정되었습니다.")
+            self.logger = logging.getLogger('main_bot')
+            self.logger.info("✅ Bot logger configured successfully.")
         except Exception as e:
-            self.logger.error(f"❌ 로거 설정 중 오류 발생: {e}", exc_info=True)
+            self.logger.error(f"❌ Error setting up logger: {e}", exc_info=True)
 
         # Load extensions with dependency management
         await self._load_extensions_with_dependencies()
@@ -707,34 +726,49 @@ class MyBot(commands.Bot):
         try:
             async with asyncio.timeout(30):
                 synced = await self.tree.sync()
-                self.logger.info(f"✅ 슬래시 명령어 {len(synced)}개 동기화 완료.")
+                self.logger.info(f"✅ Synced {len(synced)} slash commands.")
         except asyncio.TimeoutError:
-            self.logger.error("❌ 슬래시 명령어 동기화 시간 초과")
+            self.logger.error("❌ Slash command sync timed out")
         except Exception as e:
-            self.logger.error(f"❌ 슬래시 명령어 동기화 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ Slash command sync failed: {e}", exc_info=True)
 
         # Add persistent views
         try:
             self.add_view(PersistentAchievementView(self))
 
-            # Add coins persistent views
-            from cogs.coins import CoinsView, LeaderboardView
-            self.add_view(CoinsView(self))
-            self.add_view(LeaderboardView(self))
+            # Add coins persistent views if available
+            try:
+                from cogs.coins import CoinsView, LeaderboardView
+                self.add_view(CoinsView(self))
+                self.add_view(LeaderboardView(self))
+            except ImportError:
+                self.logger.warning("⚠️ Coins views not available")
 
-            self.logger.info("✅ Persistent views가 성공적으로 등록되었습니다.")
+            self.logger.info("✅ Persistent views registered successfully.")
         except Exception as e:
-            self.logger.error(f"❌ Persistent view 등록 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ Persistent view registration failed: {e}", exc_info=True)
 
         import pathlib
         data_dir = pathlib.Path("data")
         data_dir.mkdir(exist_ok=True)
-        self.logger.info("✅ 데이터 디렉토리 준비 완료")
+        self.logger.info("✅ Data directory prepared")
+
+    def _get_global_log_channel(self) -> int:
+        """Get a log channel from any configured server for global bot logging"""
+        try:
+            all_configs = config.get_all_server_configs()
+            for guild_config in all_configs.values():
+                log_channel = guild_config.get('channels', {}).get('log_channel')
+                if log_channel and isinstance(log_channel, dict):
+                    return log_channel.get('id', 0)
+        except Exception as e:
+            self.logger.warning(f"Could not find global log channel: {e}")
+        return 0
 
     async def _handle_startup_logs(self):
         """Handle existing log files on startup"""
         if os.path.exists(logger_module.LOG_FILE_PATH) and os.path.getsize(logger_module.LOG_FILE_PATH) > 0:
-            self.logger.info("⚠️ 이전 'log.log' 파일이 감지되었습니다. Google Drive에 업로드 중...")
+            self.logger.info("⚠️ Previous log file detected. Uploading to Google Drive...")
             try:
                 timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 startup_log_filename = f"startup_log_{timestamp}.log"
@@ -745,9 +779,9 @@ class MyBot(commands.Bot):
                 await self.loop.run_in_executor(
                     None, upload_to_drive.upload_log_to_drive, str(startup_log_path)
                 )
-                self.logger.info(f"✅ 'startup_log_{timestamp}.log' 파일이 성공적으로 업로드되었습니다.")
+                self.logger.info(f"✅ startup_log_{timestamp}.log file uploaded successfully.")
             except Exception as e:
-                self.logger.error(f"❌ 시작 시 'log.log' 파일 처리 실패: {e}", exc_info=True)
+                self.logger.error(f"❌ Failed to handle startup log file: {e}", exc_info=True)
 
     async def _load_extensions_with_dependencies(self):
         """Load extensions with proper dependency order"""
@@ -760,6 +794,7 @@ class MyBot(commands.Bot):
             'cogs.message_history',
             'cogs.recording',
             'cogs.admin',
+            'cogs.setup',
         ]
 
         # Casino extensions (depend on coins)
@@ -774,7 +809,7 @@ class MyBot(commands.Bot):
             'cogs.casino_crash',
             'cogs.casino_minesweeper',
             'cogs.casino_slots',
-            'cogs.casino_bingo'
+            'cogs.casino_bingo',
         ]
 
         # Database-dependent extensions
@@ -791,30 +826,30 @@ class MyBot(commands.Bot):
         ]
 
         extension_groups = [
-            ("핵심", core_extensions),
-            ("카지노", casino_extensions),
-            ("데이터베이스", db_extensions),
+            ("Core", core_extensions),
+            ("Casino", casino_extensions),
+            ("Database", db_extensions),
             ("API", api_extensions)
         ]
 
         for group_name, extensions in extension_groups:
             if not extensions:
-                self.logger.info(f"⏭️ {group_name} 확장 기능을 건너뜁니다 (의존성 없음)")
+                self.logger.info(f"⭕ Skipping {group_name} extensions (no dependencies)")
                 continue
 
-            self.logger.info(f"🔄 {group_name} 확장 기능 로드 중...")
+            self.logger.info(f"📦 Loading {group_name} extensions...")
             for ext in extensions:
                 try:
                     await self.load_extension(ext)
-                    self.logger.info(f"✅ Cog 로드됨: {ext}")
+                    self.logger.info(f"✅ Cog loaded: {ext}")
                 except commands.ExtensionAlreadyLoaded:
-                    self.logger.warning(f"⚠️ Cog '{ext}'는 이미 로드되어 있습니다.")
+                    self.logger.warning(f"⚠️ Cog '{ext}' is already loaded.")
                 except commands.ExtensionFailed as e:
-                    self.logger.error(f"❌ Cog '{ext}' 로드 실패 (설정 오류): {e}", exc_info=True)
+                    self.logger.error(f"❌ Cog '{ext}' load failed (setup error): {e}", exc_info=True)
                 except commands.ExtensionNotFound:
-                    self.logger.error(f"❌ Cog '{ext}'를 찾을 수 없습니다.")
+                    self.logger.error(f"❌ Cog '{ext}' not found.")
                 except Exception as e:
-                    self.logger.error(f"❌ Cog '{ext}' 로드 중 예상치 못한 오류: {e}", exc_info=True)
+                    self.logger.error(f"❌ Unexpected error loading cog '{ext}': {e}", exc_info=True)
 
     async def reload_all_cogs(self):
         """Enhanced cog reloading with better error handling"""
@@ -824,51 +859,60 @@ class MyBot(commands.Bot):
         for ext in list(self.extensions.keys()):
             try:
                 await self.reload_extension(ext)
-                self.logger.info(f"🔄 Cog 재로드됨: {ext}")
+                self.logger.info(f"🔄 Cog reloaded: {ext}")
                 reloaded_count += 1
             except commands.ExtensionNotLoaded:
-                self.logger.warning(f"⚠️ Cog '{ext}'가 로드되지 않았으므로 재로드할 수 없습니다.")
+                self.logger.warning(f"⚠️ Cog '{ext}' was not loaded, cannot reload.")
                 failed_count += 1
             except commands.ExtensionFailed as e:
-                self.logger.error(f"❌ Cog '{ext}' 재로드 실패: {e}", exc_info=True)
+                self.logger.error(f"❌ Cog '{ext}' reload failed: {e}", exc_info=True)
                 failed_count += 1
             except Exception as e:
-                self.logger.error(f"❌ Cog '{ext}' 재로드 중 예상치 못한 오류: {e}", exc_info=True)
+                self.logger.error(f"❌ Unexpected error reloading cog '{ext}': {e}", exc_info=True)
                 failed_count += 1
 
-        self.logger.info(f"📊 Cog 재로드 완료: 성공 {reloaded_count}개, 실패 {failed_count}개")
+        self.logger.info(f"📊 Cog reload complete: {reloaded_count} successful, {failed_count} failed")
 
     @tasks.loop(minutes=10)
     async def update_presence(self):
         """Enhanced presence update with error handling"""
         try:
             guild_count = len(self.guilds)
+            configured_count = len(config.get_all_server_configs())
             await self.change_presence(
                 status=discord.Status.online,
                 activity=discord.Activity(
                     type=discord.ActivityType.playing,
-                    name=f"서버 관리 중 | {guild_count}개의 서버에 있음"
+                    name=f"Managing {guild_count} servers | {configured_count} configured"
                 )
             )
         except Exception as e:
-            self.logger.error(f"❌ 상태 업데이트 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ Presence update failed: {e}", exc_info=True)
 
     async def on_ready(self):
         """Enhanced on_ready with better initialization"""
-        self.logger.info(f"--- 봇 로그인 완료: {self.user} (ID: {self.user.id}) ---")
-        self.logger.info(f"봇이 다음 길드에 연결되었습니다:")
+        self.logger.info(f"--- Bot login complete: {self.user} (ID: {self.user.id}) ---")
+        self.logger.info(f"Bot connected to the following guilds:")
+
+        all_configs = config.get_all_server_configs()
+        configured_count = 0
 
         for guild in self.guilds:
-            self.logger.info(f"- {guild.name} (ID: {guild.id}) - {guild.member_count} 멤버")
+            is_configured = str(guild.id) in all_configs
+            status = "✅" if is_configured else "❌"
+            if is_configured:
+                configured_count += 1
+            self.logger.info(f"{status} {guild.name} (ID: {guild.id}) - {guild.member_count} members")
 
-        self.logger.info(f"현재 핑: {round(self.latency * 1000)}ms")
-        self.logger.info(f"데이터베이스 연결: {'✅' if self.pool else '❌'}")
+        self.logger.info(f"Configured servers: {configured_count}/{len(self.guilds)}")
+        self.logger.info(f"Current latency: {round(self.latency * 1000)}ms")
+        self.logger.info(f"Database connection: {'✅' if self.pool else '❌'}")
 
         # Set initial presence
         try:
-            await self.change_presence(activity=discord.Game(name="클랜원 모집 중!"))
+            await self.change_presence(activity=discord.Game(name="Multi-server management!"))
         except Exception as e:
-            self.logger.error(f"❌ 초기 상태 설정 실패: {e}")
+            self.logger.error(f"❌ Initial presence setting failed: {e}")
 
         # Start presence update loop
         if not self.update_presence.is_running():
@@ -878,13 +922,54 @@ class MyBot(commands.Bot):
         try:
             await self.loop.run_in_executor(None, check_crash_log_and_handle, self.logger)
         except Exception as e:
-            self.logger.error(f"❌ 충돌 로그 처리 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ Crash log handling failed: {e}", exc_info=True)
 
         # Start daily log uploader
         if not self.daily_log_uploader.is_running():
             self.daily_log_uploader.start()
 
-        self.logger.info("🚀 봇이 완전히 준비되었습니다!")
+        self.logger.info("🚀 Bot is fully ready!")
+
+    async def on_guild_join(self, guild):
+        """Handle new guild joins"""
+        self.logger.info(f"🆕 Joined new guild: {guild.name} (ID: {guild.id}) - {guild.member_count} members")
+
+        # Check if we have permissions to create channels
+        if guild.me.guild_permissions.manage_channels:
+            try:
+                # Create a welcome embed
+                embed = discord.Embed(
+                    title="🎉 Thanks for inviting Exceed Bot!",
+                    description="Hi there! I'm Exceed Bot, a multi-feature Discord bot ready to enhance your server.\n\n"
+                                "🔧 **Get Started:**\n"
+                                "Run `/bot-setup` to configure me for your server\n\n"
+                                "✨ **Features Available:**\n"
+                                "• Casino games and economy system\n"
+                                "• Achievement system\n"
+                                "• Ticket support system\n"
+                                "• Voice channel management\n"
+                                "• Welcome/goodbye messages\n"
+                                "• And much more!\n\n"
+                                "Need help? Run `/bot-status` to see configuration status.",
+                    color=0x00ff00
+                )
+
+                # Try to send to system channel, otherwise general channel
+                channel = guild.system_channel
+                if not channel:
+                    channel = discord.utils.get(guild.text_channels, name="general")
+                if not channel:
+                    channel = guild.text_channels[0] if guild.text_channels else None
+
+                if channel and channel.permissions_for(guild.me).send_messages:
+                    await channel.send(embed=embed)
+                    self.logger.info(f"📨 Sent welcome message to {guild.name}")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to send welcome message to {guild.name}: {e}")
+
+    async def on_guild_remove(self, guild):
+        """Handle guild removal"""
+        self.logger.info(f"👋 Removed from guild: {guild.name} (ID: {guild.id})")
 
     async def on_command_completion(self, context):
         """Enhanced command completion tracking"""
@@ -894,9 +979,9 @@ class MyBot(commands.Bot):
             self.total_commands_today += 1
 
             user_info = f"{context.author} (ID: {context.author.id})" if context.author else "Unknown User"
-            self.logger.info(f"사용자 {user_info}님이 명령어 '{command_name}'을(를) 사용했습니다.")
+            self.logger.info(f"User {user_info} used command '{command_name}'.")
         except Exception as e:
-            self.logger.error(f"❌ 명령어 완료 추적 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ Command completion tracking failed: {e}", exc_info=True)
 
     @commands.Cog.listener()
     async def on_app_command_completion(self, interaction: discord.Interaction, command: discord.app_commands.Command):
@@ -908,9 +993,9 @@ class MyBot(commands.Bot):
 
             self.command_counts[command_name] = self.command_counts.get(command_name, 0) + 1
             self.total_commands_today += 1
-            self.logger.info(f"사용자 {user_name} ({user_id})님이 슬래시 명령어 '/{command_name}'을(를) 사용했습니다.")
+            self.logger.info(f"User {user_name} ({user_id}) used slash command '/{command_name}'.")
         except Exception as e:
-            self.logger.error(f"❌ 슬래시 명령어 완료 추적 실패: {e}", exc_info=True)
+            self.logger.error(f"❌ Slash command completion tracking failed: {e}", exc_info=True)
 
     async def on_command_error(self, context, error):
         """Enhanced global command error handler with detailed logging"""
@@ -938,16 +1023,16 @@ class MyBot(commands.Bot):
 
         # User-friendly error responses
         error_messages = {
-            commands.MissingPermissions: "❌ 이 명령어를 실행할 권한이 없습니다.",
-            commands.MissingRequiredArgument: f"❌ 필요한 인수가 누락되었습니다. (오류 ID: {error_id})",
-            commands.BadArgument: f"❌ 잘못된 인수입니다. (오류 ID: {error_id})",
-            commands.NoPrivateMessage: "❌ 이 명령어는 DM에서 사용할 수 없습니다.",
-            commands.CommandOnCooldown: f"❌ 명령어 쿨다운 중입니다. {error.retry_after:.1f}초 후에 다시 시도하세요.",
-            commands.BotMissingPermissions: f"❌ 봇에게 필요한 권한이 없습니다: {', '.join(error.missing_permissions)}",
+            commands.MissingPermissions: "❌ You don't have permission to use this command.",
+            commands.MissingRequiredArgument: f"❌ Required argument missing. (Error ID: {error_id})",
+            commands.BadArgument: f"❌ Invalid argument. (Error ID: {error_id})",
+            commands.NoPrivateMessage: "❌ This command cannot be used in DMs.",
+            commands.CommandOnCooldown: f"❌ Command on cooldown. Try again in {error.retry_after:.1f} seconds.",
+            commands.BotMissingPermissions: f"❌ Bot missing required permissions: {', '.join(error.missing_permissions)}",
         }
 
         message = error_messages.get(type(error),
-                                     f"❌ 예상치 못한 오류가 발생했습니다. (오류 ID: {error_id})")
+                                     f"❌ An unexpected error occurred. (Error ID: {error_id})")
 
         try:
             # Try to send error message
@@ -963,42 +1048,43 @@ class MyBot(commands.Bot):
         """Enhanced daily log uploader with better error handling"""
         try:
             log_dir = logger_module.LOG_FILE_PATH.parent
-            self.logger.info("일일 로그 업로드 작업을 시작합니다.")
+            self.logger.info("Starting daily log upload task.")
 
             yesterday_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             expected_rotated_log_name = f"log.log.{yesterday_date}"
             rotated_log_path = log_dir / expected_rotated_log_name
 
             if rotated_log_path.exists() and rotated_log_path.stat().st_size > 0:
-                self.logger.info(f"⚠️ 감지된 어제 날짜의 회전된 로그 파일: '{expected_rotated_log_name}'. Google Drive에 업로드 중...")
+                self.logger.info(
+                    f"Found yesterday's rotated log file: '{expected_rotated_log_name}'. Uploading to Google Drive...")
                 try:
                     # Upload in executor to avoid blocking
                     await self.loop.run_in_executor(
                         None, upload_to_drive.upload_log_to_drive, str(rotated_log_path)
                     )
-                    self.logger.info(f"✅ '{expected_rotated_log_name}' 파일이 성공적으로 업로드 및 삭제되었습니다.")
+                    self.logger.info(f"'{expected_rotated_log_name}' file uploaded and deleted successfully.")
                 except Exception as e:
-                    self.logger.error(f"❌ '{expected_rotated_log_name}' 파일 업로드 실패: {e}", exc_info=True)
+                    self.logger.error(f"Failed to upload '{expected_rotated_log_name}' file: {e}", exc_info=True)
             else:
-                self.logger.info(f"어제 ({yesterday_date}) 날짜의 회전된 로그 파일이 없거나 비어 있습니다.")
+                self.logger.info(f"No rotated log file for yesterday ({yesterday_date}) or file is empty.")
 
         except Exception as e:
-            self.logger.error(f"❌ 일일 로그 업로드 작업 실패: {e}", exc_info=True)
+            self.logger.error(f"Daily log upload task failed: {e}", exc_info=True)
 
     @daily_log_uploader.before_loop
     async def before_daily_log_uploader(self):
         """Wait for bot to be ready before starting daily log uploader"""
         await self.wait_until_ready()
-        self.logger.info("일일 로그 업로더가 준비될 때까지 기다리는 중...")
+        self.logger.info("Waiting for daily log uploader to be ready...")
 
     async def graceful_shutdown(self):
         """Enhanced graceful shutdown with comprehensive cleanup"""
         if self._shutdown_requested:
-            self.logger.info("🔄 이미 종료 중입니다...")
+            self.logger.info("Already shutting down...")
             return
 
         self._shutdown_requested = True
-        self.logger.info("🛑 봇 종료 시작...")
+        self.logger.info("Bot shutdown initiated...")
 
         try:
             # Cancel all background tasks including coins tasks
@@ -1014,12 +1100,12 @@ class MyBot(commands.Bot):
 
             for task_name, task in tasks_to_cancel:
                 if hasattr(task, 'is_running') and task.is_running():
-                    self.logger.info(f"🛑 {task_name} 작업 중지 중...")
+                    self.logger.info(f"Stopping {task_name} task...")
                     task.cancel()
                     try:
                         await asyncio.wait_for(task._task, timeout=5.0)
                     except (asyncio.TimeoutError, asyncio.CancelledError):
-                        self.logger.warning(f"⚠️ {task_name} 작업 강제 종료됨")
+                        self.logger.warning(f"Task {task_name} force terminated")
 
             # Cancel custom cleanup tasks
             for task in self._cleanup_tasks:
@@ -1028,24 +1114,24 @@ class MyBot(commands.Bot):
 
             # Close database pool
             if self.pool:
-                self.logger.info("🛑 데이터베이스 풀 연결 종료 중...")
+                self.logger.info("Closing database pool connection...")
                 await self.pool.close()
-                self.logger.info("✅ 데이터베이스 풀 연결이 정상적으로 닫혔습니다.")
+                self.logger.info("Database pool connection closed successfully.")
 
             # Close HTTP session
             if self.session and not self.session.closed:
-                self.logger.info("🛑 HTTP 세션 종료 중...")
+                self.logger.info("Closing HTTP session...")
                 await self.session.close()
-                self.logger.info("✅ HTTP 세션이 정상적으로 닫혔습니다.")
+                self.logger.info("HTTP session closed successfully.")
 
             # Close Discord connection
-            self.logger.info("🛑 Discord 연결 종료 중...")
+            self.logger.info("Closing Discord connection...")
             await self.close()
 
-            self.logger.info("✅ 봇이 정상적으로 종료되었습니다.")
+            self.logger.info("Bot shut down successfully.")
 
         except Exception as e:
-            self.logger.error(f"❌ 종료 중 오류 발생: {e}", exc_info=True)
+            self.logger.error(f"Error during shutdown: {e}", exc_info=True)
             # Force close if graceful shutdown fails
             try:
                 await self.close()
@@ -1063,23 +1149,23 @@ def check_crash_log_and_handle(logger_instance: logging.Logger):
     """Enhanced crash log handling with better error recovery"""
     try:
         if CRASH_LOG_FILE.exists() and CRASH_LOG_FILE.stat().st_size > 0:
-            logger_instance.warning("⚠️ 이전 봇 충돌 로그 파일이 감지되었습니다. Google Drive에 업로드 중...")
+            logger_instance.warning("Previous bot crash log file detected. Uploading to Google Drive...")
             try:
                 upload_to_drive.upload_log_to_drive(str(CRASH_LOG_FILE))
-                logger_instance.info("✅ 충돌 로그 파일이 성공적으로 업로드 및 삭제되었습니다.")
+                logger_instance.info("Crash log file uploaded and deleted successfully.")
             except Exception as e:
-                logger_instance.error(f"❌ 충돌 로그 파일 업로드 또는 삭제 실패: {e}", exc_info=True)
+                logger_instance.error(f"Failed to upload or delete crash log file: {e}", exc_info=True)
                 # Try to rename the file so it doesn't interfere with future runs
                 try:
                     backup_name = f"crash_log_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
                     CRASH_LOG_FILE.rename(CRASH_LOG_FILE.parent / backup_name)
-                    logger_instance.info(f"✅ 충돌 로그를 {backup_name}로 백업했습니다.")
+                    logger_instance.info(f"Crash log backed up as {backup_name}.")
                 except Exception as rename_error:
-                    logger_instance.error(f"❌ 충돌 로그 백업 실패: {rename_error}")
+                    logger_instance.error(f"Failed to backup crash log: {rename_error}")
         else:
-            logger_instance.info("처리할 보류 중인 충돌 로그 파일이 없습니다.")
+            logger_instance.info("No pending crash log file to process.")
     except Exception as e:
-        logger_instance.error(f"❌ 충돌 로그 확인 중 오류: {e}", exc_info=True)
+        logger_instance.error(f"Error checking crash log: {e}", exc_info=True)
 
 
 # --- Enhanced Main Function ---
@@ -1097,25 +1183,20 @@ async def main():
     )
     startup_logger = logging.getLogger('startup')
 
-    if hasattr(config, 'LEADERBOARD_CHANNEL_ID') and not config.LEADERBOARD_CHANNEL_ID:
-        startup_logger.warning("⚠️ LEADERBOARD_CHANNEL_ID가 설정되지 않았습니다. 코인 리더보드가 작동하지 않을 수 있습니다.")
-
     # Validate critical configuration
     validation_errors = []
+    global_config = config.get_global_config()
 
-    if not config.DISCORD_TOKEN:
-        validation_errors.append("DISCORD_TOKEN이 설정되지 않았습니다.")
+    if not global_config.get('DISCORD_TOKEN'):
+        validation_errors.append("DISCORD_TOKEN not set.")
 
-    if not config.LOG_CHANNEL_ID:
-        validation_errors.append("LOG_CHANNEL_ID가 설정되지 않았습니다.")
-
-    if not os.getenv("DATABASE_URL"):
-        validation_errors.append("DATABASE_URL이 설정되지 않았습니다.")
+    if not global_config.get('DATABASE_URL'):
+        validation_errors.append("DATABASE_URL not set.")
 
     if validation_errors:
         for error in validation_errors:
-            startup_logger.critical(f"❌ 설정 오류: {error}")
-        startup_logger.critical("❌ 필수 설정이 누락되어 봇을 시작할 수 없습니다.")
+            startup_logger.critical(f"Configuration error: {error}")
+        startup_logger.critical("Required configuration missing, cannot start bot.")
         sys.exit(1)
 
     # Enhanced intents configuration
@@ -1133,21 +1214,21 @@ async def main():
     bot_manager.set_bot(bot)
 
     try:
-        startup_logger.info("🚀 봇 시작 중...")
+        startup_logger.info("Bot starting...")
 
         # Start bot with timeout
         await bot.start(config.DISCORD_TOKEN)
 
     except discord.LoginFailure:
-        startup_logger.critical("❌ Discord 로그인 실패 - 토큰을 확인하세요")
+        startup_logger.critical("Discord login failed - check your token")
         sys.exit(1)
     except discord.HTTPException as e:
-        startup_logger.critical(f"❌ Discord HTTP 오류: {e}")
+        startup_logger.critical(f"Discord HTTP error: {e}")
         if "intents" in str(e).lower():
-            startup_logger.critical("💡 봇의 인텐트 설정을 Discord 개발자 포털에서 확인하세요.")
+            startup_logger.critical("Check your bot's intent settings in the Discord Developer Portal.")
         sys.exit(1)
     except Exception as e:
-        startup_logger.critical(f"❌ 봇 시작 중 예상치 못한 오류: {e}", exc_info=True)
+        startup_logger.critical(f"Unexpected error during bot startup: {e}", exc_info=True)
         sys.exit(1)
     finally:
         # Ensure graceful shutdown
@@ -1155,15 +1236,15 @@ async def main():
             try:
                 await bot.graceful_shutdown()
             except Exception as e:
-                startup_logger.error(f"❌ 종료 중 오류: {e}", exc_info=True)
+                startup_logger.error(f"Error during shutdown: {e}", exc_info=True)
 
 
 # --- Enhanced Entry Point ---
 if __name__ == "__main__":
     # Start Flask API server in a separate thread
-    api_thread = Thread(target=run_api_server, daemon=False)  # Changed from daemon=True
+    api_thread = Thread(target=run_api_server, daemon=False)
     api_thread.start()
-    print(f"🌐 Bot API running on http://127.0.0.1:5001")
+    print(f"Bot API running on http://127.0.0.1:5001")
 
     try:
         # Handle different Python versions and event loop policies
@@ -1174,17 +1255,17 @@ if __name__ == "__main__":
         asyncio.run(main())
 
     except KeyboardInterrupt:
-        print("\n🛑 봇이 수동으로 중지되었습니다 (KeyboardInterrupt).")
+        print("\nBot manually stopped (KeyboardInterrupt).")
         bot = bot_manager.get_bot()
         if bot and hasattr(bot, 'logger'):
-            bot.logger.info("봇이 수동으로 중지되었습니다 (KeyboardInterrupt).")
+            bot.logger.info("Bot manually stopped (KeyboardInterrupt).")
     except Exception as e:
-        print(f"❌ 봇 런타임 외부에서 치명적인 오류 발생: {e}", file=sys.stderr)
-        logging.getLogger().critical(f"봇 런타임 외부에서 치명적인 오류 발생: {e}", exc_info=True)
+        print(f"Fatal error outside bot runtime: {e}", file=sys.stderr)
+        logging.getLogger().critical(f"Fatal error outside bot runtime: {e}", exc_info=True)
         sys.exit(1)
     finally:
         # Ensure API thread cleanup
         if api_thread.is_alive():
-            print("🛑 API 서버 종료 대기 중...")
+            print("Waiting for API server to terminate...")
             # Give the API thread some time to finish
             api_thread.join(timeout=5)

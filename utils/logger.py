@@ -30,16 +30,47 @@ class DiscordHandler(logging.Handler):
     """
     A custom logging handler to send log messages to a Discord channel,
     buffering messages until the bot is ready.
+    Multi-server compatible - will send to the first available log channel.
     """
 
-    def __init__(self, bot, channel_id):
+    def __init__(self, bot, channel_id=None):
         super().__init__()
         self.bot = bot
-        self.channel_id = channel_id
+        self.channel_id = channel_id  # Can be None for auto-detection
         self._message_buffer = []
         self._send_task = None  # Task is initially None, started when bot is ready
         self._buffer_lock = threading.Lock()  # Use threading.Lock for synchronous access
         self.stopped = False  # Flag to indicate if the handler is closing
+
+    def _get_log_channel(self):
+        """Get the best available log channel from configured servers"""
+        if self.channel_id:
+            # Use specific channel if provided
+            return self.bot.get_channel(self.channel_id)
+
+        # Auto-detect from configured servers
+        try:
+            from utils import config
+            all_configs = config.get_all_server_configs()
+
+            for guild_config in all_configs.values():
+                log_channel_data = guild_config.get('channels', {}).get('log_channel')
+                if log_channel_data and isinstance(log_channel_data, dict):
+                    channel_id = log_channel_data.get('id')
+                    if channel_id:
+                        channel = self.bot.get_channel(channel_id)
+                        if channel:
+                            # Test if we can send messages to this channel
+                            try:
+                                permissions = channel.permissions_for(channel.guild.me)
+                                if permissions.send_messages:
+                                    return channel
+                            except Exception:
+                                continue
+        except Exception:
+            pass
+
+        return None
 
     def emit(self, record):
         """
@@ -111,11 +142,13 @@ class DiscordHandler(logging.Handler):
                 if not messages_to_send:
                     continue  # Nothing to send
 
-                channel = self.bot.get_channel(self.channel_id)
+                channel = self._get_log_channel()
                 if not channel:
-                    print(
-                        f"❌ Discord log channel {self.channel_id} not found. Clearing {len(messages_to_send)} buffered logs.",
-                        file=sys.stderr)
+                    # Only print warning occasionally to avoid spam
+                    if len(messages_to_send) > 0:
+                        print(
+                            f"Discord log channel not available. Clearing {len(messages_to_send)} buffered logs.",
+                            file=sys.stderr)
                     continue
 
                 for msg_content in messages_to_send:
@@ -126,13 +159,13 @@ class DiscordHandler(logging.Handler):
                             await asyncio.sleep(0.7)  # Delay to respect Discord's rate limits
                     except discord.Forbidden:
                         print(
-                            f"❌ DiscordHandler: Missing permissions to send messages to log channel {self.channel_id}.",
+                            f"DiscordHandler: Missing permissions to send messages to log channel {channel.id}.",
                             file=sys.stderr)
                         break  # Stop trying to send if permissions are an issue
                     except discord.HTTPException as e:
-                        print(f"❌ Discord HTTP error sending log chunk: {e}", file=sys.stderr)
+                        print(f"Discord HTTP error sending log chunk: {e}", file=sys.stderr)
                     except Exception as e:
-                        print(f"❌ Failed to send log to Discord channel: {e}", file=sys.stderr)
+                        print(f"Failed to send log to Discord channel: {e}", file=sys.stderr)
             except asyncio.CancelledError:
                 print("DiscordHandler: _send_buffered_logs task cancelled.")
                 break  # Exit the loop if cancelled
@@ -175,6 +208,10 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
     Configures or re-configures the root logger's file, console, and Discord handlers.
     This function is crucial for re-establishing handlers after log file
     renaming operations (e.g., crash log upload) and for initial setup.
+
+    For multi-server support:
+    - If discord_log_channel_id is provided, uses that specific channel
+    - If None, auto-detects the best log channel from configured servers
     """
     handlers_to_remove = []
     for handler in root_logger.handlers:
@@ -204,9 +241,10 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
     console_handler.setFormatter(CONSOLE_FORMATTER)
     root_logger.addHandler(console_handler)
 
-    if bot and discord_log_channel_id:
-        discord_handler = DiscordHandler(bot, discord_log_channel_id)
-        # CHANGED: Set DiscordHandler level to INFO to capture more logs
+    if bot:
+        # Create Discord handler - will auto-detect channel if discord_log_channel_id is None/0
+        discord_handler = DiscordHandler(bot, discord_log_channel_id if discord_log_channel_id else None)
+        # Set DiscordHandler level to INFO to capture more logs
         discord_handler.setLevel(logging.INFO)
         discord_handler.setFormatter(LOGGING_FORMATTER)
         root_logger.addHandler(discord_handler)
@@ -215,7 +253,6 @@ def _configure_root_handlers(bot=None, discord_log_channel_id=None):
         discord_handler.start_sending_logs()
 
 
-# FIXED: get_logger now accepts **kwargs to catch unexpected arguments
 def get_logger(name: str, level=logging.INFO, **kwargs) -> logging.Logger:
     """
     Retrieves a logger with the specified name and level.

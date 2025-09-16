@@ -1,4 +1,4 @@
-# cogs/casino_slots.py
+# cogs/casino_slots.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,15 +6,18 @@ import asyncio
 import random
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    is_feature_enabled,
+    get_server_setting
+)
 
 
 class SlotMachineCog(commands.Cog):
-    """Classic slot machine game"""
+    """Classic slot machine game - Multi-server aware"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("슬롯머신", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("슬롯머신", bot=bot)
 
         # Slot symbols with different rarities and payouts
         self.symbols = {
@@ -41,8 +44,12 @@ class SlotMachineCog(commands.Cog):
         if not casino_base:
             return False, "카지노 시스템을 찾을 수 없습니다!"
 
+        # Get server-specific limits
+        min_bet = get_server_setting(interaction.guild.id, 'slots_min_bet', 10)
+        max_bet = get_server_setting(interaction.guild.id, 'slots_max_bet', 50)
+
         return await casino_base.validate_game_start(
-            interaction, "slot_machine", bet, 10, 50
+            interaction, "slot_machine", bet, min_bet, max_bet
         )
 
     def spin_reels(self) -> tuple:
@@ -53,11 +60,16 @@ class SlotMachineCog(commands.Cog):
             random.choice(self.symbol_pool)
         )
 
-    def calculate_payout(self, reel1: str, reel2: str, reel3: str, bet: int) -> tuple:
-        """Calculate payout based on reel results"""
+    def calculate_payout(self, reel1: str, reel2: str, reel3: str, bet: int, guild_id: int) -> tuple:
+        """Calculate payout based on reel results with server-specific multipliers"""
+        # Get server-specific payout modifiers
+        payout_multiplier = get_server_setting(guild_id, 'slots_payout_multiplier', 1.0)
+        pair_multiplier = get_server_setting(guild_id, 'slots_pair_multiplier', 1.0)
+
         # Three of a kind - full payout
         if reel1 == reel2 == reel3:
-            multiplier = self.symbols[reel1]['payout']
+            base_multiplier = self.symbols[reel1]['payout']
+            multiplier = int(base_multiplier * payout_multiplier)
             symbol_name = self.symbols[reel1]['name']
             return bet * multiplier, f"🎊 **잭팟! {symbol_name} 트리플!** `×{multiplier}`"
 
@@ -75,13 +87,13 @@ class SlotMachineCog(commands.Cog):
 
             # Special case for lucky 7s and diamonds - still good payout for pairs
             if symbol in ['7️⃣', '💎']:
-                multiplier = max(5, self.symbols[symbol]['payout'] // 3)
+                multiplier = max(5, int((self.symbols[symbol]['payout'] // 3) * pair_multiplier))
                 return bet * multiplier, f"✨ **{symbol_name} 페어!** `×{multiplier}`"
             elif symbol in ['⭐', '🔔']:
-                multiplier = max(2, self.symbols[symbol]['payout'] // 4)
+                multiplier = max(2, int((self.symbols[symbol]['payout'] // 4) * pair_multiplier))
                 return bet * multiplier, f"🎯 **{symbol_name} 페어!** `×{multiplier}`"
             else:
-                multiplier = 1.5
+                multiplier = 1.5 * pair_multiplier
                 return int(bet * multiplier), f"🎲 **{symbol_name} 페어** `×{multiplier}`"
 
         # No match - lose bet
@@ -95,19 +107,29 @@ class SlotMachineCog(commands.Cog):
         else:
             return f"🎰 **[ {reel1} | {reel2} | {reel3} ]** 🎰\n\n🎊 **결과 확정!**"
 
-    def create_payout_table(self) -> str:
-        """Create simple single-column payout table"""
+    def create_payout_table(self, guild_id: int) -> str:
+        """Create simple single-column payout table with server-specific multipliers"""
         lines = []
         sorted_symbols = sorted(self.symbols.items(), key=lambda x: x[1]['payout'], reverse=True)
 
-        for symbol, data in sorted_symbols:
-            lines.append(f"{symbol} = ×{data['payout']}")
+        # Get server multipliers
+        payout_multiplier = get_server_setting(guild_id, 'slots_payout_multiplier', 1.0)
+        pair_multiplier = get_server_setting(guild_id, 'slots_pair_multiplier', 1.0)
 
-        return "\n".join(lines) + "\n\n💡 **페어는 더 낮은 배당**"
+        for symbol, data in sorted_symbols:
+            adjusted_payout = int(data['payout'] * payout_multiplier)
+            lines.append(f"{symbol} = ×{adjusted_payout}")
+
+        return "\n".join(lines) + f"\n\n💡 **페어는 더 낮은 배당** (×{pair_multiplier:.1f})"
 
     @app_commands.command(name="슬롯", description="클래식 슬롯머신 게임")
-    @app_commands.describe(bet="베팅 금액 (10-50)")
+    @app_commands.describe(bet="베팅 금액")
     async def slot_machine(self, interaction: discord.Interaction, bet: int):
+        # Check if casino games are enabled for this server
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
+            return
+
         can_start, error_msg = await self.validate_game(interaction, bet)
         if not can_start:
             await interaction.response.send_message(error_msg, ephemeral=True)
@@ -144,12 +166,13 @@ class SlotMachineCog(commands.Cog):
                 inline=True
             )
 
+            embed.set_footer(text=f"Server: {interaction.guild.name}")
             await interaction.edit_original_response(embed=embed)
             await asyncio.sleep(0.7)
 
         # Final spin result
         reel1, reel2, reel3 = self.spin_reels()
-        payout, result_text = self.calculate_payout(reel1, reel2, reel3, bet)
+        payout, result_text = self.calculate_payout(reel1, reel2, reel3, bet, interaction.guild.id)
 
         # Determine result color and title
         if payout == 0:
@@ -202,10 +225,10 @@ class SlotMachineCog(commands.Cog):
             inline=False
         )
 
-        # Balance and simplified payout info
+        # Balance and server-specific payout info
         new_balance = await coins_cog.get_user_coins(interaction.user.id)
 
-        balance_payout = f"🏦 **잔액:** {new_balance:,} 코인\n\n**배당표 (트리플):**\n{self.create_payout_table()}"
+        balance_payout = f"🏦 **잔액:** {new_balance:,} 코인\n\n**배당표 (트리플):**\n{self.create_payout_table(interaction.guild.id)}"
 
         embed.add_field(
             name="💳 정보",
@@ -214,12 +237,13 @@ class SlotMachineCog(commands.Cog):
         )
 
         # Simple footer
-        embed.set_footer(text=f"플레이어: {interaction.user.display_name}")
+        embed.set_footer(text=f"플레이어: {interaction.user.display_name} | Server: {interaction.guild.name}")
 
         await interaction.edit_original_response(embed=embed)
 
         result = "승리" if payout > 0 else "패배"
-        self.logger.info(f"{interaction.user}가 슬롯머신에서 {bet} 코인 {result} (결과: {reel1}{reel2}{reel3}, 수익: {payout})")
+        self.logger.info(
+            f"{interaction.user}가 슬롯머신에서 {bet} 코인 {result} (결과: {reel1}{reel2}{reel3}, 수익: {payout}) (Guild: {interaction.guild.id})")
 
 
 async def setup(bot):

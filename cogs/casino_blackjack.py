@@ -1,4 +1,4 @@
-# cogs/casino_blackjack.py
+# cogs/casino_blackjack.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,7 +6,10 @@ import random
 from typing import List, Dict
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    is_feature_enabled,
+    get_server_setting
+)
 
 
 class BlackjackView(discord.ui.View):
@@ -32,7 +35,7 @@ class BlackjackView(discord.ui.View):
         self.player_hand = [self.draw_card(), self.draw_card()]
         self.dealer_hand = [self.draw_card(), self.draw_card()]
 
-        # Check for dealer ace (insurance option) - Insurance is based on the UP card (first card)
+        # Check for dealer ace (insurance option)
         self.can_insure = self.dealer_hand[0]['rank'] == 'A'
 
         # Check for natural blackjack
@@ -79,8 +82,6 @@ class BlackjackView(discord.ui.View):
     def hand_to_string(self, hand: List[Dict], hide_first: bool = False) -> str:
         """Convert hand to display string"""
         if hide_first:
-            # FIXED: Show the first card (up card) when hiding the second card (hole card)
-            # This matches proper blackjack where the up card is visible and hole card is hidden
             return f"🔒 {hand[0]['rank']}{hand[0]['suit']}"
         return ' '.join(f"{card['rank']}{card['suit']}" for card in hand)
 
@@ -277,24 +278,20 @@ class BlackjackView(discord.ui.View):
             hand_value = self.calculate_hand_value(hand)
 
             if hand_value > 21:
-                # Hand busts - player loses the bet for this hand (no payout)
                 results.append(f"핸드 {i + 1}: 버스트 (손실: {self.bet} 코인)")
             elif dealer_value > 21 or hand_value > dealer_value:
-                # Hand wins - player gets back bet + winnings
-                payout = self.bet * 2  # Original bet + winnings
+                payout = self.bet * 2
                 total_payout += payout
                 results.append(f"핸드 {i + 1}: 승리 (획득: {payout} 코인)")
             elif hand_value == dealer_value:
-                # Push - player gets back original bet only
-                payout = self.bet  # Just return the original bet
+                payout = self.bet
                 total_payout += payout
                 results.append(f"핸드 {i + 1}: 무승부 (반환: {payout} 코인)")
             else:
-                # Hand loses - player loses the bet for this hand (no payout)
                 results.append(f"핸드 {i + 1}: 패배 (손실: {self.bet} 코인)")
 
         # Calculate net result for summary
-        total_bet = self.bet * 2  # Player paid for both hands
+        total_bet = self.bet * 2
         net_result = total_payout - total_bet
 
         if total_payout > 0:
@@ -319,6 +316,7 @@ class BlackjackView(discord.ui.View):
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         await interaction.edit_original_response(embed=embed, view=self)
+
     @discord.ui.button(label="히트", style=discord.ButtonStyle.primary, emoji="➕")
     async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.user_id or self.game_over:
@@ -334,10 +332,8 @@ class BlackjackView(discord.ui.View):
         if self.is_split:
             if hand_value > 21:  # Current hand busts
                 if self.current_hand < len(self.split_hands) - 1:
-                    # Move to next hand
                     self.current_hand += 1
                 else:
-                    # All hands played, dealer plays
                     while self.calculate_hand_value(self.dealer_hand) < 17:
                         self.dealer_hand.append(self.draw_card())
                     await self.end_game(interaction)
@@ -371,7 +367,6 @@ class BlackjackView(discord.ui.View):
 
         if self.is_split:
             if self.current_hand < len(self.split_hands) - 1:
-                # Move to next hand
                 self.current_hand += 1
                 embed = await self.create_embed()
                 await interaction.edit_original_response(embed=embed, view=self)
@@ -420,7 +415,6 @@ class BlackjackView(discord.ui.View):
 
         if self.is_split:
             if self.current_hand < len(self.split_hands) - 1:
-                # Move to next hand
                 self.current_hand += 1
                 embed = await self.create_embed()
                 await interaction.edit_original_response(embed=embed, view=self)
@@ -514,19 +508,38 @@ class BlackjackView(discord.ui.View):
 
 
 class BlackjackCog(commands.Cog):
-    """Professional Blackjack with advanced features"""
+    """Professional Blackjack with advanced features - Multi-server aware"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("블랙잭", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("블랙잭", bot=bot)
         self.logger.info("블랙잭 시스템이 초기화되었습니다.")
 
     @app_commands.command(name="블랙잭", description="전문적인 블랙잭 게임 (더블다운, 보험, 스플릿 포함)")
-    @app_commands.describe(bet="베팅할 코인 수 (20-200)")
+    @app_commands.describe(bet="베팅할 코인 수")
     async def blackjack(self, interaction: discord.Interaction, bet: int):
-        if bet < 20 or bet > 200:
-            await interaction.response.send_message("❌ 베팅은 20~200 코인 사이만 가능합니다.", ephemeral=True)
+        # Check if casino games are enabled for this server
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
             return
+
+        # Get server-specific bet limits
+        min_bet = get_server_setting(interaction.guild.id, 'blackjack_min_bet', 20)
+        max_bet = get_server_setting(interaction.guild.id, 'blackjack_max_bet', 200)
+
+        if bet < min_bet or bet > max_bet:
+            await interaction.response.send_message(f"❌ 베팅은 {min_bet}~{max_bet:,} 코인 사이만 가능합니다.", ephemeral=True)
+            return
+
+        # Validate using casino base
+        casino_base = self.bot.get_cog('CasinoBaseCog')
+        if casino_base:
+            can_start, error_msg = await casino_base.validate_game_start(
+                interaction, "blackjack", bet, min_bet, max_bet
+            )
+            if not can_start:
+                await interaction.response.send_message(error_msg, ephemeral=True)
+                return
 
         coins_cog = self.bot.get_cog('CoinsCog')
         if not coins_cog:
@@ -586,7 +599,7 @@ class BlackjackCog(commands.Cog):
                 embed.add_field(name="🎯 전략 힌트", value="\n".join(hints), inline=False)
 
         await interaction.response.send_message(embed=embed, view=view)
-        self.logger.info(f"{interaction.user}가 {bet} 코인으로 블랙잭 시작")
+        self.logger.info(f"{interaction.user}가 {bet} 코인으로 블랙잭 시작 (Guild: {interaction.guild.id})")
 
 
 async def setup(bot):

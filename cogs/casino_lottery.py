@@ -1,4 +1,4 @@
-# cogs/casino_lottery.py
+# cogs/casino_lottery.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,15 +6,18 @@ import asyncio
 import random
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    is_feature_enabled,
+    get_server_setting
+)
 
 
 class LotteryCog(commands.Cog):
-    """Lottery number matching game"""
+    """Lottery number matching game - Multi-server aware"""
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("복권", bot=bot, discord_log_channel_id=config.LOG_CHANNEL_ID)
+        self.logger = get_logger("복권", bot=bot)
         self.logger.info("복권 게임 시스템이 초기화되었습니다.")
 
     def get_number_emoji(self, number):
@@ -42,16 +45,25 @@ class LotteryCog(commands.Cog):
         if not casino_base:
             return False, "카지노 시스템을 찾을 수 없습니다!"
 
+        # Get server-specific limits
+        min_bet = get_server_setting(interaction.guild.id, 'lottery_min_bet', 50)
+        max_bet = get_server_setting(interaction.guild.id, 'lottery_max_bet', 200)
+
         return await casino_base.validate_game_start(
-            interaction, "lottery", bet, 50, 200
+            interaction, "lottery", bet, min_bet, max_bet
         )
 
     @app_commands.command(name="복권", description="번호 맞히기 복권")
     @app_commands.describe(
-        bet="베팅 금액 (50-200)",
+        bet="베팅 금액",
         numbers="선택할 번호 (1-10, 쉼표로 구분, 예: 1,3,7)"
     )
     async def lottery(self, interaction: discord.Interaction, bet: int, numbers: str):
+        # Check if casino games are enabled for this server
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
+            return
+
         can_start, error_msg = await self.validate_game(interaction, bet)
         if not can_start:
             await interaction.response.send_message(error_msg, ephemeral=True)
@@ -85,6 +97,7 @@ class LotteryCog(commands.Cog):
             description=f"선택한 번호:\n{self.create_lottery_balls_display(chosen_numbers)}",
             color=discord.Color.blue()
         )
+        embed.set_footer(text=f"Server: {interaction.guild.name}")
         await interaction.edit_original_response(embed=embed)
         await asyncio.sleep(1.5)
 
@@ -96,6 +109,7 @@ class LotteryCog(commands.Cog):
                 description=f"🎰 번호를 뽑는 중입니다...\n\n{self.create_lottery_balls_display(temp_numbers)}",
                 color=discord.Color.blue()
             )
+            embed.set_footer(text=f"Server: {interaction.guild.name}")
             await interaction.edit_original_response(embed=embed)
             await asyncio.sleep(0.8)
 
@@ -104,8 +118,11 @@ class LotteryCog(commands.Cog):
         matches = set(chosen_numbers) & set(winning_numbers)
         match_count = len(matches)
 
-        # Payout calculation
-        payouts = {0: 0, 1: 0, 2: bet * 3, 3: bet * 50}
+        # Payout calculation - server configurable
+        base_payouts = {0: 0, 1: 0, 2: 3, 3: 50}
+        multiplier_modifier = get_server_setting(interaction.guild.id, 'lottery_multiplier', 1.0)
+        payouts = {k: int(bet * v * multiplier_modifier) for k, v in base_payouts.items()}
+
         payout = payouts[match_count]
 
         if payout > 0:
@@ -146,15 +163,18 @@ class LotteryCog(commands.Cog):
         new_balance = await coins_cog.get_user_coins(interaction.user.id)
         embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=True)
 
-        # Add payout table
+        # Add payout table with server-specific multipliers
+        payout_3 = int(50 * multiplier_modifier)
+        payout_2 = int(3 * multiplier_modifier)
         embed.add_field(
             name="📋 배당표",
-            value="3개 일치: 50배 💎\n2개 일치: 3배 💚\n1개 이하: 0배 💸",
+            value=f"3개 일치: {payout_3}배 💎\n2개 일치: {payout_2}배 💚\n1개 이하: 0배 💸",
             inline=False
         )
 
+        embed.set_footer(text=f"Server: {interaction.guild.name}")
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 복권에서 {match_count}개 일치 ({bet} 코인)")
+        self.logger.info(f"{interaction.user}가 복권에서 {match_count}개 일치 ({bet} 코인) (Guild: {interaction.guild.id})")
 
 
 async def setup(bot):

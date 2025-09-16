@@ -1,4 +1,4 @@
-# cogs/casino_base.py
+# cogs/casino_base.py - Updated for multi-server support
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from utils.logger import get_logger
-from utils import config
+from utils.config import (
+    get_channel_id,
+    is_feature_enabled,
+    is_server_configured,
+    get_server_setting
+)
 
 
 class CasinoBaseCog(commands.Cog):
@@ -14,24 +19,11 @@ class CasinoBaseCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "카지노 베이스",
-            bot=self.bot,
-            discord_log_channel_id=config.LOG_CHANNEL_ID
-        )
+        self.logger = get_logger("카지노 베이스", bot=self.bot)
 
         # Spam protection per game type
         self.game_cooldowns: Dict[int, Dict[str, datetime]] = {}  # user_id: {game_type: last_time}
         self.cooldown_seconds = 5
-
-        # Channel restrictions - SET THESE MANUALLY
-        self.ALLOWED_CHANNELS = {
-            # Example:
-            # 'slot_machine': [123456789, 987654321],
-            # 'blackjack': [123456789],
-            # 'roulette': [987654321],
-            # 'dice': [123456789, 987654321],
-        }
 
         self.logger.info("카지노 베이스 시스템이 초기화되었습니다.")
 
@@ -50,33 +42,58 @@ class CasinoBaseCog(commands.Cog):
         self.game_cooldowns[user_id][game_type] = now
         return True
 
-    def check_channel_restriction(self, game_type: str, channel_id: int) -> bool:
-        """Check if game is allowed in current channel"""
-        if game_type in self.ALLOWED_CHANNELS:
-            return channel_id in self.ALLOWED_CHANNELS[game_type]
-        return True  # No restrictions set
+    def check_channel_restriction(self, guild_id: int, game_type: str, channel_id: int) -> bool:
+        """Check if game is allowed in current channel for this server"""
+        # Get server-specific casino channel
+        casino_channel_id = get_channel_id(guild_id, 'casino_channel')
+
+        # If a casino channel is configured, only allow games there
+        if casino_channel_id and casino_channel_id != channel_id:
+            return False
+
+        return True  # No restrictions or in correct channel
 
     async def get_coins_cog(self):
         """Get the coins cog"""
         return self.bot.get_cog('CoinsCog')
 
-    async def validate_game_start(self, interaction: discord.Interaction, game_type: str, bet: int, min_bet: int = 1,
-                                  max_bet: int = 10000) -> tuple[bool, str]:
+    async def validate_game_start(self, interaction: discord.Interaction, game_type: str, bet: int,
+                                  min_bet: int = 1, max_bet: int = 10000) -> tuple[bool, str]:
         """
-        Validate if a game can be started
+        Validate if a game can be started for this specific server
         Returns (can_start: bool, error_message: str)
         """
+        guild_id = interaction.guild.id if interaction.guild else None
+
+        if not guild_id:
+            return False, "❌ 이 명령어는 서버에서만 사용할 수 있습니다!"
+
+        # Check if server is configured
+        if not is_server_configured(guild_id):
+            return False, "❌ 이 서버는 아직 설정되지 않았습니다! 관리자에게 `/봇셋업` 명령어 실행을 요청하세요."
+
+        # Check if casino games are enabled for this server
+        if not is_feature_enabled(guild_id, 'casino_games'):
+            return False, "❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!"
+
         # Check cooldown
         if not self.check_game_cooldown(interaction.user.id, game_type):
             return False, "⏳ 잠시 기다렸다가 다시 해주세요!"
 
         # Check channel restriction
-        if not self.check_channel_restriction(game_type, interaction.channel.id):
-            return False, f"❌ 이 채널에서는 {game_type}을(를) 플레이할 수 없습니다!"
+        if not self.check_channel_restriction(guild_id, game_type, interaction.channel.id):
+            casino_channel_id = get_channel_id(guild_id, 'casino_channel')
+            casino_channel = interaction.guild.get_channel(casino_channel_id)
+            casino_mention = casino_channel.mention if casino_channel else "카지노 채널"
+            return False, f"❌ 카지노 게임은 {casino_mention}에서만 플레이할 수 있습니다!"
+
+        # Get server-specific bet limits
+        server_min_bet = get_server_setting(guild_id, 'min_bet', min_bet)
+        server_max_bet = get_server_setting(guild_id, 'max_bet', max_bet)
 
         # Check bet limits
-        if bet < min_bet or bet > max_bet:
-            return False, f"❌ 베팅은 {min_bet}-{max_bet:,} 코인 사이만 가능합니다!"
+        if bet < server_min_bet or bet > server_max_bet:
+            return False, f"❌ 베팅은 {server_min_bet}-{server_max_bet:,} 코인 사이만 가능합니다!"
 
         # Check coins cog
         coins_cog = await self.get_coins_cog()
@@ -92,11 +109,21 @@ class CasinoBaseCog(commands.Cog):
 
     @app_commands.command(name="카지노통계", description="개인 카지노 게임 통계를 확인합니다.")
     async def casino_stats(self, interaction: discord.Interaction, user: discord.Member = None):
+        # Check if casino games are enabled
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 통계를 볼 수 없습니다!", ephemeral=True)
+            return
+
         await interaction.response.defer(ephemeral=True)
 
         target_user = user or interaction.user
 
         try:
+            # Check if bot has database access
+            if not hasattr(self.bot, 'pool') or not self.bot.pool:
+                await interaction.followup.send("❌ 데이터베이스 연결을 찾을 수 없습니다!", ephemeral=True)
+                return
+
             # Get transaction data
             query = """
                 SELECT transaction_type, SUM(amount) as total, COUNT(*) as count
@@ -186,16 +213,21 @@ class CasinoBaseCog(commands.Cog):
                     )
 
             embed.set_thumbnail(url=target_user.display_avatar.url)
-            embed.set_footer(text="모든 거래 내역을 기반으로 계산됨")
+            embed.set_footer(text=f"Server: {interaction.guild.name} | 모든 거래 내역 기준")
 
             await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
             await interaction.followup.send(f"❌ 통계를 불러오는 중 오류가 발생했습니다: {e}", ephemeral=True)
-            self.logger.error(f"Error in casino_stats: {e}")
+            self.logger.error(f"Error in casino_stats for guild {interaction.guild.id}: {e}")
 
     @app_commands.command(name="카지노도움", description="카지노 게임 설명 및 도움말을 확인합니다.")
     async def casino_help(self, interaction: discord.Interaction):
+        # Check if casino games are enabled
+        if not interaction.guild or not is_feature_enabled(interaction.guild.id, 'casino_games'):
+            await interaction.response.send_message("❌ 이 서버에서는 카지노 게임이 비활성화되어 있습니다!", ephemeral=True)
+            return
+
         embed = discord.Embed(
             title="🎰 카지노 게임 가이드",
             description="사용 가능한 모든 카지노 게임과 규칙을 안내합니다.",
@@ -238,13 +270,24 @@ class CasinoBaseCog(commands.Cog):
             inline=False
         )
 
+        # Server-specific information
+        casino_channel_id = get_channel_id(interaction.guild.id, 'casino_channel')
+        if casino_channel_id:
+            casino_channel = interaction.guild.get_channel(casino_channel_id)
+            if casino_channel:
+                embed.add_field(
+                    name="📍 이 서버 정보",
+                    value=f"• 카지노 채널: {casino_channel.mention}\n• 시작 코인: {get_server_setting(interaction.guild.id, 'starting_coins', 1000):,}\n• 모든 카지노 게임은 지정된 채널에서만 가능합니다",
+                    inline=False
+                )
+
         embed.add_field(
             name="⚠️ 주의사항",
-            value="• 도박은 적당히!\n• 모든 게임에는 쿨다운이 있습니다 (5초)\n• 일부 게임은 특정 채널에서만 가능할 수 있습니다\n• 모든 거래는 로그에 기록됩니다",
+            value="• 도박은 적당히!\n• 모든 게임에는 쿨다운이 있습니다 (5초)\n• 카지노 채널이 설정된 경우 해당 채널에서만 게임 가능\n• 모든 거래는 로그에 기록됩니다",
             inline=False
         )
 
-        embed.set_footer(text="책임감 있는 게임 플레이를 권장합니다")
+        embed.set_footer(text=f"Server: {interaction.guild.name} | 책임감 있는 게임 플레이를 권장합니다")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
