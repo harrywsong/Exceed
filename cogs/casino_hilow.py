@@ -90,7 +90,7 @@ class HiLowCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "hilow_bet", "Hi-Low bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "hilow_bet", "Hi-Low bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -137,7 +137,7 @@ class HiLowCog(commands.Cog):
         elif total == 7:
             result_type = "push"
             # Push - return bet
-            await coins_cog.add_coins(interaction.user.id, bet, "hilow_push", "Hi-Low push (7)")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, bet, "hilow_push", "Hi-Low push (7)")
         else:
             result_type = "loss"
 
@@ -145,7 +145,7 @@ class HiLowCog(commands.Cog):
             # Get server-specific payout multiplier
             payout_multiplier = get_server_setting(interaction.guild.id, 'hilow_payout', 2.0)
             payout = int(bet * payout_multiplier)
-            await coins_cog.add_coins(interaction.user.id, payout, "hilow_win", f"Hi-Low win: {total}")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "hilow_win", f"Hi-Low win: {total}")
 
         # Create result embed
         if total == 7:
@@ -180,7 +180,7 @@ class HiLowCog(commands.Cog):
 
         embed.description = result_desc
 
-        new_balance = await coins_cog.get_user_coins(interaction.user.id)
+        new_balance = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         # Add game rules

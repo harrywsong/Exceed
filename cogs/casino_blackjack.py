@@ -257,12 +257,13 @@ class BlackjackView(discord.ui.View):
                 result += f"\n❌ 보험 실패 -{self.insurance_bet} 코인"
 
         if total_payout > 0:
-            await coins_cog.add_coins(self.user_id, total_payout, "blackjack_win", "Blackjack payout")
+            await coins_cog.add_coins(self.user_id, interaction.guild.id, total_payout, "blackjack_win",
+                                      "Blackjack payout")
 
         embed = await self.create_embed(final=True)
         embed.add_field(name="결과", value=result, inline=False)
 
-        new_balance = await coins_cog.get_user_coins(self.user_id)
+        new_balance = await coins_cog.get_user_coins(self.user_id, interaction.guild.id)
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         await interaction.edit_original_response(embed=embed, view=self)
@@ -295,7 +296,7 @@ class BlackjackView(discord.ui.View):
         net_result = total_payout - total_bet
 
         if total_payout > 0:
-            await coins_cog.add_coins(self.user_id, total_payout, "blackjack_split_win", "Blackjack split payout")
+            await coins_cog.add_coins(self.user_id, interaction.guild.id, total_payout, "blackjack_split_win", "Blackjack split payout")
 
         embed = await self.create_split_embed(final=True)
 
@@ -312,7 +313,7 @@ class BlackjackView(discord.ui.View):
 
         embed.add_field(name="최종 결과", value=summary, inline=False)
 
-        new_balance = await coins_cog.get_user_coins(self.user_id)
+        new_balance = await coins_cog.get_user_coins(self.user_id, interaction.guild.id)
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         await interaction.edit_original_response(embed=embed, view=self)
@@ -396,13 +397,13 @@ class BlackjackView(discord.ui.View):
             return
 
         # Check if user has enough for double down
-        user_coins = await coins_cog.get_user_coins(self.user_id)
+        user_coins = await coins_cog.get_user_coins(self.user_id, interaction.guild.id)
         if user_coins < self.bet:
             await interaction.followup.send(f"❌ 더블다운 자금 부족! 필요: {self.bet}", ephemeral=True)
             return
 
         # Deduct additional bet
-        if not await coins_cog.remove_coins(self.user_id, self.bet, "blackjack_double", "Blackjack double down"):
+        if not await coins_cog.remove_coins(self.user_id, interaction.guild.id, self.bet, "blackjack_double", "Blackjack double down"):
             await interaction.followup.send("❌ 더블다운 처리 실패!", ephemeral=True)
             return
 
@@ -445,13 +446,14 @@ class BlackjackView(discord.ui.View):
             return
 
         # Check if user has enough for split
-        user_coins = await coins_cog.get_user_coins(self.user_id)
+        user_coins = await coins_cog.get_user_coins(self.user_id, interaction.guild.id)
         if user_coins < self.bet:
             await interaction.followup.send(f"❌ 스플릿 자금 부족! 필요: {self.bet}", ephemeral=True)
             return
 
         # Deduct additional bet for split
-        if not await coins_cog.remove_coins(self.user_id, self.bet, "blackjack_split", "Blackjack split"):
+        if not await coins_cog.remove_coins(self.user_id, interaction.guild.id, self.bet, "blackjack_split",
+                                            "Blackjack split"):
             await interaction.followup.send("❌ 스플릿 처리 실패!", ephemeral=True)
             return
 
@@ -492,13 +494,14 @@ class BlackjackView(discord.ui.View):
             return
 
         insurance_amount = self.bet // 2
-        user_coins = await coins_cog.get_user_coins(self.user_id)
+        user_coins = await coins_cog.get_user_coins(self.user_id, interaction.guild.id)
 
         if user_coins < insurance_amount:
             await interaction.followup.send(f"❌ 보험료 부족! 필요: {insurance_amount}", ephemeral=True)
             return
 
-        if await coins_cog.remove_coins(self.user_id, insurance_amount, "blackjack_insurance", "Blackjack insurance"):
+        if await coins_cog.remove_coins(self.user_id, interaction.guild.id, insurance_amount, "blackjack_insurance",
+                                        "Blackjack insurance"):
             self.insurance_bet = insurance_amount
             button.disabled = True
 
@@ -546,13 +549,14 @@ class BlackjackCog(commands.Cog):
             await interaction.response.send_message("❌ 코인 시스템을 찾을 수 없습니다!", ephemeral=True)
             return
 
-        user_coins = await coins_cog.get_user_coins(interaction.user.id)
+        user_coins = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         if user_coins < bet:
             await interaction.response.send_message(f"❌ 코인 부족! 필요: {bet:,}, 보유: {user_coins:,}", ephemeral=True)
             return
 
         # Deduct initial bet
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "blackjack_bet", "Blackjack initial bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "blackjack_bet",
+                                            "Blackjack initial bet"):
             await interaction.response.send_message("❌ 베팅 처리 실패!", ephemeral=True)
             return
 

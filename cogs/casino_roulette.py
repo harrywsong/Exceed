@@ -77,7 +77,7 @@ class RouletteSimpleCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "roulette_bet", "Roulette bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "roulette_bet", "Roulette bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -118,7 +118,7 @@ class RouletteSimpleCog(commands.Cog):
             payout = bet * number_multiplier
 
         if won:
-            await coins_cog.add_coins(interaction.user.id, payout, "roulette_win", f"Roulette win: {winning_number}")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "roulette_win", f"Roulette win: {winning_number}")
 
         if won:
             embed = discord.Embed(
@@ -133,7 +133,7 @@ class RouletteSimpleCog(commands.Cog):
                 color=discord.Color.red()
             )
 
-        new_balance = await coins_cog.get_user_coins(interaction.user.id)
+        new_balance = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
         embed.set_footer(text=f"Server: {interaction.guild.name}")
 

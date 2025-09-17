@@ -356,7 +356,7 @@ class CloseTicketView(View):
             close_embed.set_footer(text=f"티켓 ID: {channel.id}")
 
             # Get history channel from server config
-            history_channel_id = get_channel_id(channel.guild.id, 'history_channel')
+            history_channel_id = get_channel_id(channel.guild.id, 'ticket_history_channel')
             if history_channel_id:
                 history_ch = channel.guild.get_channel(history_channel_id)
                 if history_ch:

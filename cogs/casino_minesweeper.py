@@ -247,6 +247,7 @@ class MinesweeperView(discord.ui.View):
             payout = int(self.bet * self.current_multiplier)
             await coins_cog.add_coins(
                 self.user_id,
+                interaction.guild.id,
                 payout,
                 "minesweeper_win",
                 f"지뢰찾기 승리: {self.revealed_gems}개 보석, {self.current_multiplier:.2f}x 배수"
@@ -255,7 +256,7 @@ class MinesweeperView(discord.ui.View):
         embed = await self.create_game_embed(True, won)
 
         if coins_cog:
-            new_balance = await coins_cog.get_user_coins(self.user_id)
+            new_balance = await coins_cog.get_user_coins(self.user_id, interaction.guild.id)
             embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=True)
 
         await interaction.edit_original_response(embed=embed, view=self)
@@ -355,7 +356,7 @@ class MinesweeperCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "minesweeper_bet", "지뢰찾기 베팅"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "minesweeper_bet", "지뢰찾기 베팅"):
             await interaction.response.send_message("❌ 베팅 처리 실패!", ephemeral=True)
             return
 

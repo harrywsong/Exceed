@@ -380,7 +380,7 @@ class MultiBingoView(discord.ui.View):
 
         # Deduct the bet
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, required_bet, "bingo_bet", "멀티플레이어 빙고 베팅"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, required_bet, "bingo_bet", "멀티플레이어 빙고 베팅"):
             await interaction.response.send_message("❌ 베팅 처리에 실패했습니다!", ephemeral=True)
             return
 
@@ -404,7 +404,7 @@ class MultiBingoView(discord.ui.View):
         player = self.players[interaction.user.id]
         coins_cog = self.bot.get_cog('CoinsCog')
         if coins_cog:
-            await coins_cog.add_coins(interaction.user.id, player.bet, "bingo_refund", "빙고 게임 나가기")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, player.bet, "bingo_refund", "빙고 게임 나가기")
 
         # Remove player
         self.remove_player(interaction.user.id)
@@ -484,7 +484,7 @@ class BingoCog(commands.Cog):
 
         # Deduct the bet from the starter
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "bingo_bet", "멀티플레이어 빙고 베팅"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "bingo_bet", "멀티플레이어 빙고 베팅"):
             await interaction.response.send_message("❌ 베팅 처리에 실패했습니다!", ephemeral=True)
             return
 

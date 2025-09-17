@@ -1,10 +1,13 @@
 # cogs/setup.py
 import discord
 from discord.ext import commands
+from discord import app_commands
 import os
 import json
 import asyncio
 from typing import Optional, Dict, Any
+from dotenv import dotenv_values
+
 from utils.config import (
     load_server_config,
     save_server_config,
@@ -21,7 +24,15 @@ class MultiServerBotSetup:
         self.bot = bot
         self.guild = guild
         self.user = user
-        self.config = {}
+        self.config = {
+            'guild_id': str(self.guild.id),
+            'guild_name': self.guild.name,
+            'channels': {},
+            'roles': {},
+            'features': {},
+            'settings': {},
+            'reaction_roles': {}
+        }
         self.setup_channel = None
         self.config_file_path = 'data/server_configs.json'
 
@@ -38,7 +49,6 @@ class MultiServerBotSetup:
             overwrites=overwrites,
             reason="Bot setup configuration"
         )
-
         self.setup_channel = channel
         return channel
 
@@ -93,9 +103,7 @@ class MultiServerBotSetup:
     def load_existing_configs(self):
         """Load existing server configurations"""
         try:
-            # Ensure data directory exists
             os.makedirs('data', exist_ok=True)
-
             if os.path.exists(self.config_file_path):
                 with open(self.config_file_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
@@ -111,7 +119,7 @@ class MultiServerBotSetup:
 
         if existing_configs or global_config.get('DISCORD_TOKEN'):
             embed = discord.Embed(
-                title="🔍 Existing Configuration Detected",
+                title="📋 Existing Configuration Detected",
                 description="I found existing bot configurations.",
                 color=0xff9900
             )
@@ -142,7 +150,6 @@ class MultiServerBotSetup:
                 )
 
             await self.setup_channel.send(embed=embed)
-
             response = await self.get_user_input("Continue with setup? This will update configurations. (yes/no)")
             if response is None or response.lower() not in ['yes', 'y']:
                 return False
@@ -158,35 +165,28 @@ class MultiServerBotSetup:
         )
         await self.setup_channel.send(embed=embed)
 
-        server_config = {
-            'guild_id': str(self.guild.id),
-            'guild_name': self.guild.name,
-            'channels': {},
-            'roles': {},
-            'features': {},
-            'settings': {}
-        }
-
         # Core channels
         core_channels = [
             ("log_channel", "📝 **Log Channel**: Where should I send bot logs and admin notifications?"),
             ("welcome_channel", "👋 **Welcome Channel**: Where should I send welcome messages for new members?"),
             ("goodbye_channel", "👋 **Goodbye Channel**: Where should I send goodbye messages?"),
             ("member_chat_channel", "💬 **Member Chat**: Main chat channel for members?"),
+            ("message_history_channel",
+             "📜 **Message History Channel**: Where should deleted/edited message logs be sent?"),
         ]
 
         for config_key, prompt in core_channels:
             response = await self.get_user_input(f"{prompt} (or type `skip`)")
             if response is None:
                 return False
-            if response == 'skip':
-                server_config['channels'][config_key] = None
+            if response.lower() == 'skip':
+                self.config['channels'][config_key] = None
                 continue
 
             channel_id = await self.parse_channel_mention_or_id(response)
             if channel_id:
                 channel = self.guild.get_channel(channel_id)
-                server_config['channels'][config_key] = {
+                self.config['channels'][config_key] = {
                     'id': channel_id,
                     'name': channel.name if channel else 'Unknown'
                 }
@@ -194,9 +194,8 @@ class MultiServerBotSetup:
                     f"✅ Set {config_key.replace('_', ' ')} to #{channel.name if channel else channel_id}")
             else:
                 await self.setup_channel.send("❌ Invalid channel. Skipping.")
-                server_config['channels'][config_key] = None
+                self.config['channels'][config_key] = None
 
-        self.server_config = server_config
         return True
 
     async def setup_server_roles(self):
@@ -219,14 +218,14 @@ class MultiServerBotSetup:
             response = await self.get_user_input(f"{prompt} (mention @role or provide ID, or `skip`)")
             if response is None:
                 return False
-            if response == 'skip':
-                self.server_config['roles'][config_key] = None
+            if response.lower() == 'skip':
+                self.config['roles'][config_key] = None
                 continue
 
             role_id = await self.parse_role_mention_or_id(response)
             if role_id:
                 role = self.guild.get_role(role_id)
-                self.server_config['roles'][config_key] = {
+                self.config['roles'][config_key] = {
                     'id': role_id,
                     'name': role.name if role else 'Unknown'
                 }
@@ -234,7 +233,7 @@ class MultiServerBotSetup:
                     f"✅ Set {config_key.replace('_', ' ')} to @{role.name if role else role_id}")
             else:
                 await self.setup_channel.send("❌ Invalid role. Skipping.")
-                self.server_config['roles'][config_key] = None
+                self.config['roles'][config_key] = None
 
         return True
 
@@ -252,32 +251,46 @@ class MultiServerBotSetup:
             return False
 
         casino_enabled = response.lower() in ['yes', 'y', 'true']
-        self.server_config['features']['casino_games'] = casino_enabled
+        self.config['features']['casino_games'] = casino_enabled
 
         if casino_enabled:
-            # Casino channel
-            response = await self.get_user_input(
-                "🎰 **Casino Channel**: Where should casino games be played? (or `skip`)")
-            if response and response != 'skip':
-                channel_id = await self.parse_channel_mention_or_id(response)
-                if channel_id:
-                    channel = self.guild.get_channel(channel_id)
-                    self.server_config['channels']['casino_channel'] = {
-                        'id': channel_id,
-                        'name': channel.name if channel else 'Unknown'
-                    }
+            casino_channels = [
+                ("slots_channel", "🍒 **Slots Channel**"),
+                ("blackjack_channel", "🃏 **Blackjack Channel**"),
+                ("hilow_channel", "📈 **Hi-Lo Channel**"),
+                ("dice_channel", "🎲 **Dice Channel**"),
+                ("roulette_channel", "🔴 **Roulette Channel**"),
+                ("lottery_channel", "🎟️ **Lottery Channel**"),
+                ("coinflip_channel", "🪙 **Coin Toss Channel**"),
+                ("minesweeper_channel", "💣 **Minesweeper Channel**"),
+                ("bingo_channel", "🅱️ **Bingo Channel**"),
+                ("crash_channel", "✈️ **Crash Channel**")
+            ]
+
+            for config_key, prompt in casino_channels:
+                response = await self.get_user_input(f"{prompt}: Where should this game be hosted? (or `skip`)")
+                if response and response.lower() != 'skip':
+                    channel_id = await self.parse_channel_mention_or_id(response)
+                    if channel_id:
+                        channel = self.guild.get_channel(channel_id)
+                        self.config['channels'][config_key] = {
+                            'id': channel_id,
+                            'name': channel.name if channel else 'Unknown'
+                        }
+                    else:
+                        await self.setup_channel.send("❌ Invalid channel. Skipping.")
 
             # Economy settings
             response = await self.get_user_input(
                 "💰 **Starting Coins**: How many coins should new members get? (default: 1000)")
-            if response and response != 'skip':
+            if response and response.lower() != 'skip':
                 try:
                     starting_coins = int(response)
-                    self.server_config['settings']['starting_coins'] = starting_coins
+                    self.config['settings']['starting_coins'] = starting_coins
                 except ValueError:
-                    self.server_config['settings']['starting_coins'] = 1000
+                    self.config['settings']['starting_coins'] = 1000
             else:
-                self.server_config['settings']['starting_coins'] = 1000
+                self.config['settings']['starting_coins'] = 1000
 
         return True
 
@@ -295,28 +308,41 @@ class MultiServerBotSetup:
             return False
 
         achievements_enabled = response.lower() in ['yes', 'y', 'true']
-        self.server_config['features']['achievements'] = achievements_enabled
+        self.config['features']['achievements'] = achievements_enabled
 
         if achievements_enabled:
-            # Achievement channels
+            # Achievement announcement channel
             response = await self.get_user_input(
-                "🏆 **Achievement Channel**: Where should achievements be announced? (or `skip`)")
-            if response and response != 'skip':
+                "📣 **Achievement Announcements Channel**: Where should achievements be announced? (or `skip`)")
+            if response and response.lower() != 'skip':
                 channel_id = await self.parse_channel_mention_or_id(response)
                 if channel_id:
                     channel = self.guild.get_channel(channel_id)
-                    self.server_config['channels']['achievement_channel'] = {
+                    self.config['channels']['achievement_channel'] = {
                         'id': channel_id,
                         'name': channel.name if channel else 'Unknown'
                     }
 
+            # Achievement alert channel (more general alerts)
             response = await self.get_user_input(
-                "📊 **Leaderboard Channel**: Where should leaderboards be posted? (or `skip`)")
-            if response and response != 'skip':
+                "🚨 **Achievement Alert Channel**: For general achievement alerts/logs. (or `skip`)")
+            if response and response.lower() != 'skip':
                 channel_id = await self.parse_channel_mention_or_id(response)
                 if channel_id:
                     channel = self.guild.get_channel(channel_id)
-                    self.server_config['channels']['leaderboard_channel'] = {
+                    self.config['channels']['achievement_alert_channel'] = {
+                        'id': channel_id,
+                        'name': channel.name if channel else 'Unknown'
+                    }
+
+            # Leaderboard channel
+            response = await self.get_user_input(
+                "📊 **Leaderboard Channel**: Where should leaderboards be posted? (or `skip`)")
+            if response and response.lower() != 'skip':
+                channel_id = await self.parse_channel_mention_or_id(response)
+                if channel_id:
+                    channel = self.guild.get_channel(channel_id)
+                    self.config['channels']['leaderboard_channel'] = {
                         'id': channel_id,
                         'name': channel.name if channel else 'Unknown'
                     }
@@ -337,18 +363,18 @@ class MultiServerBotSetup:
             return False
 
         tickets_enabled = response.lower() in ['yes', 'y', 'true']
-        self.server_config['features']['ticket_system'] = tickets_enabled
+        self.config['features']['ticket_system'] = tickets_enabled
 
         if tickets_enabled:
             # Ticket category
             response = await self.get_user_input(
                 "📁 **Ticket Category ID**: What category should tickets be created in? (provide category ID)")
-            if response and response != 'skip':
+            if response and response.lower() != 'skip':
                 try:
                     category_id = int(response)
                     category = discord.utils.get(self.guild.categories, id=category_id)
                     if category:
-                        self.server_config['channels']['ticket_category'] = {
+                        self.config['channels']['ticket_category'] = {
                             'id': category_id,
                             'name': category.name
                         }
@@ -360,15 +386,26 @@ class MultiServerBotSetup:
 
             # Ticket channel for creating tickets
             response = await self.get_user_input("🎫 **Ticket Channel**: Where should users create tickets? (or `skip`)")
-            if response and response != 'skip':
+            if response and response.lower() != 'skip':
                 channel_id = await self.parse_channel_mention_or_id(response)
                 if channel_id:
                     channel = self.guild.get_channel(channel_id)
-                    self.server_config['channels']['ticket_channel'] = {
+                    self.config['channels']['ticket_channel'] = {
                         'id': channel_id,
                         'name': channel.name if channel else 'Unknown'
                     }
 
+            # Ticket history channel
+            response = await self.get_user_input(
+                "📜 **Ticket History Channel**: Where should closed ticket transcripts be sent? (or `skip`)")
+            if response and response.lower() != 'skip':
+                channel_id = await self.parse_channel_mention_or_id(response)
+                if channel_id:
+                    channel = self.guild.get_channel(channel_id)
+                    self.config['channels']['ticket_history_channel'] = {
+                        'id': channel_id,
+                        'name': channel.name if channel else 'Unknown'
+                    }
         return True
 
     async def setup_voice_features(self):
@@ -385,18 +422,34 @@ class MultiServerBotSetup:
             return False
 
         voice_enabled = response.lower() in ['yes', 'y', 'true']
-        self.server_config['features']['voice_channels'] = voice_enabled
+        self.config['features']['voice_channels'] = voice_enabled
 
         if voice_enabled:
+            # Temp voice category
+            response = await self.get_user_input(
+                "📁 **Temp Voice Category ID**: Which category should temporary voices be created in?")
+            if response and response.lower() != 'skip':
+                try:
+                    category_id = int(response)
+                    category = discord.utils.get(self.guild.categories, id=category_id)
+                    if category:
+                        self.config['channels']['temp_voice_category'] = {
+                            'id': category_id,
+                            'name': category.name
+                        }
+                        await self.setup_channel.send(f"✅ Set temp voice category to {category.name}")
+                except ValueError:
+                    await self.setup_channel.send("❌ Invalid category ID.")
+
             # Lobby voice channel
             response = await self.get_user_input(
                 "🎵 **Lobby Voice Channel**: Which voice channel should be the lobby? (provide voice channel ID or `skip`)")
-            if response and response != 'skip':
+            if response and response.lower() != 'skip':
                 try:
                     channel_id = int(response)
                     channel = self.guild.get_channel(channel_id)
                     if channel and isinstance(channel, discord.VoiceChannel):
-                        self.server_config['channels']['lobby_voice'] = {
+                        self.config['channels']['lobby_voice'] = {
                             'id': channel_id,
                             'name': channel.name
                         }
@@ -405,22 +458,6 @@ class MultiServerBotSetup:
                         await self.setup_channel.send("❌ Invalid voice channel.")
                 except ValueError:
                     await self.setup_channel.send("❌ Invalid channel ID.")
-
-            # Temp voice category
-            response = await self.get_user_input(
-                "📁 **Temp Voice Category ID**: Which category should temporary voices be created in?")
-            if response and response != 'skip':
-                try:
-                    category_id = int(response)
-                    category = discord.utils.get(self.guild.categories, id=category_id)
-                    if category:
-                        self.server_config['channels']['temp_voice_category'] = {
-                            'id': category_id,
-                            'name': category.name
-                        }
-                        await self.setup_channel.send(f"✅ Set temp voice category to {category.name}")
-                except ValueError:
-                    await self.setup_channel.send("❌ Invalid category ID.")
 
         return True
 
@@ -435,20 +472,72 @@ class MultiServerBotSetup:
 
         additional_features = [
             ("welcome_messages", "👋 Enable welcome/goodbye messages?"),
-            ("message_history", "📚 Enable message history logging?"),
-            ("reaction_roles", "😀 Enable reaction role system?"),
             ("auto_moderation", "🛡️ Enable auto-moderation features?"),
+            ("reaction_roles", "😀 Enable reaction role system?"),
         ]
 
         for feature_key, prompt in additional_features:
             response = await self.get_user_input(f"{prompt} (yes/no)")
             if response is None:
                 return False
-            self.server_config['features'][feature_key] = response.lower() in ['yes', 'y', 'true']
-
-            status = "✅ Enabled" if self.server_config['features'][feature_key] else "❌ Disabled"
+            self.config['features'][feature_key] = response.lower() in ['yes', 'y', 'true']
+            status = "✅ Enabled" if self.config['features'][feature_key] else "❌ Disabled"
             await self.setup_channel.send(f"{status} {feature_key.replace('_', ' ').title()}")
+        return True
 
+    async def setup_reaction_roles(self):
+        """Setup reaction role system"""
+        if not self.config['features'].get('reaction_roles'):
+            return True
+
+        embed = discord.Embed(
+            title="😀 Reaction Role Setup",
+            description="Configure the reaction roles. You will provide a message ID and then emoji-role pairs.",
+            color=0x3498db
+        )
+        await self.setup_channel.send(embed=embed)
+
+        while True:
+            response = await self.get_user_input(
+                "💬 **Reaction Message ID**: Enter the message ID for the reaction roles (or `done` to finish).")
+            if response is None:
+                return False
+            if response.lower() == 'done':
+                break
+
+            try:
+                message_id = int(response)
+                self.config['reaction_roles'][str(message_id)] = {}
+                await self.setup_channel.send(f"✅ Message ID {message_id} accepted. Now, add emoji-role pairs.")
+            except ValueError:
+                await self.setup_channel.send("❌ Invalid message ID. Please try again.")
+                continue
+
+            # Get emoji-role pairs
+            while True:
+                pair_response = await self.get_user_input(
+                    "💡 **Emoji & Role**: Enter an emoji and the role ID, separated by a comma (e.g., `👍,123456789`) or `done`.")
+                if pair_response is None:
+                    return False
+                if pair_response.lower() == 'done':
+                    break
+
+                parts = pair_response.split(',')
+                if len(parts) != 2:
+                    await self.setup_channel.send("❌ Invalid format. Please use `emoji,role_id`.")
+                    continue
+
+                emoji_str = parts[0].strip()
+                try:
+                    role_id = int(parts[1].strip())
+                    role = self.guild.get_role(role_id)
+                    if role:
+                        self.config['reaction_roles'][str(message_id)][emoji_str] = role_id
+                        await self.setup_channel.send(f"✅ Added {emoji_str} -> @{role.name}")
+                    else:
+                        await self.setup_channel.send("❌ Role not found. Please use a valid role ID.")
+                except ValueError:
+                    await self.setup_channel.send("❌ Invalid role ID.")
         return True
 
     async def finalize_setup(self):
@@ -456,67 +545,54 @@ class MultiServerBotSetup:
         try:
             # Load existing server configs
             all_server_configs = self.load_existing_configs()
-
             # Add/update this server's config
-            all_server_configs[str(self.guild.id)] = self.server_config
-
+            all_server_configs[str(self.guild.id)] = self.config
             # Ensure data directory exists
             os.makedirs('data', exist_ok=True)
-
             # Save server configs
             with open(self.config_file_path, 'w', encoding='utf-8') as f:
                 json.dump(all_server_configs, f, indent=2, ensure_ascii=False)
-
             # Create summary
-            enabled_features = [k.replace('_', ' ').title() for k, v in self.server_config['features'].items() if v]
-            configured_channels = len([c for c in self.server_config['channels'].values() if c])
-            configured_roles = len([r for r in self.server_config['roles'].values() if r])
-
+            enabled_features = [k.replace('_', ' ').title() for k, v in self.config['features'].items() if v]
+            configured_channels = len([c for c in self.config['channels'].values() if c])
+            configured_roles = len([r for r in self.config['roles'].values() if r])
+            configured_reaction_roles = len(self.config.get('reaction_roles', {}))
             embed = discord.Embed(
                 title="✅ Setup Complete!",
                 description=f"**{self.guild.name}** has been successfully configured!",
                 color=0x00ff00
             )
-
             embed.add_field(
                 name="📊 Configuration Summary",
                 value=f"• **Channels Configured**: {configured_channels}\n"
                       f"• **Roles Configured**: {configured_roles}\n"
+                      f"• **Reaction Roles Configured**: {configured_reaction_roles}\n"
                       f"• **Features Enabled**: {len(enabled_features)}\n"
                       f"• **Server ID**: `{self.guild.id}`",
                 inline=False
             )
-
             if enabled_features:
                 embed.add_field(
                     name="🚀 Enabled Features",
                     value='\n'.join([f"• {feature}" for feature in enabled_features]),
                     inline=False
                 )
-
             embed.add_field(
-                name="📄 Next Steps",
+                name="🔄 Next Steps",
                 value="• Bot is ready to use in this server\n"
                       "• Test features with slash commands\n"
-                      "• Configure reaction roles if enabled\n"
                       "• Invite members and start using the bot!",
                 inline=False
             )
-
             embed.add_field(
                 name="🗑️ Cleanup",
                 value="This setup channel will be deleted in 30 seconds.",
                 inline=False
             )
-
             await self.setup_channel.send(embed=embed)
-
-            # Schedule cleanup
             await asyncio.sleep(30)
             await self.setup_channel.delete(reason="Setup completed")
-
             return True
-
         except Exception as e:
             await self.setup_channel.send(f"❌ Error saving configuration: {e}")
             return False
@@ -528,7 +604,6 @@ class MultiServerBotSetup:
                 return int(text[2:-1])
             except ValueError:
                 return None
-
         try:
             channel_id = int(text)
             channel = self.guild.get_channel(channel_id)
@@ -543,7 +618,6 @@ class MultiServerBotSetup:
                 return int(text[3:-1])
             except ValueError:
                 return None
-
         try:
             role_id = int(text)
             role = self.guild.get_role(role_id)
@@ -551,11 +625,60 @@ class MultiServerBotSetup:
         except ValueError:
             return None
 
+    async def migrate_from_env_backup(self):
+        """Pre-fill configuration from a .env.backup file if it exists."""
+        if os.path.exists('.env.backup_20250916_181843'):
+            env_vars = dotenv_values('.env.backup_20250916_181843')
+
+            # Channel IDs
+            channel_mappings = {
+                "LOG_CHANNEL_ID": "log_channel",
+                "LOBBY_VOICE_CHANNEL_ID": "lobby_voice",
+                "TEMP_VOICE_CATEGORY_ID": "temp_voice_category",
+                "HISTORY_CHANNEL_ID": "ticket_history_channel",
+                "TICKET_CHANNEL_ID": "ticket_channel",
+                "TICKET_CATEGORY_ID": "ticket_category",
+                "WELCOME_CHANNEL_ID": "welcome_channel",
+                "GOODBYE_CHANNEL_ID": "goodbye_channel",
+                "ACHIEVEMENT_ANNOUNCEMENT_CHANNEL_ID": "achievement_channel",
+                "LEADERBOARD_CHANNEL_ID": "leaderboard_channel",
+                "MESSAGE_HISTORY_CHANNEL_ID": "message_history_channel"
+            }
+            for env_key, config_key in channel_mappings.items():
+                if env_key in env_vars:
+                    self.config['channels'][config_key] = {'id': int(env_vars[env_key]), 'name': 'Migrated'}
+
+            # Role IDs
+            role_mappings = {
+                "STAFF_ROLE_ID": "staff_role",
+                "ADMIN_ROLE_ID": "admin_role",
+                "MEMBER_ROLE_ID": "member_role",
+                "UNVERIFIED_ROLE_ID": "unverified_role"
+            }
+            for env_key, config_key in role_mappings.items():
+                if env_key in env_vars:
+                    self.config['roles'][config_key] = {'id': int(env_vars[env_key]), 'name': 'Migrated'}
+
+            # Reaction Roles
+            if "REACTION_ROLES" in env_vars:
+                try:
+                    rr_data = json.loads(env_vars["REACTION_ROLES"].replace("'", '"'))
+                    self.config['reaction_roles'] = rr_data
+                except json.JSONDecodeError:
+                    pass
+
     async def run_setup(self):
         """Run the complete setup process"""
         try:
             await self.create_setup_channel()
             await self.send_welcome_message()
+
+            # Optional: Migrate from existing .env.backup file
+            response = await self.get_user_input("Do you want to pre-fill settings from the .env.backup file? (yes/no)")
+            if response and response.lower() in ['yes', 'y']:
+                await self.migrate_from_env_backup()
+                await self.setup_channel.send(
+                    "✅ Configuration pre-filled from `.env.backup`! You can now review and update.")
 
             # Check existing setup
             if not await self.check_existing_setup():
@@ -571,6 +694,7 @@ class MultiServerBotSetup:
                 self.setup_ticket_system,
                 self.setup_voice_features,
                 self.setup_additional_features,
+                self.setup_reaction_roles,
                 self.finalize_setup
             ]
 
@@ -596,55 +720,60 @@ class SetupCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @discord.slash_command(name="bot-setup", description="Setup the Exceed bot for this server")
-    async def setup_bot(self, ctx):
-        if not ctx.author.guild_permissions.administrator:
-            await ctx.respond("❌ You need Administrator permissions to run bot setup.", ephemeral=True)
-            return
-
-        await ctx.respond("🔧 Starting Exceed bot setup... Creating setup channel...", ephemeral=True)
-
-        setup = MultiServerBotSetup(self.bot, ctx.guild, ctx.author)
-        await setup.run_setup()
-
-    @discord.slash_command(name="bot-status", description="Check bot configuration status")
-    async def bot_status(self, ctx):
-        """Show current bot configuration status"""
+    @app_commands.command(name="bot-setup", description="Setup the bot's features for this server.")
+    @app_commands.default_permissions(manage_guild=True)
+    async def setup_bot(self, interaction: discord.Interaction):
+        """Sets up the bot for the current server via a guided process."""
         try:
-            config = load_server_config(ctx.guild.id)
-
-            if not config:
-                embed = discord.Embed(
-                    title="❌ Server Not Configured",
-                    description=f"**{ctx.guild.name}** is not configured yet.\n\nRun `/bot-setup` to set up the bot.",
-                    color=0xe74c3c
-                )
+            if interaction.user.guild_permissions.manage_guild:
+                await interaction.response.send_message("🚀 Starting bot setup... Please check your DMs or a new channel created for this purpose.", ephemeral=True)
+                setup_instance = MultiServerBotSetup(self.bot, interaction.guild, interaction.user)
+                await setup_instance.run_setup()
             else:
-                enabled_features = [k.replace('_', ' ').title() for k, v in config.get('features', {}).items() if v]
-                configured_channels = len([c for c in config.get('channels', {}).values() if c])
-                configured_roles = len([r for r in config.get('roles', {}).values() if r])
+                await interaction.response.send_message("❌ You must have `Manage Server` permissions to run this command.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ An error occurred while trying to start setup: {e}", ephemeral=True)
 
-                embed = discord.Embed(
-                    title="✅ Server Configuration",
-                    description=f"**{ctx.guild.name}** is properly configured!",
-                    color=0x00ff00
-                )
+    @app_commands.command(name="bot-status", description="Shows the bot's current setup status for this server.")
+    async def status_bot(self, interaction: discord.Interaction):
+        """Checks and reports the bot's setup status for the current server."""
+        try:
+            guild_id = str(interaction.guild.id)
+            server_config = load_server_config(guild_id)
 
+            embed = discord.Embed(
+                title=f"📊 Exceed Bot Status for {interaction.guild.name}",
+                color=0x2ecc71
+            )
+            embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
+
+            if not server_config:
+                embed.description = "❌ This server is not yet configured. Please run `/bot-setup`."
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            embed.description = "✅ This server is configured. Below are the current settings."
+
+            # Server-specific config
+            configured_channels = len([c for c in server_config.get('channels', {}).values() if c])
+            configured_roles = len([r for r in server_config.get('roles', {}).values() if r])
+            enabled_features = [k.replace('_', ' ').title() for k, v in server_config.get('features', {}).items() if v]
+
+            embed.add_field(
+                name="📋 Server Configuration",
+                value=f"• **Channels**: {configured_channels} configured\n"
+                      f"• **Roles**: {configured_roles} configured\n"
+                      f"• **Features**: {len(enabled_features)} enabled",
+                inline=True
+            )
+
+            if enabled_features:
                 embed.add_field(
-                    name="📊 Configuration Stats",
-                    value=f"• **Channels**: {configured_channels} configured\n"
-                          f"• **Roles**: {configured_roles} configured\n"
-                          f"• **Features**: {len(enabled_features)} enabled",
+                    name="🚀 Enabled Features",
+                    value='\n'.join([f"• {feature}" for feature in enabled_features[:8]]) +
+                          ('\n• *...and more*' if len(enabled_features) > 8 else ''),
                     inline=True
                 )
-
-                if enabled_features:
-                    embed.add_field(
-                        name="🚀 Enabled Features",
-                        value='\n'.join([f"• {feature}" for feature in enabled_features[:8]]) +
-                              ('\n• *...and more*' if len(enabled_features) > 8 else ''),
-                        inline=True
-                    )
 
             # Global bot stats
             try:
@@ -658,15 +787,15 @@ class SetupCog(commands.Cog):
                 name="🌐 Global Stats",
                 value=f"• **Total Configured Servers**: {total_servers}\n"
                       f"• **Bot Active In**: {len(self.bot.guilds)} servers\n"
-                      f"• **Total Users**: {sum(guild.member_count for guild in self.bot.guilds)}",
+                      f"• **Total Users**: {sum(guild.member_count for guild in self.bot.guilds)}\n",
                 inline=False
             )
 
-            await ctx.respond(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
         except Exception as e:
-            await ctx.respond(f"❌ Error checking status: {e}", ephemeral=True)
+            await interaction.response.send_message(f"❌ Error checking status: {e}", ephemeral=True)
 
 
-def setup(bot):
-    bot.add_cog(SetupCog(bot))
+async def setup(bot):
+    await bot.add_cog(SetupCog(bot))

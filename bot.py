@@ -26,6 +26,7 @@ import utils.logger as logger_module
 from cogs.achievements import PersistentAchievementView
 from utils import upload_to_drive
 
+from utils.database_updater import DatabaseUpdater
 
 # --- Enhanced Bot Manager for Better Instance Management ---
 class BotManager:
@@ -697,6 +698,23 @@ class MyBot(commands.Bot):
         try:
             self.pool = await create_db_pool_in_bot()
             self.logger.info("✅ Database connection pool created successfully.")
+
+            # Run database schema updates
+            try:
+                db_updater = DatabaseUpdater(self.pool)
+                await db_updater.update_database_schema()
+
+                # Clean legacy data for the first configured guild
+                all_configs = config.get_all_server_configs()
+                if all_configs:
+                    first_guild_id = int(list(all_configs.keys())[0])
+                    await db_updater.clean_legacy_data(first_guild_id)
+
+                self.logger.info("✅ Database schema updated successfully.")
+            except Exception as e:
+                self.logger.error(f"⚠️ Database schema update failed: {e}", exc_info=True)
+                self.logger.warning("Continuing with existing schema...")
+
         except Exception as e:
             self.logger.error(f"❌ Database pool creation failed: {e}", exc_info=True)
             self.logger.warning("⚠️ Running in limited mode without database.")
@@ -732,15 +750,15 @@ class MyBot(commands.Bot):
         except Exception as e:
             self.logger.error(f"❌ Slash command sync failed: {e}", exc_info=True)
 
-        # Add persistent views
+        # Add persistent views - COMMENT OUT THE PROBLEMATIC LINE
         try:
-            self.add_view(PersistentAchievementView(self))
+            # self.add_view(PersistentAchievementView(self))  # Comment this out for now
 
             # Add coins persistent views if available
             try:
                 from cogs.coins import CoinsView, LeaderboardView
                 self.add_view(CoinsView(self))
-                self.add_view(LeaderboardView(self))
+                # self.add_view(LeaderboardView(self))
             except ImportError:
                 self.logger.warning("⚠️ Coins views not available")
 
@@ -752,7 +770,6 @@ class MyBot(commands.Bot):
         data_dir = pathlib.Path("data")
         data_dir.mkdir(exist_ok=True)
         self.logger.info("✅ Data directory prepared")
-
     def _get_global_log_channel(self) -> int:
         """Get a log channel from any configured server for global bot logging"""
         try:
@@ -939,8 +956,8 @@ class MyBot(commands.Bot):
             try:
                 # Create a welcome embed
                 embed = discord.Embed(
-                    title="🎉 Thanks for inviting Exceed Bot!",
-                    description="Hi there! I'm Exceed Bot, a multi-feature Discord bot ready to enhance your server.\n\n"
+                    title="🎉 Thanks for inviting Analog!",
+                    description="Hi there! I'm Analog, a multi-feature Discord bot ready to enhance your server.\n\n"
                                 "🔧 **Get Started:**\n"
                                 "Run `/bot-setup` to configure me for your server\n\n"
                                 "✨ **Features Available:**\n"

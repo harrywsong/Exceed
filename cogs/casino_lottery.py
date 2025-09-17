@@ -85,7 +85,7 @@ class LotteryCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "lottery_bet", "Lottery bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "lottery_bet", "Lottery bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -126,7 +126,7 @@ class LotteryCog(commands.Cog):
         payout = payouts[match_count]
 
         if payout > 0:
-            await coins_cog.add_coins(interaction.user.id, payout, "lottery_win", f"Lottery win: {match_count} matches")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "lottery_win", f"Lottery win: {match_count} matches")
 
         if match_count == 3:
             title = "🎉 대박! 전체 일치!"
@@ -160,7 +160,7 @@ class LotteryCog(commands.Cog):
         else:
             embed.add_field(name="💸 손실", value=f"{bet:,} 코인", inline=True)
 
-        new_balance = await coins_cog.get_user_coins(interaction.user.id)
+        new_balance = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=True)
 
         # Add payout table with server-specific multipliers

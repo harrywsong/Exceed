@@ -286,7 +286,7 @@ class CrashView(discord.ui.View):
 
         coins_cog = self.bot.get_cog('CoinsCog')
         if coins_cog:
-            await coins_cog.add_coins(interaction.user.id, bet_amount, "crash_leave", "Crash game leave refund")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, bet_amount, "crash_leave", "Crash game leave refund")
 
         embed = await self.create_embed()
         chart_file = await self.create_chart()
@@ -302,7 +302,8 @@ class CrashView(discord.ui.View):
             await interaction.response.send_message("⚠ 참가한 플레이어가 없어 게임을 시작할 수 없습니다.", ephemeral=True)
             return
 
-        self.cog.start_event.set()
+        guild_id = interaction.guild.id
+        self.cog.start_events[guild_id].set()
         await interaction.response.send_message("🚀 게임을 곧 시작합니다!", ephemeral=True)
 
     @discord.ui.button(label="캐시아웃", style=discord.ButtonStyle.success, emoji="💸", custom_id="cash_out")
@@ -561,7 +562,7 @@ class CrashCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "crash_bet", "Crash game bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "crash_bet", "Crash game bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 

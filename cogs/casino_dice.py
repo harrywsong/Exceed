@@ -74,7 +74,7 @@ class DiceGameCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "dice_game_bet", "Dice game bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "dice_game_bet", "Dice game bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -116,7 +116,7 @@ class DiceGameCog(commands.Cog):
 
         if won:
             payout = bet * payout_multipliers[guess]
-            await coins_cog.add_coins(interaction.user.id, payout, "dice_game_win", f"Dice win: {total}")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "dice_game_win", f"Dice win: {total}")
 
         if won:
             embed = discord.Embed(
@@ -138,7 +138,7 @@ class DiceGameCog(commands.Cog):
 
         embed.description = result_desc
 
-        new_balance = await coins_cog.get_user_coins(interaction.user.id)
+        new_balance = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         embed.add_field(name="💳 현재 잔액", value=f"{new_balance:,} 코인", inline=False)
 
         # Add odds table for reference

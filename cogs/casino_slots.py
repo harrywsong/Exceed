@@ -136,7 +136,7 @@ class SlotMachineCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "slot_machine_bet", "Slot machine bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "slot_machine_bet", "Slot machine bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -207,8 +207,7 @@ class SlotMachineCog(commands.Cog):
         result_info = f"{result_text}\n\n"
 
         if payout > 0:
-            await coins_cog.add_coins(interaction.user.id, payout, "slot_machine_win",
-                                      f"Slot machine win: {reel1}{reel2}{reel3}")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "slot_machine_win", f"Slot machine win: {reel1}{reel2}{reel3}")
 
             profit = payout - bet
             result_info += f"💰 **수익:** {payout:,} 코인\n"
@@ -226,7 +225,7 @@ class SlotMachineCog(commands.Cog):
         )
 
         # Balance and server-specific payout info
-        new_balance = await coins_cog.get_user_coins(interaction.user.id)
+        new_balance = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
 
         balance_payout = f"🏦 **잔액:** {new_balance:,} 코인\n\n**배당표 (트리플):**\n{self.create_payout_table(interaction.guild.id)}"
 

@@ -3,7 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from utils.logger import get_logger
 from utils.config import (
@@ -25,6 +25,19 @@ class CasinoBaseCog(commands.Cog):
         self.game_cooldowns: Dict[int, Dict[str, datetime]] = {}  # user_id: {game_type: last_time}
         self.cooldown_seconds = 5
 
+        # Mapping of game_type to specific channel key
+        self.CHANNEL_MAP = {
+            'slot_machine': 'slots_channel',
+            'blackjack': 'blackjack_channel',
+            'hilow': 'hilow_channel',
+            'dice_game': 'dice_channel',
+            'roulette': 'roulette_channel',
+            'lottery': 'lottery_channel',
+            'coinflip': 'coinflip_channel',
+            'minesweeper': 'minesweeper_channel',
+            'bingo': 'bingo_channel',
+            'crash': 'crash_channel',
+        }
         self.logger.info("카지노 베이스 시스템이 초기화되었습니다.")
 
     def check_game_cooldown(self, user_id: int, game_type: str) -> bool:
@@ -42,16 +55,24 @@ class CasinoBaseCog(commands.Cog):
         self.game_cooldowns[user_id][game_type] = now
         return True
 
-    def check_channel_restriction(self, guild_id: int, game_type: str, channel_id: int) -> bool:
+    def check_channel_restriction(self, guild_id: int, game_type: str, channel_id: int) -> Tuple[bool, str]:
         """Check if game is allowed in current channel for this server"""
-        # Get server-specific casino channel
-        casino_channel_id = get_channel_id(guild_id, 'casino_channel')
+        channel_key = self.CHANNEL_MAP.get(game_type)
+        if not channel_key:
+            return True, ""
 
-        # If a casino channel is configured, only allow games there
-        if casino_channel_id and casino_channel_id != channel_id:
-            return False
+        game_channel_id = get_channel_id(guild_id, channel_key)
 
-        return True  # No restrictions or in correct channel
+        if game_channel_id and game_channel_id != channel_id:
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                channel = guild.get_channel(game_channel_id)
+                mention = channel.mention if channel else f"<#{game_channel_id}>"
+            else:
+                mention = f"<#{game_channel_id}>"
+            return False, f"❌ 이 게임은 {mention} 채널에서만 플레이할 수 있습니다!"
+
+        return True, ""
 
     async def get_coins_cog(self):
         """Get the coins cog"""
@@ -81,11 +102,9 @@ class CasinoBaseCog(commands.Cog):
             return False, "⏳ 잠시 기다렸다가 다시 해주세요!"
 
         # Check channel restriction
-        if not self.check_channel_restriction(guild_id, game_type, interaction.channel.id):
-            casino_channel_id = get_channel_id(guild_id, 'casino_channel')
-            casino_channel = interaction.guild.get_channel(casino_channel_id)
-            casino_mention = casino_channel.mention if casino_channel else "카지노 채널"
-            return False, f"❌ 카지노 게임은 {casino_mention}에서만 플레이할 수 있습니다!"
+        allowed, channel_msg = self.check_channel_restriction(guild_id, game_type, interaction.channel.id)
+        if not allowed:
+            return False, channel_msg
 
         # Get server-specific bet limits
         server_min_bet = get_server_setting(guild_id, 'min_bet', min_bet)
@@ -101,7 +120,7 @@ class CasinoBaseCog(commands.Cog):
             return False, "❌ 코인 시스템을 찾을 수 없습니다!"
 
         # Check user balance
-        user_coins = await coins_cog.get_user_coins(interaction.user.id)
+        user_coins = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         if user_coins < bet:
             return False, f"❌ 코인이 부족합니다! 필요: {bet:,}, 보유: {user_coins:,}"
 
@@ -186,24 +205,17 @@ class CasinoBaseCog(commands.Cog):
                     game_net = data['wins'] - data['bets']
 
                     game_names = {
-                        'slot_machine': '🎰 슬롯머신',
+                        'slot_machine': '🎰 슬롯',
                         'blackjack': '🃏 블랙잭',
-                        'roulette': '🎡 룰렛',
-                        'dice_game': '🎲 주사위',
-                        'coinflip': '🪙 동전던지기',
                         'hilow': '🔢 하이로우',
+                        'dice_game': '🎲 주사위',
+                        'roulette': '🎡 룰렛',
                         'lottery': '🎫 복권',
-                        'crash': '🚀 크래시',
-                        'plinko': '📍 플링코',
-                        'wheel': '🎡 행운의 바퀴',
-                        'mines': '💣 지뢰찾기',
-                        'keno': '🔢 케노',
+                        'coinflip': '🪙 동전던지기',
+                        'minesweeper': '💣 지뢰찾기',
                         'bingo': '🎱 빙고',
-                        'scratch': '🎫 스크래치',
-                        'war': '⚔️ 카드워',
-                        'holdem': '🃏 홀덤'
+                        'crash': '🚀 크래시',
                     }
-
                     game_display = game_names.get(game, game.title())
 
                     embed.add_field(
@@ -234,35 +246,21 @@ class CasinoBaseCog(commands.Cog):
             color=discord.Color.blue()
         )
 
-        embed.add_field(
-            name="🎰 클래식 게임",
-            value="• `/슬롯` - 슬롯머신 (10-1000 코인)\n• `/블랙잭` - 21 만들기 (20-2000 코인)\n• `/룰렛` - 유럽식 룰렛 (다양한 베팅)\n• `/바카라` - 뱅커 vs 플레이어 (50-5000 코인)",
-            inline=False
-        )
+        games_list = [
+            ("🎰 슬롯", "`/슬롯` - 슬롯머신"),
+            ("🃏 블랙잭", "`/블랙잭` - 21 만들기"),
+            ("🔢 하이로우", "`/하이로우` - 7 기준 높낮이"),
+            ("🎲 주사위", "`/주사위` - 합 맞히기"),
+            ("🎡 룰렛", "`/룰렛` - 유럽식 룰렛"),
+            ("🎫 복권", "`/복권` - 번호 맞히기"),
+            ("🪙 동전던지기", "`/동전던지기` - 앞뒤 맞히기"),
+            ("💣 지뢰찾기", "`/지뢰찾기` - 지뢰 피하기"),
+            ("🎱 빙고", "`/빙고` - 빙고 게임"),
+            ("🚀 크래시", "`/크래시` - 배수 예측 게임"),
+        ]
 
-        embed.add_field(
-            name="🎲 주사위 & 확률 게임",
-            value="• `/주사위` - 합 맞히기 (5-500 코인)\n• `/동전던지기` - 앞뒤 맞히기 (5-1000 코인)\n• `/하이로우` - 7 기준 높낮이 (10-800 코인)\n• `/케노` - 숫자 선택 게임 (20-1000 코인)",
-            inline=False
-        )
-
-        embed.add_field(
-            name="🎮 특수 게임",
-            value="• `/크래시` - 배수 예측 게임 (10-2000 코인)\n• `/플링코` - 공 떨어뜨리기 (5-500 코인)\n• `/지뢰찾기` - 지뢰 피하기 (10-1000 코인)\n• `/행운의바퀴` - 스핀 게임 (25-1500 코인)",
-            inline=False
-        )
-
-        embed.add_field(
-            name="🃏 카드 게임",
-            value="• `/카드워` - 높은 카드 승부 (15-800 코인)\n• `/홀덤` - 텍사스 홀덤 (100-5000 코인)\n• `/스크래치` - 스크래치 복권 (10-200 코인)",
-            inline=False
-        )
-
-        embed.add_field(
-            name="🎫 추첨 게임",
-            value="• `/복권` - 번호 맞히기 (50-1000 코인)\n• `/빙고` - 빙고 게임 (30-600 코인)",
-            inline=False
-        )
+        for name, value in games_list:
+            embed.add_field(name=name, value=value, inline=True)
 
         embed.add_field(
             name="📊 기타 명령어",
@@ -270,20 +268,9 @@ class CasinoBaseCog(commands.Cog):
             inline=False
         )
 
-        # Server-specific information
-        casino_channel_id = get_channel_id(interaction.guild.id, 'casino_channel')
-        if casino_channel_id:
-            casino_channel = interaction.guild.get_channel(casino_channel_id)
-            if casino_channel:
-                embed.add_field(
-                    name="📍 이 서버 정보",
-                    value=f"• 카지노 채널: {casino_channel.mention}\n• 시작 코인: {get_server_setting(interaction.guild.id, 'starting_coins', 1000):,}\n• 모든 카지노 게임은 지정된 채널에서만 가능합니다",
-                    inline=False
-                )
-
         embed.add_field(
             name="⚠️ 주의사항",
-            value="• 도박은 적당히!\n• 모든 게임에는 쿨다운이 있습니다 (5초)\n• 카지노 채널이 설정된 경우 해당 채널에서만 게임 가능\n• 모든 거래는 로그에 기록됩니다",
+            value="• 도박은 적당히!\n• 모든 게임에는 쿨다운이 있습니다 (5초)\n• 각 게임은 설정된 전용 채널에서만 가능\n• 모든 거래는 로그에 기록됩니다",
             inline=False
         )
 

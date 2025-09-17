@@ -114,7 +114,7 @@ class CoinsView(discord.ui.View):
 class LeaderboardView(discord.ui.View):
     """Persistent view for coin leaderboard navigation"""
 
-    def __init__(self, bot, guild_id):
+    def __init__(self, bot, guild_id=None):
         super().__init__(timeout=None)
         self.bot = bot
         self.guild_id = guild_id
@@ -186,6 +186,10 @@ class LeaderboardView(discord.ui.View):
     async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
 
+        # Get guild_id from interaction if not set
+        if not self.guild_id:
+            self.guild_id = interaction.guild.id
+
         if self.current_page > 0:
             self.current_page -= 1
             embed = await self.create_leaderboard_embed(self.current_page)
@@ -194,6 +198,10 @@ class LeaderboardView(discord.ui.View):
     @discord.ui.button(label="➡️", style=discord.ButtonStyle.secondary, custom_id="leaderboard_next")
     async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
+
+        # Get guild_id from interaction if not set
+        if not self.guild_id:
+            self.guild_id = interaction.guild.id
 
         data = await self.get_leaderboard_data()
         total_pages = (len(data) - 1) // self.users_per_page + 1 if data else 1
@@ -579,7 +587,15 @@ class CoinsCog(commands.Cog):
                            description: str = "") -> bool:
         """Remove coins from user account and trigger leaderboard update"""
         try:
-            current_coins = await self.get_user_coins(user_id, guild_id)
+            current_coins_str = await self.get_user_coins(user_id, guild_id)
+
+            # Solution: Convert the string value to an integer
+            try:
+                current_coins = int(current_coins_str)
+            except (ValueError, TypeError):
+                self.logger.error(f"❌ '{user_id}'의 잔액이 유효한 숫자가 아닙니다: {current_coins_str}")
+                return False
+
             if current_coins < amount:
                 return False
 

@@ -56,7 +56,7 @@ class CoinflipCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "coinflip_bet", "Coinflip bet"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "coinflip_bet", "Coinflip bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -82,7 +82,7 @@ class CoinflipCog(commands.Cog):
             # Get server-specific payout multiplier
             payout_multiplier = get_server_setting(interaction.guild.id, 'coinflip_payout', 2.0)
             payout = int(bet * payout_multiplier)
-            await coins_cog.add_coins(interaction.user.id, payout, "coinflip_win", f"Coinflip win: {result}")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "coinflip_win", f"Coinflip win: {result}")
 
         choice_korean = {"heads": "앞면", "tails": "뒷면"}
         result_korean = choice_korean[result]
@@ -101,7 +101,7 @@ class CoinflipCog(commands.Cog):
                 color=discord.Color.red()
             )
 
-        new_balance = await coins_cog.get_user_coins(interaction.user.id)
+        new_balance = await coins_cog.get_user_coins(interaction.user.id, interaction.guild.id)
         embed.add_field(name="현재 잔액", value=f"{new_balance:,} 코인", inline=False)
         embed.set_footer(text=f"Server: {interaction.guild.name}")
 
