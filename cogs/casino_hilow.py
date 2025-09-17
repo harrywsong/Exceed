@@ -20,7 +20,8 @@ class HiLowCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("하이로우", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("하이로우")
         self.logger.info("하이로우 게임 시스템이 초기화되었습니다.")
 
     def get_dice_visual(self, value):
@@ -194,7 +195,11 @@ class HiLowCog(commands.Cog):
         embed.set_footer(text=f"Server: {interaction.guild.name}")
 
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 하이로우에서 {bet} 코인 {'승리' if won else '패배' if total != 7 else '무승부'} (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.logger.info(
+            f"{interaction.user}가 하이로우에서 {bet} 코인 {'승리' if won else '패배' if total != 7 else '무승부'}",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

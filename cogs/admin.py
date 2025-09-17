@@ -12,18 +12,24 @@ from utils.config import (
     is_server_configured
 )
 
+# FIX: Import get_logger from the updated logger module
+from utils.logger import get_logger
+
 
 class DevToolsCog(commands.Cog):
     """Simple developer tools for bot management"""
 
     def __init__(self, bot):
         self.bot = bot
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("관리자 도구")
         self.reload_stats = {
             'total_reloads': 0,
             'successful_reloads': 0,
             'failed_reloads': 0,
             'last_reload_time': None
         }
+        self.logger.info("관리자 도구 코그가 초기화되었습니다.")
 
     async def cog_check(self, ctx):
         """Only allow bot owner to use these commands"""
@@ -37,6 +43,8 @@ class DevToolsCog(commands.Cog):
     @app_commands.describe(cog="Name of the cog to reload (e.g., casino_slots)")
     async def reload_cog(self, interaction: discord.Interaction, cog: str):
         """Reload a specific cog"""
+        guild_id = interaction.guild.id if interaction.guild else None
+
         try:
             await self.bot.reload_extension(f'cogs.{cog}')
 
@@ -54,6 +62,7 @@ class DevToolsCog(commands.Cog):
             )
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.info(f"Cog '{cog}' reloaded successfully.", extra={'guild_id': guild_id})
 
             self.reload_stats['successful_reloads'] += 1
             self.reload_stats['total_reloads'] += 1
@@ -66,6 +75,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.warning(f"Failed to reload '{cog}' - not loaded.", extra={'guild_id': guild_id})
 
         except commands.ExtensionNotFound:
             embed = discord.Embed(
@@ -74,6 +84,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.warning(f"Failed to reload '{cog}' - not found.", extra={'guild_id': guild_id})
 
         except Exception as e:
             error_msg = str(e)
@@ -88,6 +99,8 @@ class DevToolsCog(commands.Cog):
             embed.add_field(name="Error Details", value=f"```py\n{error_msg}\n```", inline=False)
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.error(f"Failed to reload '{cog}'.", exc_info=True, extra={'guild_id': guild_id})
+
             self.reload_stats['failed_reloads'] += 1
             self.reload_stats['total_reloads'] += 1
 
@@ -95,6 +108,8 @@ class DevToolsCog(commands.Cog):
     @app_commands.describe(cog="Name of the cog to load")
     async def load_cog(self, interaction: discord.Interaction, cog: str):
         """Load a new cog"""
+        guild_id = interaction.guild.id if interaction.guild else None
+
         try:
             await self.bot.load_extension(f'cogs.{cog}')
 
@@ -105,6 +120,7 @@ class DevToolsCog(commands.Cog):
                 timestamp=discord.utils.utcnow()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.info(f"Cog '{cog}' loaded successfully.", extra={'guild_id': guild_id})
 
         except commands.ExtensionAlreadyLoaded:
             embed = discord.Embed(
@@ -113,6 +129,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.orange()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.warning(f"Failed to load '{cog}' - already loaded.", extra={'guild_id': guild_id})
 
         except commands.ExtensionNotFound:
             embed = discord.Embed(
@@ -121,6 +138,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.warning(f"Failed to load '{cog}' - not found.", extra={'guild_id': guild_id})
 
         except Exception as e:
             embed = discord.Embed(
@@ -129,11 +147,14 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.error(f"Failed to load '{cog}'.", exc_info=True, extra={'guild_id': guild_id})
 
     @app_commands.command(name="unload", description="Unload a cog")
     @app_commands.describe(cog="Name of the cog to unload")
     async def unload_cog(self, interaction: discord.Interaction, cog: str):
         """Unload a cog"""
+        guild_id = interaction.guild.id if interaction.guild else None
+
         if cog.lower() in ['admin', 'dev_tools']:
             embed = discord.Embed(
                 title="❌ Cannot Unload",
@@ -141,6 +162,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.warning(f"Attempted to unload core admin cog '{cog}'.", extra={'guild_id': guild_id})
             return
 
         try:
@@ -153,6 +175,7 @@ class DevToolsCog(commands.Cog):
                 timestamp=discord.utils.utcnow()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.info(f"Cog '{cog}' unloaded successfully.", extra={'guild_id': guild_id})
 
         except commands.ExtensionNotLoaded:
             embed = discord.Embed(
@@ -161,6 +184,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.warning(f"Failed to unload '{cog}' - not loaded.", extra={'guild_id': guild_id})
 
         except Exception as e:
             embed = discord.Embed(
@@ -169,10 +193,12 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.error(f"Failed to unload '{cog}'.", exc_info=True, extra={'guild_id': guild_id})
 
     @app_commands.command(name="listcogs", description="List all loaded cogs")
     async def list_cogs(self, interaction: discord.Interaction):
         """List all currently loaded cogs"""
+        guild_id = interaction.guild.id if interaction.guild else None
         loaded_cogs = list(self.bot.extensions.keys())
 
         if not loaded_cogs:
@@ -182,6 +208,7 @@ class DevToolsCog(commands.Cog):
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+            self.logger.info("Listed loaded cogs: None loaded.", extra={'guild_id': guild_id})
             return
 
         embed = discord.Embed(
@@ -224,11 +251,15 @@ class DevToolsCog(commands.Cog):
         )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        self.logger.info(f"Listed loaded cogs: {len(loaded_cogs)} loaded.", extra={'guild_id': guild_id})
 
     @app_commands.command(name="serverstatus", description="Show multi-server configuration status")
     async def server_status(self, interaction: discord.Interaction):
         """Show status of all configured servers"""
+        guild_id = interaction.guild.id if interaction.guild else None
         all_configs = get_all_server_configs()
+
+        # ... (rest of the command logic is unchanged)
 
         if not all_configs:
             embed = discord.Embed(
@@ -289,10 +320,12 @@ class DevToolsCog(commands.Cog):
                     )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
+        self.logger.info("Displayed server status.", extra={'guild_id': guild_id})
 
     @app_commands.command(name="reloadall", description="Reload all loaded cogs")
     async def reload_all_cogs(self, interaction: discord.Interaction):
         """Reload all currently loaded cogs"""
+        guild_id = interaction.guild.id if interaction.guild else None
         await interaction.response.defer(ephemeral=True)
 
         loaded_cogs = list(self.bot.extensions.keys())
@@ -304,12 +337,18 @@ class DevToolsCog(commands.Cog):
                 results["success"].append(cog.replace('cogs.', ''))
                 self.reload_stats['successful_reloads'] += 1
             except Exception as e:
+                # FIX: Use structured logging with `extra` for multi-server context
+                self.logger.error(f"Failed to reload cog '{cog}'.", exc_info=True, extra={'guild_id': guild_id})
                 results["failed"].append((cog.replace('cogs.', ''), str(e)[:100]))
                 self.reload_stats['failed_reloads'] += 1
 
             self.reload_stats['total_reloads'] += 1
 
         self.reload_stats['last_reload_time'] = discord.utils.utcnow()
+        self.logger.info(
+            f"Reloaded all cogs. Success: {len(results['success'])}, Failed: {len(results['failed'])}",
+            extra={'guild_id': guild_id}
+        )
 
         # Create result embed
         if results["success"] and not results["failed"]:
@@ -347,6 +386,9 @@ class DevToolsCog(commands.Cog):
     @app_commands.command(name="devstats", description="Show development statistics")
     async def dev_stats(self, interaction: discord.Interaction):
         """Show development statistics"""
+        guild_id = interaction.guild.id if interaction.guild else None
+        self.logger.info("Displayed developer stats.", extra={'guild_id': guild_id})
+
         embed = discord.Embed(
             title="📊 Development Statistics",
             color=discord.Color.blue(),
@@ -416,6 +458,7 @@ class DevToolsCog(commands.Cog):
     @app_commands.describe(guild_only="Sync only to this guild (faster) or globally")
     async def sync_commands(self, interaction: discord.Interaction, guild_only: bool = True):
         """Handle syncing application commands"""
+        guild_id = interaction.guild.id if interaction.guild else None
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -426,6 +469,7 @@ class DevToolsCog(commands.Cog):
                     description=f"Synced {len(synced)} commands to this guild.",
                     color=discord.Color.green()
                 )
+                self.logger.info(f"Synced {len(synced)} commands to guild.", extra={'guild_id': guild_id})
             else:
                 synced = await self.bot.tree.sync()
                 embed = discord.Embed(
@@ -433,6 +477,7 @@ class DevToolsCog(commands.Cog):
                     description=f"Synced {len(synced)} commands globally.\nMay take up to 1 hour to appear everywhere.",
                     color=discord.Color.green()
                 )
+                self.logger.info(f"Synced {len(synced)} commands globally.", extra={'guild_id': guild_id})
 
             embed.timestamp = discord.utils.utcnow()
 
@@ -442,6 +487,7 @@ class DevToolsCog(commands.Cog):
                 description=f"Failed to sync commands:\n```py\n{str(e)}\n```",
                 color=discord.Color.red()
             )
+            self.logger.error("Failed to sync commands.", exc_info=True, extra={'guild_id': guild_id})
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -453,11 +499,16 @@ class DevToolsCog(commands.Cog):
     @commands.is_owner()
     async def reload_text(self, ctx, *, cog: str):
         """Quick reload command (text version)"""
+        guild_id = ctx.guild.id if ctx.guild else None
         try:
             await self.bot.reload_extension(f'cogs.{cog}')
             await ctx.message.add_reaction('✅')
             self.reload_stats['successful_reloads'] += 1
+            self.logger.info(f"Cog '{cog}' reloaded successfully via text command.", extra={'guild_id': guild_id})
         except Exception as e:
+            # FIX: Use structured logging with `extra`
+            self.logger.error(f"Failed to reload cog '{cog}' via text command.", exc_info=True,
+                              extra={'guild_id': guild_id})
             await ctx.send(f"❌ **Reload Failed:** `{cog}`\n```py\n{str(e)}\n```")
             self.reload_stats['failed_reloads'] += 1
 
@@ -468,6 +519,7 @@ class DevToolsCog(commands.Cog):
     @commands.is_owner()
     async def reload_all_text(self, ctx):
         """Quick reload all command (text version)"""
+        guild_id = ctx.guild.id if ctx.guild else None
         loaded_cogs = list(self.bot.extensions.keys())
         success_count = 0
 
@@ -478,22 +530,32 @@ class DevToolsCog(commands.Cog):
                 self.reload_stats['successful_reloads'] += 1
             except Exception:
                 self.reload_stats['failed_reloads'] += 1
+                self.logger.error(f"Failed to reload cog '{cog}' during reload all.", exc_info=True,
+                                  extra={'guild_id': guild_id})
 
             self.reload_stats['total_reloads'] += 1
 
         self.reload_stats['last_reload_time'] = discord.utils.utcnow()
+        self.logger.info(
+            f"Reloaded all cogs via text command. Success: {success_count}, Failed: {len(loaded_cogs) - success_count}",
+            extra={'guild_id': guild_id}
+        )
         await ctx.send(f"🔄 Reloaded {success_count}/{len(loaded_cogs)} cogs")
 
     @commands.command(name='lc', aliases=['listcogs'])
     @commands.is_owner()
     async def list_cogs_text(self, ctx):
         """Quick list cogs command (text version)"""
+        guild_id = ctx.guild.id if ctx.guild else None
         loaded_cogs = [cog.replace('cogs.', '') for cog in self.bot.extensions.keys()]
         if loaded_cogs:
             cog_list = ', '.join([f"`{cog}`" for cog in sorted(loaded_cogs)])
             await ctx.send(f"**Loaded Cogs ({len(loaded_cogs)}):** {cog_list}")
+            self.logger.info(f"Listed loaded cogs via text command: {len(loaded_cogs)} loaded.",
+                             extra={'guild_id': guild_id})
         else:
             await ctx.send("No cogs are currently loaded.")
+            self.logger.info("Listed loaded cogs: None loaded.", extra={'guild_id': guild_id})
 
 
 async def setup(bot):

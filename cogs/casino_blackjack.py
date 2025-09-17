@@ -515,7 +515,8 @@ class BlackjackCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("블랙잭", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("블랙잭")
         self.logger.info("블랙잭 시스템이 초기화되었습니다.")
 
     @app_commands.command(name="블랙잭", description="전문적인 블랙잭 게임 (더블다운, 보험, 스플릿 포함)")
@@ -603,7 +604,11 @@ class BlackjackCog(commands.Cog):
                 embed.add_field(name="🎯 전략 힌트", value="\n".join(hints), inline=False)
 
         await interaction.response.send_message(embed=embed, view=view)
-        self.logger.info(f"{interaction.user}가 {bet} 코인으로 블랙잭 시작 (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.logger.info(
+            f"{interaction.user}가 {bet} 코인으로 블랙잭 시작",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

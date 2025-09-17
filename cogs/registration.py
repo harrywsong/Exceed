@@ -36,8 +36,10 @@ class Registration(commands.Cog):
                 ON registrations(guild_id, riot_id);
             """)
 
+            # 이 로그는 봇 전체에 대한 것이므로 guild_id가 필요하지 않습니다.
             self.logger.info("✅ 등록 데이터베이스 테이블이 준비되었습니다.")
         except Exception as e:
+            # 이 로그도 봇 전체에 대한 것이므로 guild_id가 필요하지 않습니다.
             self.logger.error(f"❌ 등록 데이터베이스 설정 실패: {e}")
 
     @commands.Cog.listener()
@@ -57,11 +59,13 @@ class Registration(commands.Cog):
             await interaction.response.send_message("❌ 서버에서만 사용 가능한 기능입니다.", ephemeral=True)
             return
 
-        if not is_server_configured(interaction.guild.id):
+        guild_id = interaction.guild.id # 길드 ID를 변수에 저장
+
+        if not is_server_configured(guild_id):
             await interaction.response.send_message("❌ 이 서버는 아직 설정되지 않았습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
-        if not is_feature_enabled(interaction.guild.id, 'registration'):
+        if not is_feature_enabled(guild_id, 'registration'):
             await interaction.response.send_message("❌ 이 서버에서는 계정 연동 기능이 비활성화되어 있습니다.", ephemeral=True)
             return
 
@@ -71,12 +75,13 @@ class Registration(commands.Cog):
             await interaction.followup.send(
                 "❌ 올바르지 않은 형식입니다. `이름#태그` 형태로 입력해주세요.", ephemeral=True
             )
+            # extra={'guild_id': guild_id} 추가
             self.logger.warning(
-                f"{interaction.user} failed to register with invalid Riot ID format: {riot_id} (서버: {interaction.guild.name})")
+                f"{interaction.user} failed to register with invalid Riot ID format: {riot_id} (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
             return
 
         discord_id = interaction.user.id
-        guild_id = interaction.guild.id
+        # guild_id 변수 사용
 
         try:
             # Check if this Riot ID is already registered by another user in this server
@@ -126,13 +131,16 @@ class Registration(commands.Cog):
                         log_embed.set_thumbnail(url=interaction.user.display_avatar.url)
                         await log_channel.send(embed=log_embed)
                     except Exception as e:
+                        # Log channel send failure does not need guild_id in extra if it's a general error
                         self.logger.error(f"Failed to send log message: {e}")
 
-            self.logger.info(f"✅ {interaction.user} linked Riot ID: {riot_id} (서버: {interaction.guild.name})")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.info(f"✅ {interaction.user} linked Riot ID: {riot_id} (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
 
         except Exception as e:
+            # extra={'guild_id': guild_id} 추가
             self.logger.error(
-                f"❌ Database error during registration for {interaction.user} (서버: {interaction.guild.name}): {e}")
+                f"❌ Database error during registration for {interaction.user} (서버: {interaction.guild.name}): {e}", extra={'guild_id': guild_id})
             await interaction.followup.send(
                 f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True
             )
@@ -146,18 +154,20 @@ class Registration(commands.Cog):
             await interaction.response.send_message("❌ 서버에서만 사용 가능한 기능입니다.", ephemeral=True)
             return
 
-        if not is_server_configured(interaction.guild.id):
+        guild_id = interaction.guild.id # 길드 ID를 변수에 저장
+
+        if not is_server_configured(guild_id):
             await interaction.response.send_message("❌ 이 서버는 아직 설정되지 않았습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
-        if not is_feature_enabled(interaction.guild.id, 'registration'):
+        if not is_feature_enabled(guild_id, 'registration'):
             await interaction.response.send_message("❌ 이 서버에서는 계정 연동 기능이 비활성화되어 있습니다.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
 
         discord_id = interaction.user.id
-        guild_id = interaction.guild.id
+        # guild_id 변수 사용
 
         try:
             query = "SELECT riot_id, created_at, updated_at FROM registrations WHERE user_id = $1 AND guild_id = $2"
@@ -181,7 +191,8 @@ class Registration(commands.Cog):
                 embed.set_footer(text=f"서버: {interaction.guild.name}")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
-                self.logger.info(f"{interaction.user} checked Riot ID: {row['riot_id']} (서버: {interaction.guild.name})")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.info(f"{interaction.user} checked Riot ID: {row['riot_id']} (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
             else:
                 embed = discord.Embed(
                     title="❌ 등록된 라이엇 ID가 없습니다",
@@ -190,12 +201,14 @@ class Registration(commands.Cog):
                 )
                 embed.set_thumbnail(url=interaction.user.display_avatar.url)
                 await interaction.followup.send(embed=embed, ephemeral=True)
+                # extra={'guild_id': guild_id} 추가
                 self.logger.info(
-                    f"{interaction.user} tried to check Riot ID but none was found. (서버: {interaction.guild.name})")
+                    f"{interaction.user} tried to check Riot ID but none was found. (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
 
         except Exception as e:
+            # extra={'guild_id': guild_id} 추가
             self.logger.error(
-                f"❌ Database error during myriot check for {interaction.user} (서버: {interaction.guild.name}): {e}")
+                f"❌ Database error during myriot check for {interaction.user} (서버: {interaction.guild.name}): {e}", extra={'guild_id': guild_id})
             await interaction.followup.send(
                 f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True
             )
@@ -212,17 +225,19 @@ class Registration(commands.Cog):
             await interaction.response.send_message("❌ 서버에서만 사용 가능한 기능입니다.", ephemeral=True)
             return
 
-        if not is_server_configured(interaction.guild.id):
+        guild_id = interaction.guild.id # 길드 ID를 변수에 저장
+
+        if not is_server_configured(guild_id):
             await interaction.response.send_message("❌ 이 서버는 아직 설정되지 않았습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
-        if not is_feature_enabled(interaction.guild.id, 'registration'):
+        if not is_feature_enabled(guild_id, 'registration'):
             await interaction.response.send_message("❌ 이 서버에서는 계정 연동 기능이 비활성화되어 있습니다.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
 
-        guild_id = interaction.guild.id
+        # guild_id 변수 사용
 
         try:
             query = """
@@ -257,8 +272,9 @@ class Registration(commands.Cog):
                 embed.set_footer(text=f"서버: {interaction.guild.name}")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
+                # extra={'guild_id': guild_id} 추가
                 self.logger.info(
-                    f"{interaction.user} found user for Riot ID: {riot_id} -> {row['user_id']} (서버: {interaction.guild.name})")
+                    f"{interaction.user} found user for Riot ID: {riot_id} -> {row['user_id']} (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
             else:
                 embed = discord.Embed(
                     title="❌ 사용자를 찾을 수 없습니다",
@@ -268,12 +284,14 @@ class Registration(commands.Cog):
                 embed.set_footer(text=f"서버: {interaction.guild.name}")
 
                 await interaction.followup.send(embed=embed, ephemeral=True)
+                # extra={'guild_id': guild_id} 추가
                 self.logger.info(
-                    f"{interaction.user} tried to find user for Riot ID: {riot_id} but none was found. (서버: {interaction.guild.name})")
+                    f"{interaction.user} tried to find user for Riot ID: {riot_id} but none was found. (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
 
         except Exception as e:
+            # extra={'guild_id': guild_id} 추가
             self.logger.error(
-                f"❌ Database error during user search for {interaction.user} (서버: {interaction.guild.name}): {e}")
+                f"❌ Database error during user search for {interaction.user} (서버: {interaction.guild.name}): {e}", extra={'guild_id': guild_id})
             await interaction.followup.send(
                 f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True
             )
@@ -287,18 +305,20 @@ class Registration(commands.Cog):
             await interaction.response.send_message("❌ 서버에서만 사용 가능한 기능입니다.", ephemeral=True)
             return
 
-        if not is_server_configured(interaction.guild.id):
+        guild_id = interaction.guild.id # 길드 ID를 변수에 저장
+
+        if not is_server_configured(guild_id):
             await interaction.response.send_message("❌ 이 서버는 아직 설정되지 않았습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
-        if not is_feature_enabled(interaction.guild.id, 'registration'):
+        if not is_feature_enabled(guild_id, 'registration'):
             await interaction.response.send_message("❌ 이 서버에서는 계정 연동 기능이 비활성화되어 있습니다.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
 
         discord_id = interaction.user.id
-        guild_id = interaction.guild.id
+        # guild_id 변수 사용
 
         try:
             # First check if user has a registration
@@ -347,14 +367,17 @@ class Registration(commands.Cog):
                         log_embed.set_thumbnail(url=interaction.user.display_avatar.url)
                         await log_channel.send(embed=log_embed)
                     except Exception as e:
+                        # Log channel send failure does not need guild_id in extra if it's a general error
                         self.logger.error(f"Failed to send log message: {e}")
 
+            # extra={'guild_id': guild_id} 추가
             self.logger.info(
-                f"✅ {interaction.user} unregistered Riot ID: {existing['riot_id']} (서버: {interaction.guild.name})")
+                f"✅ {interaction.user} unregistered Riot ID: {existing['riot_id']} (서버: {interaction.guild.name})", extra={'guild_id': guild_id})
 
         except Exception as e:
+            # extra={'guild_id': guild_id} 추가
             self.logger.error(
-                f"❌ Database error during unregistration for {interaction.user} (서버: {interaction.guild.name}): {e}")
+                f"❌ Database error during unregistration for {interaction.user} (서버: {interaction.guild.name}): {e}", extra={'guild_id': guild_id})
             await interaction.followup.send(
                 f"❌ 데이터베이스 오류가 발생했습니다: `{e}`", ephemeral=True
             )

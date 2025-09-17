@@ -17,7 +17,8 @@ class LotteryCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("복권", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("복권")
         self.logger.info("복권 게임 시스템이 초기화되었습니다.")
 
     def get_number_emoji(self, number):
@@ -174,7 +175,11 @@ class LotteryCog(commands.Cog):
 
         embed.set_footer(text=f"Server: {interaction.guild.name}")
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 복권에서 {match_count}개 일치 ({bet} 코인) (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.logger.info(
+            f"{interaction.user}가 복권에서 {match_count}개 일치 ({bet} 코인)",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

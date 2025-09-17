@@ -28,6 +28,8 @@ from utils import upload_to_drive
 
 from utils.database_updater import DatabaseUpdater
 
+from utils.discord_tools import send_guild_log
+
 # --- Enhanced Bot Manager for Better Instance Management ---
 class BotManager:
     """Singleton to manage bot instance and provide better API integration"""
@@ -727,10 +729,11 @@ class MyBot(commands.Bot):
         log_channel_id = self._get_global_log_channel()
 
         # Configure enhanced logging
+        # Configure enhanced logging
         try:
-            logger_module._configure_root_handlers(
-                bot=self,
-                discord_log_channel_id=log_channel_id
+            # Note: We now pass the bot instance to configure the DiscordHandler
+            logger_module.setup_logging(
+                bot=self
             )
             self.logger = logging.getLogger('main_bot')
             self.logger.info("✅ Bot logger configured successfully.")

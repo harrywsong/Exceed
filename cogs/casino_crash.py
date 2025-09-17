@@ -109,7 +109,8 @@ class JoinBetModal(discord.ui.Modal, title="크래시 게임 참가"):
             return
 
         coins_cog = self.cog.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, bet, "crash_bet", "Crash game bet"):
+        # FIX: Pass guild_id to remove_coins for multi-server support
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "crash_bet", "Crash game bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
 
@@ -117,10 +118,10 @@ class JoinBetModal(discord.ui.Modal, title="크래시 게임 참가"):
 
         embed = await self.view.create_embed()
         chart_file = await self.view.create_chart()
-        await self.cog.game_message.edit(embed=embed, attachments=[chart_file] if chart_file else [])
-
+        await self.cog.game_message[interaction.guild.id].edit(embed=embed, attachments=[chart_file] if chart_file else []) # FIX: Use guild_id to get message
         await interaction.response.send_message(f"✅ 게임에 참가했습니다! ({bet:,} 코인)", ephemeral=True)
-        self.cog.logger.info(f"{interaction.user}가 {bet} 코인으로 크래시 게임 참가 (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.cog.logger.info(f"{interaction.user}가 {bet} 코인으로 크래시 게임 참가", extra={'guild_id': interaction.guild.id})
 
 
 class CrashView(discord.ui.View):
@@ -170,8 +171,15 @@ class CrashView(discord.ui.View):
         # Mark cashout points
         for user_id, player_data in self.game.players.items():
             if player_data['cashed_out']:
-                cashout_time = len([h for h in self.game.history if h <= player_data['cash_out_multiplier']])
-                plt.scatter(cashout_time, player_data['cash_out_multiplier'],
+                # Find the time point corresponding to the cashout multiplier
+                cashout_time_point = 0
+                for i, hist_multiplier in enumerate(self.game.history):
+                    if hist_multiplier <= player_data['cash_out_multiplier']:
+                        cashout_time_point = i
+                    else:
+                        break # Once multiplier is exceeded, stop.
+
+                plt.scatter(cashout_time_point, player_data['cash_out_multiplier'],
                             color='green', s=100, zorder=5, alpha=0.8)
 
         plt.xlabel('시간 (초)', fontproperties=font_prop if font_prop else None)
@@ -197,7 +205,8 @@ class CrashView(discord.ui.View):
             buf = self.draw_chart()
             return discord.File(buf, filename="crash_chart.png")
         except Exception as e:
-            self.cog.logger.error(f"차트 생성 실패: {e}")
+            # FIX: Log chart creation error with guild_id
+            self.cog.logger.error(f"차트 생성 실패 for guild {self.game.guild_id}: {e}")
             return None
 
     async def create_embed(self, final: bool = False) -> discord.Embed:
@@ -223,8 +232,10 @@ class CrashView(discord.ui.View):
 
         if self.game.players:
             player_info = []
+            # Display up to 10 players in the embed
             for user_id, player_data in list(self.game.players.items())[:10]:
                 try:
+                    # Fetch user to get display name, fallback to ID
                     user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
                     username = user.display_name if user else f"User {user_id}"
 
@@ -237,7 +248,7 @@ class CrashView(discord.ui.View):
                         player_info.append(f"{username}: {status} (-{player_data['bet']:,})")
                     else:
                         player_info.append(f"{username}: 🎲 대기중 ({player_data['bet']:,})")
-                except:
+                except Exception: # Catch potential errors during user fetching or processing
                     continue
 
             if player_info:
@@ -256,9 +267,10 @@ class CrashView(discord.ui.View):
 
         # Add server info
         guild = self.bot.get_guild(self.game.guild_id)
-        if guild:
-            embed.set_footer(
-                text=f"Server: {guild.name} | 📊 실시간 차트가 첨부되어 있습니다" if self.game.game_started or self.game.game_over else f"Server: {guild.name}")
+        footer_text = f"Server: {guild.name}" if guild else "Server: Unknown"
+        if self.game.game_started or self.game.game_over:
+            footer_text += " | 📊 실시간 차트가 첨부되어 있습니다"
+        embed.set_footer(text=footer_text)
 
         return embed
 
@@ -284,13 +296,15 @@ class CrashView(discord.ui.View):
         bet_amount = player_data['bet']
         del self.game.players[interaction.user.id]
 
-        coins_cog = self.bot.get_cog('CoinsCog')
+        coins_cog = self.cog.bot.get_cog('CoinsCog')
         if coins_cog:
+            # FIX: Pass guild_id to add_coins for multi-server support
             await coins_cog.add_coins(interaction.user.id, interaction.guild.id, bet_amount, "crash_leave", "Crash game leave refund")
 
         embed = await self.create_embed()
         chart_file = await self.create_chart()
-        await interaction.message.edit(embed=embed, attachments=[chart_file] if chart_file else [])
+        # FIX: Use guild_id to get message for editing
+        await self.cog.game_message[interaction.guild.id].edit(embed=embed, attachments=[chart_file] if chart_file else [])
         await interaction.response.send_message(f"✅ 게임에서 나갔습니다. {bet_amount:,} 코인이 환불되었습니다.", ephemeral=True)
 
     @discord.ui.button(label="지금 시작", style=discord.ButtonStyle.blurple, emoji="🚀", custom_id="start_game_now")
@@ -323,9 +337,10 @@ class CrashView(discord.ui.View):
             player_data = self.game.players[interaction.user.id]
             payout = int(player_data['bet'] * player_data['cash_out_multiplier'])
 
-            coins_cog = self.bot.get_cog('CoinsCog')
+            coins_cog = self.cog.bot.get_cog('CoinsCog')
             if coins_cog:
-                await coins_cog.add_coins(interaction.user.id, payout, "crash_win",
+                # FIX: Pass guild_id to add_coins for multi-server support
+                await coins_cog.add_coins(interaction.user.id, interaction.guild.id, payout, "crash_win",
                                           f"Crash cashout at {player_data['cash_out_multiplier']:.2f}x")
 
             await interaction.followup.send(
@@ -341,7 +356,8 @@ class CrashCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("크래시", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("크래시")
         # Per-server game tracking
         self.server_games: Dict[int, CrashGame] = {}  # guild_id -> current_game
         self.server_messages: Dict[int, discord.Message] = {}  # guild_id -> game_message
@@ -433,30 +449,32 @@ class CrashCog(commands.Cog):
             start_event = self.start_events.get(guild_id)
 
             if not (game_view and game_message and start_event):
+                self.logger.error(f"게임 시작 중 필수 컴포넌트 누락 for guild {guild_id}.")
                 return
 
             game_view.update_button_states()
             embed = await game_view.create_embed()
             chart_file = await game_view.create_chart()
-            await game_message.edit(embed=embed, view=game_view,
-                                    attachments=[chart_file] if chart_file else [])
+            await game_message.edit(embed=embed, view=game_view, attachments=[chart_file] if chart_file else [])
 
             try:
                 await asyncio.wait_for(start_event.wait(), timeout=30.0)
-                self.logger.info(f"'지금 시작' 버튼으로 게임 시작 for guild {guild_id}.")
+                # FIX: Log game start with guild_id
+                self.logger.info(f"'지금 시작' 버튼으로 게임 시작 for guild {guild_id}.", extra={'guild_id': guild_id})
             except asyncio.TimeoutError:
-                self.logger.info(f"30초 타임아웃으로 게임 시작 for guild {guild_id}.")
+                # FIX: Log game start with guild_id
+                self.logger.info(f"30초 타임아웃으로 게임 시작 for guild {guild_id}.", extra={'guild_id': guild_id})
 
         except Exception as e:
-            self.logger.error(f"Game lifecycle error for guild {guild_id}: {e}")
+            # FIX: Log exception with guild_id
+            self.logger.error(f"Game lifecycle error for guild {guild_id}: {e}", exc_info=True, extra={'guild_id': guild_id})
             return
 
         if not current_game.players:
-            self.logger.warning(f"플레이어가 없어 게임 취소 for guild {guild_id}.")
+            self.logger.warning(f"플레이어가 없어 게임 취소 for guild {guild_id}.", extra={'guild_id': guild_id})
             if game_message:
                 try:
-                    await game_message.edit(content="💥 참가자가 없어 게임이 취소되었습니다.", embed=None, view=None,
-                                            attachments=[])
+                    await game_message.edit(content="💥 참가자가 없어 게임이 취소되었습니다.", embed=None, view=None, attachments=[])
                 except discord.NotFound:
                     pass
             # Clean up server game data
@@ -469,10 +487,10 @@ class CrashCog(commands.Cog):
         try:
             embed = await game_view.create_embed()
             chart_file = await game_view.create_chart()
-            await game_message.edit(embed=embed, view=game_view,
-                                    attachments=[chart_file] if chart_file else [])
-        except (discord.NotFound, discord.HTTPException):
-            self.logger.error(f"게임 시작 메시지 업데이트 실패 for guild {guild_id}.")
+            await game_message.edit(embed=embed, view=game_view, attachments=[chart_file] if chart_file else [])
+        except (discord.NotFound, discord.HTTPException) as e:
+            # FIX: Log error with guild_id
+            self.logger.error(f"게임 시작 메시지 업데이트 실패 for guild {guild_id}: {e}", exc_info=True, extra={'guild_id': guild_id})
 
         await self.run_crash_game(guild_id)
 
@@ -483,6 +501,8 @@ class CrashCog(commands.Cog):
         game_view = self.server_views.get(guild_id)
 
         if not all([current_game, game_message, game_view]):
+            # FIX: Log error with guild_id
+            self.logger.error(f"run_crash_game: 필수 컴포넌트 누락 for guild {guild_id}", extra={'guild_id': guild_id})
             return
 
         while (current_game.current_multiplier < current_game.crash_point and
@@ -499,9 +519,12 @@ class CrashCog(commands.Cog):
             try:
                 embed = await game_view.create_embed()
                 chart_file = await game_view.create_chart()
-                await game_message.edit(embed=embed, attachments=[chart_file] if chart_file else [])
-            except (discord.NotFound, discord.HTTPException):
-                pass
+                await game_message.edit(embed=embed, view=game_view, attachments=[chart_file] if chart_file else [])
+            except (discord.NotFound, discord.HTTPException) as e:
+                # FIX: Log error with guild_id
+                self.logger.error(f"게임 플레이 중 메시지 업데이트 실패 for guild {guild_id}: {e}", exc_info=True, extra={'guild_id': guild_id})
+                # Optionally break or handle if message is permanently gone
+                break
 
         await self.end_crash_game(guild_id)
 
@@ -522,12 +545,13 @@ class CrashCog(commands.Cog):
                 game_view.update_button_states()
                 embed = await game_view.create_embed(final=True)
                 chart_file = await game_view.create_chart()
-                await game_message.edit(embed=embed, view=game_view,
-                                        attachments=[chart_file] if chart_file else [])
-            except (discord.NotFound, discord.HTTPException):
-                pass
+                await game_message.edit(embed=embed, view=game_view, attachments=[chart_file] if chart_file else [])
+            except (discord.NotFound, discord.HTTPException) as e:
+                # FIX: Log error with guild_id
+                self.logger.error(f"게임 종료 중 메시지 업데이트 실패 for guild {guild_id}: {e}", exc_info=True, extra={'guild_id': guild_id})
 
-        self.logger.info(f"크래시 게임 종료 for guild {guild_id}. 추락 지점: {current_game.crash_point:.2f}x")
+        # FIX: Log game end with guild_id
+        self.logger.info(f"크래시 게임 종료 for guild {guild_id}. 추락 지점: {current_game.crash_point:.2f}x", extra={'guild_id': guild_id})
         self.cleanup_server_game(guild_id)
 
     def cleanup_server_game(self, guild_id: int):
@@ -562,6 +586,7 @@ class CrashCog(commands.Cog):
             return
 
         coins_cog = self.bot.get_cog('CoinsCog')
+        # FIX: Pass guild_id to remove_coins for multi-server support
         if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "crash_bet", "Crash game bet"):
             await interaction.response.send_message("베팅 처리 실패!", ephemeral=True)
             return
@@ -579,7 +604,8 @@ class CrashCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=self.server_views[guild_id], file=chart_file)
         self.server_messages[guild_id] = await interaction.original_response()
 
-        self.logger.info(f"{interaction.user}가 {bet} 코인으로 크래시 게임 시작 (Guild: {guild_id})")
+        # FIX: Log game start with guild_id
+        self.logger.info(f"{interaction.user}가 {bet} 코인으로 크래시 게임 시작", extra={'guild_id': guild_id})
         await self.announce_crash_point(guild_id, crash_point)
 
         # Start the game lifecycle task for this server

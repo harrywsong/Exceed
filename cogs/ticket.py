@@ -28,12 +28,15 @@ class HelpView(View):
 
     @discord.ui.button(label="문의하기", style=discord.ButtonStyle.primary, custom_id="open_ticket")
     async def open_ticket(self, interaction: discord.Interaction, button: Button):
+        # 길드 ID를 로깅을 위한 extra 매개변수에 저장
+        guild_id = interaction.guild.id
+
         # Check server configuration
-        if not is_server_configured(interaction.guild.id):
+        if not is_server_configured(guild_id):
             await interaction.response.send_message("❌ 이 서버는 아직 구성되지 않았습니다. 관리자에게 문의하세요.", ephemeral=True)
             return
 
-        if not is_feature_enabled(interaction.guild.id, 'ticket_system'):
+        if not is_feature_enabled(guild_id, 'ticket_system'):
             await interaction.response.send_message("❌ 이 서버에서는 티켓 시스템이 비활성화되어 있습니다.", ephemeral=True)
             return
 
@@ -41,28 +44,32 @@ class HelpView(View):
         member = interaction.user
 
         # Get ticket category from server config
-        ticket_category_id = get_channel_id(guild.id, 'ticket_category')
+        ticket_category_id = get_channel_id(guild_id, 'ticket_category')
         if not ticket_category_id:
-            self.logger.error(f"❌ [ticket] 길드 {guild.id}에 티켓 카테고리가 구성되지 않았습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 길드 {guild_id}에 티켓 카테고리가 구성되지 않았습니다.", extra={'guild_id': guild_id})
             await interaction.response.send_message("❌ 티켓 카테고리가 구성되지 않았습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
         cat = guild.get_channel(ticket_category_id)
         if cat is None:
-            self.logger.error(f"❌ [ticket] 티켓 카테고리 ID `{ticket_category_id}`를 찾을 수 없습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 티켓 카테고리 ID `{ticket_category_id}`를 찾을 수 없습니다.", extra={'guild_id': guild_id})
             await interaction.response.send_message("❌ 티켓 카테고리를 찾을 수 없습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
         # Get staff role from server config
-        staff_role_id = get_role_id(guild.id, 'staff_role')
+        staff_role_id = get_role_id(guild_id, 'staff_role')
         if not staff_role_id:
-            self.logger.error(f"❌ [ticket] 길드 {guild.id}에 스태프 역할이 구성되지 않았습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 길드 {guild_id}에 스태프 역할이 구성되지 않았습니다.", extra={'guild_id': guild_id})
             await interaction.response.send_message("❌ 스태프 역할이 구성되지 않았습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
         staff_role = guild.get_role(staff_role_id)
         if staff_role is None:
-            self.logger.error(f"❌ [ticket] 스태프 역할 ID `{staff_role_id}`를 찾을 수 없습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 스태프 역할 ID `{staff_role_id}`를 찾을 수 없습니다.", extra={'guild_id': guild_id})
             await interaction.response.send_message("❌ 스태프 역할을 찾을 수 없어 티켓을 열 수 없습니다. 관리자에게 문의해주세요.", ephemeral=True)
             return
 
@@ -77,8 +84,10 @@ class HelpView(View):
             await interaction.response.send_message(
                 f"❗ 이미 열린 티켓이 있습니다: {existing_ticket_channel.mention}", ephemeral=True
             )
+            # extra={'guild_id': guild_id} 추가
             self.logger.info(
-                f"❗ {member.display_name} ({member.id})님이 이미 열린 티켓 {existing_ticket_channel.name}을(를) 다시 시도했습니다.")
+                f"❗ {member.display_name} ({member.id})님이 이미 열린 티켓 {existing_ticket_channel.name}을(를) 다시 시도했습니다.",
+                extra={'guild_id': guild_id})
             return
 
         ticket_chan = None
@@ -89,11 +98,15 @@ class HelpView(View):
                 f"✅ 티켓 채널이 생성되었습니다: {ticket_chan.mention}", ephemeral=True
             )
         except discord.Forbidden:
-            self.logger.error(f"❌ [ticket] {member.display_name} ({member.id})님을 위한 티켓 채널 생성 권한이 없습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] {member.display_name} ({member.id})님을 위한 티켓 채널 생성 권한이 없습니다.",
+                              extra={'guild_id': guild_id})
             await interaction.response.send_message("❌ 티켓 채널을 생성할 권한이 없습니다. 봇 권한을 확인해주세요.", ephemeral=True)
             return
         except Exception as e:
-            self.logger.error(f"❌ [ticket] {member.display_name}님을 위한 티켓 채널 생성 실패: {e}\n{traceback.format_exc()}")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] {member.display_name}님을 위한 티켓 채널 생성 실패: {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild_id})
             await interaction.response.send_message("⚠️ 티켓 채널 생성 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.", ephemeral=True)
             return
 
@@ -110,13 +123,19 @@ class HelpView(View):
 
         try:
             await ticket_chan.send(embed=embed, view=CloseTicketView(self.bot, self.logger))
+            # extra={'guild_id': guild_id} 추가
             self.logger.info(
-                f"🎫 {member.display_name} ({member.id})님이 `{ticket_chan.name}` (ID: {ticket_chan.id}) 티켓을 생성했습니다.")
+                f"🎫 {member.display_name} ({member.id})님이 `{ticket_chan.name}` (ID: {ticket_chan.id}) 티켓을 생성했습니다.",
+                extra={'guild_id': guild_id})
         except discord.Forbidden:
-            self.logger.error(f"❌ [ticket] 티켓 채널 {ticket_chan.name} ({ticket_chan.id})에 메시지를 보낼 권한이 없습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 티켓 채널 {ticket_chan.name} ({ticket_chan.id})에 메시지를 보낼 권한이 없습니다.",
+                              extra={'guild_id': guild_id})
             await interaction.followup.send("⚠️ 티켓 채널에 환영 메시지를 보내는 데 실패했습니다. 봇 권한을 확인해주세요.", ephemeral=True)
         except Exception as e:
-            self.logger.error(f"❌ [ticket] 티켓 채널에 메시지 전송 실패: {e}\n{traceback.format_exc()}")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 티켓 채널에 메시지 전송 실패: {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild_id})
             await interaction.followup.send("⚠️ 티켓 채널에 메시지를 보내는 데 실패했습니다. 관리자에게 문의해주세요.", ephemeral=True)
 
 
@@ -128,6 +147,9 @@ class CloseTicketView(View):
 
     @discord.ui.button(label="티켓 닫기", style=discord.ButtonStyle.danger, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: Button):
+        # 길드 ID를 로깅을 위한 extra 매개변수에 저장
+        guild_id = interaction.guild.id
+
         try:
             channel = interaction.channel
             if not channel.name.startswith("ticket-"):
@@ -137,13 +159,17 @@ class CloseTicketView(View):
             try:
                 owner_id = int(channel.name.split("-", 1)[1])
             except (IndexError, ValueError):
-                self.logger.error(f"❌ [ticket] 티켓 채널명 '{channel.name}'에서 소유자 ID를 파싱할 수 없습니다.")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.error(f"❌ [ticket] 티켓 채널명 '{channel.name}'에서 소유자 ID를 파싱할 수 없습니다.",
+                                  extra={'guild_id': guild_id})
                 await interaction.response.send_message("❌ 티켓 소유자 정보를 가져오는 데 실패했습니다.", ephemeral=True)
                 return
 
             ticket_owner = channel.guild.get_member(owner_id)
             if ticket_owner is None:
-                self.logger.warning(f"⚠️ [ticket] 티켓 소유자 ({owner_id})를 찾을 수 없습니다. 이미 서버를 나갔을 수 있습니다.")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.warning(f"⚠️ [ticket] 티켓 소유자 ({owner_id})를 찾을 수 없습니다. 이미 서버를 나갔을 수 있습니다.",
+                                    extra={'guild_id': guild_id})
 
             is_owner = interaction.user.id == owner_id
 
@@ -159,12 +185,16 @@ class CloseTicketView(View):
 
             if not (is_owner or has_sup or is_admin):
                 await interaction.response.send_message("❌ 티켓을 닫을 권한이 없습니다.", ephemeral=True)
-                self.logger.warning(f"🔒 {interaction.user.display_name} ({interaction.user.id})님이 권한 없이 티켓 닫기를 시도했습니다.")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.warning(f"🔒 {interaction.user.display_name} ({interaction.user.id})님이 권한 없이 티켓 닫기를 시도했습니다.",
+                                    extra={'guild_id': guild_id})
                 return
 
             await interaction.response.defer(ephemeral=True)
+            # extra={'guild_id': guild_id} 추가
             self.logger.info(
-                f"⏳ {interaction.user.display_name} ({interaction.user.id})님이 티켓 {channel.name}을(를) 닫는 중입니다.")
+                f"⏳ {interaction.user.display_name} ({interaction.user.id})님이 티켓 {channel.name}을(를) 닫는 중입니다.",
+                extra={'guild_id': guild_id})
             await interaction.followup.send("⏳ 티켓을 닫는 중입니다...", ephemeral=True)
 
             created_ts = channel.created_at.strftime("%Y-%m-%d %H:%M UTC")
@@ -314,7 +344,9 @@ class CloseTicketView(View):
             <div class="attachment-link"><a href="{att.url}" target="_blank">{html.escape(att.filename)}</a></div>
         """
                     except Exception as att_e:
-                        self.logger.warning(f"⚠️ [ticket] 첨부 파일 '{att.filename}' 처리 실패: {att_e}")
+                        # extra={'guild_id': guild_id} 추가
+                        self.logger.warning(f"⚠️ [ticket] 첨부 파일 '{att.filename}' 처리 실패: {att_e}",
+                                            extra={'guild_id': guild_id})
 
                 messages_html += "  </div>\n</div>"
 
@@ -362,27 +394,36 @@ class CloseTicketView(View):
                 if history_ch:
                     await history_ch.send(embed=close_embed, file=File(buf,
                                                                        filename=f"{channel.name}-{datetime.now().strftime('%Y%m%d%H%M%S')}.html"))
+                    # extra={'guild_id': guild_id} 추가
                     self.logger.info(
-                        f"✅ {ticket_owner.display_name if ticket_owner else '알 수 없는 사용자'}님의 `{channel.name}` (ID: {channel.id}) 티켓이 닫히고 기록이 저장되었습니다.")
+                        f"✅ {ticket_owner.display_name if ticket_owner else '알 수 없는 사용자'}님의 `{channel.name}` (ID: {channel.id}) 티켓이 닫히고 기록이 저장되었습니다.",
+                        extra={'guild_id': guild_id})
                 else:
-                    self.logger.warning(f"⚠️ HISTORY 채널 ID `{history_channel_id}`를 찾을 수 없어 티켓 기록을 저장할 수 없습니다.")
+                    # extra={'guild_id': guild_id} 추가
+                    self.logger.warning(f"⚠️ HISTORY 채널 ID `{history_channel_id}`를 찾을 수 없어 티켓 기록을 저장할 수 없습니다.",
+                                        extra={'guild_id': guild_id})
                     await interaction.followup.send("⚠️ 기록 채널을 찾을 수 없어 티켓 기록을 저장하지 못했습니다.", ephemeral=True)
             else:
-                self.logger.warning(f"⚠️ 길드 {channel.guild.id}에 HISTORY 채널이 구성되지 않아 티켓 기록을 저장할 수 없습니다.")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.warning(f"⚠️ 길드 {channel.guild.id}에 HISTORY 채널이 구성되지 않아 티켓 기록을 저장할 수 없습니다.",
+                                    extra={'guild_id': guild_id})
                 await interaction.followup.send("⚠️ 기록 채널이 구성되지 않아 티켓 기록을 저장하지 못했습니다.", ephemeral=True)
 
             try:
                 await channel.send("이 티켓은 잠시 후 삭제됩니다. 필요하다면 위의 기록을 확인해주세요.")
             except discord.Forbidden:
-                self.logger.warning(f"⚠️ 티켓 채널 {channel.name}에 삭제 전 메시지를 보낼 권한이 없습니다.")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.warning(f"⚠️ 티켓 채널 {channel.name}에 삭제 전 메시지를 보낼 권한이 없습니다.", extra={'guild_id': guild_id})
 
             await asyncio.sleep(5)
 
             await channel.delete(reason=f"티켓 종료: {interaction.user.display_name}")
-            self.logger.info(f"🗑️ 티켓 채널 '{channel.name}' (ID: {channel.id})이(가) 삭제되었습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.info(f"🗑️ 티켓 채널 '{channel.name}' (ID: {channel.id})이(가) 삭제되었습니다.", extra={'guild_id': guild_id})
 
         except Exception as e:
-            self.logger.error(f"❌ [ticket] 티켓 종료 중 오류 발생: {e}\n{traceback.format_exc()}")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ [ticket] 티켓 종료 중 오류 발생: {e}\n{traceback.format_exc()}", extra={'guild_id': guild_id})
             if not interaction.response.is_done():
                 try:
                     await interaction.followup.send("❌ 티켓 닫기 중 오류가 발생했습니다. 관리자에게 문의해주세요.", ephemeral=True)
@@ -393,26 +434,28 @@ class CloseTicketView(View):
 class TicketSystem(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "티켓 시스템",
-            bot=self.bot,
-            discord_log_channel_id=0  # Will be set per guild
-        )
+        # NOTE: Arguments here will be ignored by get_logger due to global configuration,
+        # but the line is kept for clarity.
+        self.logger = get_logger("티켓 시스템")
         self.logger.info("티켓 시스템 기능이 초기화되었습니다.")
 
     async def send_ticket_request_message(self, guild_id: int):
         """Send ticket request message for a specific guild"""
+        # 길드 ID는 이미 매개변수로 전달되므로, extra에 추가만 하면 됩니다.
         if not is_feature_enabled(guild_id, 'ticket_system'):
             return
 
         ticket_channel_id = get_channel_id(guild_id, 'ticket_channel')
         if not ticket_channel_id:
-            self.logger.warning(f"길드 {guild_id}에 티켓 채널이 구성되지 않았습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.warning(f"길드 {guild_id}에 티켓 채널이 구성되지 않았습니다.", extra={'guild_id': guild_id})
             return
 
         channel = self.bot.get_channel(ticket_channel_id)
         if channel is None:
-            self.logger.error(f"❌ 길드 {guild_id}의 티켓 요청 메시지를 보낼 채널 (ID: {ticket_channel_id})을(를) 찾을 수 없습니다!")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ 길드 {guild_id}의 티켓 요청 메시지를 보낼 채널 (ID: {ticket_channel_id})을(를) 찾을 수 없습니다!",
+                              extra={'guild_id': guild_id})
             return
 
         try:
@@ -420,15 +463,21 @@ class TicketSystem(commands.Cog):
                 if msg.author == self.bot.user and msg.embeds:
                     if any("✨ 티켓 생성하기 ✨" in embed.title for embed in msg.embeds):
                         await msg.delete()
-                        self.logger.info(f"이전 티켓 요청 메시지 삭제됨 (ID: {msg.id})")
+                        # extra={'guild_id': guild_id} 추가
+                        self.logger.info(f"이전 티켓 요청 메시지 삭제됨 (ID: {msg.id})", extra={'guild_id': guild_id})
                         break
             else:
-                self.logger.debug(f"채널 {channel.name}에 기존 티켓 요청 메시지가 없습니다.")
+                # extra={'guild_id': guild_id} 추가
+                self.logger.debug(f"채널 {channel.name}에 기존 티켓 요청 메시지가 없습니다.", extra={'guild_id': guild_id})
 
         except discord.Forbidden:
-            self.logger.error(f"❌ {channel.name} 채널 ({channel.id})의 메시지 삭제 권한이 없습니다. 봇 권한을 확인해주세요.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ {channel.name} 채널 ({channel.id})의 메시지 삭제 권한이 없습니다. 봇 권한을 확인해주세요.",
+                              extra={'guild_id': guild_id})
         except Exception as e:
-            self.logger.error(f"❌ {channel.name} 채널의 메시지 삭제 실패: {e}\n{traceback.format_exc()}")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ {channel.name} 채널의 메시지 삭제 실패: {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild_id})
 
         embed = discord.Embed(
             title="✨ 티켓 생성하기 ✨",
@@ -451,17 +500,23 @@ class TicketSystem(commands.Cog):
 
         try:
             await channel.send(embed=embed, view=HelpView(self.bot, self.logger))
-            self.logger.info(f"✅ {channel.name} ({channel.id}) 채널에 문의 요청 메시지를 성공적으로 보냈습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.info(f"✅ {channel.name} ({channel.id}) 채널에 문의 요청 메시지를 성공적으로 보냈습니다.",
+                             extra={'guild_id': guild_id})
         except discord.Forbidden:
-            self.logger.error(f"❌ 문의 요청 메시지를 보낼 권한이 없습니다 (채널 {channel.id}). 봇 권한을 확인해주세요.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ 문의 요청 메시지를 보낼 권한이 없습니다 (채널 {channel.id}). 봇 권한을 확인해주세요.",
+                              extra={'guild_id': guild_id})
         except Exception as e:
-            self.logger.error(f"❌ 문의 요청 메시지 전송에 실패했습니다: {e}\n{traceback.format_exc()}")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ 문의 요청 메시지 전송에 실패했습니다: {e}\n{traceback.format_exc()}", extra={'guild_id': guild_id})
 
     @commands.Cog.listener()
     async def on_ready(self):
         self.bot.add_view(HelpView(self.bot, self.logger))
         self.bot.add_view(CloseTicketView(self.bot, self.logger))
 
+        # 일반적인 초기화 로그이므로 extra 매개변수가 필요하지 않습니다.
         self.logger.info("지속적인 뷰(HelpView, CloseTicketView)가 등록되었습니다.")
 
         await asyncio.sleep(2)
@@ -469,16 +524,20 @@ class TicketSystem(commands.Cog):
         # Send ticket request messages for all configured guilds
         for guild in self.bot.guilds:
             if is_server_configured(guild.id) and is_feature_enabled(guild.id, 'ticket_system'):
+                # send_ticket_request_message 함수가 이미 guild.id를 처리합니다.
                 await self.send_ticket_request_message(guild.id)
 
     @app_commands.command(name="help", description="운영진에게 문의할 수 있는 티켓을 엽니다.")
     async def slash_help(self, interaction: discord.Interaction):
+        # 길드 ID를 로깅을 위한 extra 매개변수에 저장
+        guild_id = interaction.guild.id
+
         # Check server configuration
-        if not is_server_configured(interaction.guild.id):
+        if not is_server_configured(guild_id):
             await interaction.response.send_message("❌ 이 서버는 아직 구성되지 않았습니다. `/봇설정` 명령어를 사용하여 설정해주세요.", ephemeral=True)
             return
 
-        if not is_feature_enabled(interaction.guild.id, 'ticket_system'):
+        if not is_feature_enabled(guild_id, 'ticket_system'):
             await interaction.response.send_message("❌ 이 서버에서는 티켓 시스템이 비활성화되어 있습니다.", ephemeral=True)
             return
 
@@ -495,20 +554,25 @@ class TicketSystem(commands.Cog):
         embed.set_footer(text="아날로그 • 티켓 시스템")
         try:
             await interaction.followup.send(embed=embed, view=HelpView(self.bot, self.logger), ephemeral=True)
-            self.logger.info(f"👤 {interaction.user.display_name} ({interaction.user.id})님이 /help 명령어를 사용했습니다.")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.info(f"👤 {interaction.user.display_name} ({interaction.user.id})님이 /help 명령어를 사용했습니다.",
+                             extra={'guild_id': guild_id})
         except Exception as e:
-            self.logger.error(f"❌ /help 명령어 응답 실패: {e}\n{traceback.format_exc()}")
+            # extra={'guild_id': guild_id} 추가
+            self.logger.error(f"❌ /help 명령어 응답 실패: {e}\n{traceback.format_exc()}", extra={'guild_id': guild_id})
             await interaction.followup.send("❌ 도움말 메시지를 보내는 데 실패했습니다. 잠시 후 다시 시도해주세요.", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
         """Handle bot joining a new guild"""
-        self.logger.info(f"Bot joined new guild for tickets: {guild.name} ({guild.id})")
+        # 길드 ID를 로깅을 위한 extra 매개변수에 추가
+        self.logger.info(f"Bot joined new guild for tickets: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         """Handle bot leaving a guild"""
-        self.logger.info(f"Bot left guild for tickets: {guild.name} ({guild.id})")
+        # 길드 ID를 로깅을 위한 extra 매개변수에 추가
+        self.logger.info(f"Bot left guild for tickets: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
 
 
 async def setup(bot):

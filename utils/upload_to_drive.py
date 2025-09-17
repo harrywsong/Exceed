@@ -4,6 +4,7 @@ from datetime import datetime
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
+import utils.logger as logger_module
 
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 TOKEN_PICKLE = 'token.pickle'
@@ -47,6 +48,8 @@ def upload_log_to_drive(file_path: str) -> str | None:
         print(f"🔗 File link: https://drive.google.com/file/d/{file_id}/view")
 
         try:
+            # First, close the log handlers to release the file lock
+            logger_module.close_log_handlers()
             os.remove(file_path)
             print(f"🗑️ Deleted local log file: {file_path}")
         except Exception as delete_error:

@@ -19,6 +19,7 @@ from utils.logger import get_logger
 class MessageLogCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # FIX: The logger is now a global singleton, so we just get it by name.
         self.logger = get_logger("메세지 기록")
         self.logger.info("메시지 로그 기능이 초기화되었습니다.")
 
@@ -49,7 +50,8 @@ class MessageLogCog(commands.Cog):
 
                         with open(save_path, 'wb') as f:
                             f.write(file_bytes)
-                        self.logger.debug(f"Successfully saved attachment {attachment.filename} to {save_path}.")
+                        # FIX: Add guild_id to log message
+                        self.logger.debug(f"Successfully saved attachment {attachment.filename} to {save_path}.", extra={'guild_id': guild_id})
 
                         discord_file = discord.File(
                             save_path,
@@ -57,15 +59,18 @@ class MessageLogCog(commands.Cog):
                             description=f"{description_prefix}첨부 파일 (메시지 ID: {message_id})"
                         )
                         await log_channel.send(f"{description_prefix}첨부 파일: `{attachment.filename}`", file=discord_file)
-                        self.logger.debug(f"Successfully sent attachment {attachment.filename} to log channel.")
+                        # FIX: Add guild_id to log message
+                        self.logger.debug(f"Successfully sent attachment {attachment.filename} to log channel.", extra={'guild_id': guild_id})
                         return f"[`{attachment.filename}`]({attachment.url}) (저장됨)"
                     else:
+                        # FIX: Add guild_id to log message
                         self.logger.warning(
-                            f"첨부 파일 {attachment.filename} 다운로드 실패: HTTP {resp.status}")
+                            f"첨부 파일 {attachment.filename} 다운로드 실패: HTTP {resp.status}", extra={'guild_id': guild_id})
                         return f"[`{attachment.filename}`]({attachment.url}) (저장 실패: HTTP {resp.status})"
         except Exception as e:
+            # FIX: Add guild_id to log message
             self.logger.error(
-                f"첨부 파일 {attachment.filename} 저장 중 예외 발생: {e}\n{traceback.format_exc()}")
+                f"첨부 파일 {attachment.filename} 저장 중 예외 발생: {e}\n{traceback.format_exc()}", extra={'guild_id': guild_id})
             return f"[`{attachment.filename}`]({attachment.url}) (저장 오류)"
 
     @commands.Cog.listener()
@@ -74,6 +79,7 @@ class MessageLogCog(commands.Cog):
         봇이 Discord에 완전히 로그인되고 준비될 때 실행됩니다.
         각 서버의 로그 채널에 봇 시작 메시지를 보냅니다.
         """
+        # FIX: The bot is online for all guilds, so this doesn't need a guild_id extra
         self.logger.info(f"{self.bot.user.name} 봇이 온라인 상태입니다!")
 
         # Send ready message to each configured server
@@ -101,15 +107,19 @@ class MessageLogCog(commands.Cog):
                             embed.set_thumbnail(url=self.bot.user.display_avatar.url)
 
                             await log_channel.send(embed=embed)
-                            self.logger.info(f"로그 채널에 봇 시작 메시지를 성공적으로 보냈습니다. (서버: {guild.name})")
+                            # FIX: Add guild_id to log message
+                            self.logger.info(f"로그 채널에 봇 시작 메시지를 성공적으로 보냈습니다. (서버: {guild.name})", extra={'guild_id': guild.id})
                             self._sent_ready_messages.add(guild.id)
                         except discord.Forbidden:
-                            self.logger.error(f"봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다. (서버: {guild.name})")
+                            # FIX: Add guild_id to log message
+                            self.logger.error(f"봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다. (서버: {guild.name})", extra={'guild_id': guild.id})
                         except Exception as e:
-                            self.logger.error(f"봇 시작 메시지 로깅 중 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                            # FIX: Add guild_id to log message
+                            self.logger.error(f"봇 시작 메시지 로깅 중 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}", extra={'guild_id': guild.id})
                     else:
+                        # FIX: Add guild_id to log message
                         self.logger.error(
-                            f"로그 채널 ID {log_channel_id}을(를) 찾을 수 없어 봇 시작 메시지를 보낼 수 없습니다. (서버: {guild.name})")
+                            f"로그 채널 ID {log_channel_id}을(를) 찾을 수 없어 봇 시작 메시지를 보낼 수 없습니다. (서버: {guild.name})", extra={'guild_id': guild.id})
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
@@ -124,12 +134,14 @@ class MessageLogCog(commands.Cog):
         if not is_feature_enabled(message.guild.id, 'message_history'):
             return
 
+        # FIX: Add guild_id to log message
         self.logger.debug(
-            f"Event triggered for message ID {message.id}. Author: {message.author}, Channel: {message.channel}, Guild: {message.guild.name}")
+            f"Event triggered for message ID {message.id}. Author: {message.author}, Channel: {message.channel}, Guild: {message.guild.name}", extra={'guild_id': message.guild.id})
 
         # Ignore bot's own messages
         if message.author and message.author.bot:
-            self.logger.debug(f"Ignoring bot's own message.")
+            # FIX: Add guild_id to log message
+            self.logger.debug(f"Ignoring bot's own message.", extra={'guild_id': message.guild.id})
             return
 
         # Get log channel for this server
@@ -139,39 +151,47 @@ class MessageLogCog(commands.Cog):
 
         # Ignore messages in the log channel itself
         if message.channel and message.channel.id == log_channel_id:
-            self.logger.debug(f"Ignoring message in log channel.")
+            # FIX: Add guild_id to log message
+            self.logger.debug(f"Ignoring message in log channel.", extra={'guild_id': message.guild.id})
             return
 
         log_channel = self.bot.get_channel(log_channel_id)
         if not log_channel:
+            # FIX: Add guild_id to log message
             self.logger.error(
-                f"로그 채널 ID {log_channel_id}을(를) 찾을 수 없습니다. 메시지 삭제 로그를 보낼 수 없습니다. (서버: {message.guild.name})")
+                f"로그 채널 ID {log_channel_id}을(를) 찾을 수 없습니다. 메시지 삭제 로그를 보낼 수 없습니다. (서버: {message.guild.name})", extra={'guild_id': message.guild.id})
             return
 
         # Try to fetch the full message content if its content is None
         full_message = message
 
         if full_message.content is None:
+            # FIX: Add guild_id to log message
             self.logger.info(
-                f"메시지 {message.id} 내용이 None입니다. 전체 메시지를 가져오려 합니다.")
+                f"메시지 {message.id} 내용이 None입니다. 전체 메시지를 가져오려 합니다.", extra={'guild_id': message.guild.id})
             try:
                 if message.channel:
                     fetched_msg = await message.channel.fetch_message(message.id)
                     full_message = fetched_msg
+                    # FIX: Add guild_id to log message
                     self.logger.info(
-                        f"메시지 {message.id}를 성공적으로 가져왔습니다. 내용 길이: {len(full_message.content) if full_message.content else 0}.")
+                        f"메시지 {message.id}를 성공적으로 가져왔습니다. 내용 길이: {len(full_message.content) if full_message.content else 0}.", extra={'guild_id': message.guild.id})
                 else:
+                    # FIX: Add guild_id to log message
                     self.logger.warning(
-                        f"메시지 {message.id}에 채널 정보가 없어 내용을 가져올 수 없습니다.")
+                        f"메시지 {message.id}에 채널 정보가 없어 내용을 가져올 수 없습니다.", extra={'guild_id': message.guild.id})
             except (discord.NotFound, discord.Forbidden):
+                # FIX: Add guild_id to log message
                 self.logger.warning(
-                    f"메시지 {message.id}를 가져오는 데 실패했습니다 (NotFound/Forbidden). 내용이 부정확할 수 있습니다.")
+                    f"메시지 {message.id}를 가져오는 데 실패했습니다 (NotFound/Forbidden). 내용이 부정확할 수 있습니다.", extra={'guild_id': message.guild.id})
             except Exception as e:
+                # FIX: Add guild_id to log message
                 self.logger.error(
-                    f"메시지 {message.id}를 가져오는 중 예상치 못한 오류 발생: {e}\n{traceback.format_exc()}")
+                    f"메시지 {message.id}를 가져오는 중 예상치 못한 오류 발생: {e}\n{traceback.format_exc()}", extra={'guild_id': message.guild.id})
         else:
+            # FIX: Add guild_id to log message
             self.logger.debug(
-                f"메시지 {message.id}의 내용이 이벤트에 포함되어 있습니다. 내용 길이: {len(message.content) if message.content else 0}.")
+                f"메시지 {message.id}의 내용이 이벤트에 포함되어 있습니다. 내용 길이: {len(message.content) if message.content else 0}.", extra={'guild_id': message.guild.id})
 
         try:
             embed = discord.Embed(
@@ -210,13 +230,16 @@ class MessageLogCog(commands.Cog):
                 embed.set_thumbnail(url=author_avatar_url)
 
             await log_channel.send(embed=embed)
+            # FIX: Add guild_id to log message
             self.logger.info(
-                f"{full_message.channel.name if full_message.channel else '알 수 없는 채널'}에서 {author_mention}의 삭제된 메시지를 기록했습니다. (서버: {message.guild.name})")
+                f"{full_message.channel.name if full_message.channel else '알 수 없는 채널'}에서 {author_mention}의 삭제된 메시지를 기록했습니다. (서버: {message.guild.name})", extra={'guild_id': message.guild.id})
 
         except discord.Forbidden:
-            self.logger.error(f"봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다. (서버: {message.guild.name})")
+            # FIX: Add guild_id to log message
+            self.logger.error(f"봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다. (서버: {message.guild.name})", extra={'guild_id': message.guild.id})
         except Exception as e:
-            self.logger.error(f"삭제된 메시지 로깅 중 오류 발생 (서버: {message.guild.name}): {e}\n{traceback.format_exc()}")
+            # FIX: Add guild_id to log message
+            self.logger.error(f"삭제된 메시지 로깅 중 오류 발생 (서버: {message.guild.name}): {e}\n{traceback.format_exc()}", extra={'guild_id': message.guild.id})
 
     @commands.Cog.listener()
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
@@ -231,13 +254,15 @@ class MessageLogCog(commands.Cog):
         if not is_feature_enabled(before.guild.id, 'message_history'):
             return
 
+        # FIX: Add guild_id to log message
         self.logger.debug(
-            f"Event triggered for message ID {before.id}. Author: {before.author}, Channel: {before.channel}, Guild: {before.guild.name}")
+            f"Event triggered for message ID {before.id}. Author: {before.author}, Channel: {before.channel}, Guild: {before.guild.name}", extra={'guild_id': before.guild.id})
 
         # Ignore bot's own message edits
         if before.author and before.author.bot:
+            # FIX: Add guild_id to log message
             self.logger.debug(
-                f"Ignoring bot's own message edit by {before.author.display_name}.")
+                f"Ignoring bot's own message edit by {before.author.display_name}.", extra={'guild_id': before.guild.id})
             return
 
         # Get log channel for this server
@@ -247,8 +272,9 @@ class MessageLogCog(commands.Cog):
 
         # Ignore messages in the log channel itself
         if before.channel and before.channel.id == log_channel_id:
+            # FIX: Add guild_id to log message
             self.logger.debug(
-                f"Ignoring message edit in log channel (ID: {before.channel.id}).")
+                f"Ignoring message edit in log channel (ID: {before.channel.id}).", extra={'guild_id': before.guild.id})
             return
 
         # Attempt to get reliable 'before' content and attachments
@@ -257,29 +283,35 @@ class MessageLogCog(commands.Cog):
 
         # If 'before' message content is None (not in cache or content not provided by Discord)
         if fetched_original_content is None:
+            # FIX: Add guild_id to log message
             self.logger.info(
-                f"'before' 메시지 {before.id} 내용이 None입니다. 전체 메시지를 가져오려 합니다.")
+                f"'before' 메시지 {before.id} 내용이 None입니다. 전체 메시지를 가져오려 합니다.", extra={'guild_id': before.guild.id})
             try:
                 if before.channel:
                     fetched_before_message = await before.channel.fetch_message(before.id)
                     fetched_original_content = fetched_before_message.content if fetched_before_message.content is not None else ""
                     fetched_original_attachments = fetched_before_message.attachments
+                    # FIX: Add guild_id to log message
                     self.logger.info(
-                        f"'before' 메시지 {before.id}를 성공적으로 가져왔습니다. 내용 길이: {len(fetched_original_content)}자.")
+                        f"'before' 메시지 {before.id}를 성공적으로 가져왔습니다. 내용 길이: {len(fetched_original_content)}자.", extra={'guild_id': before.guild.id})
                 else:
+                    # FIX: Add guild_id to log message
                     self.logger.warning(
-                        f"'before' 메시지 {before.id}에 채널 정보가 없어 내용을 가져올 수 없습니다.")
+                        f"'before' 메시지 {before.id}에 채널 정보가 없어 내용을 가져올 수 없습니다.", extra={'guild_id': before.guild.id})
             except (discord.NotFound, discord.Forbidden):
+                # FIX: Add guild_id to log message
                 self.logger.warning(
-                    f"'before' 메시지 {before.id}를 가져오는 데 실패했습니다 (NotFound/Forbidden). 원래 내용이 부정확할 수 있습니다.")
+                    f"'before' 메시지 {before.id}를 가져오는 데 실패했습니다 (NotFound/Forbidden). 원래 내용이 부정확할 수 있습니다.", extra={'guild_id': before.guild.id})
                 fetched_original_content = "*캐시에 없거나 가져올 수 없는 내용*"
             except Exception as e:
+                # FIX: Add guild_id to log message
                 self.logger.error(
-                    f"'before' 메시지 {before.id}를 가져오는 중 예상치 못한 오류 발생: {e}\n{traceback.format_exc()}")
+                    f"'before' 메시지 {before.id}를 가져오는 중 예상치 못한 오류 발생: {e}\n{traceback.format_exc()}", extra={'guild_id': before.guild.id})
                 fetched_original_content = "*가져오기 실패 (오류 발생)*"
         else:
+            # FIX: Add guild_id to log message
             self.logger.debug(
-                f"'before' 메시지 {before.id}의 내용이 이벤트에 포함되어 있습니다. 내용 길이: {len(fetched_original_content)}.")
+                f"'before' 메시지 {before.id}의 내용이 이벤트에 포함되어 있습니다. 내용 길이: {len(fetched_original_content)}.", extra={'guild_id': before.guild.id})
 
         after_content = after.content if after.content is not None else ""
 
@@ -287,21 +319,24 @@ class MessageLogCog(commands.Cog):
         content_changed = (fetched_original_content.strip() != after_content.strip())
         attachments_changed = (fetched_original_attachments != after.attachments)
 
-        self.logger.debug(f"Content changed: {content_changed}")
-        self.logger.debug(f"Attachments changed: {attachments_changed}")
+        # FIX: Add guild_id to log messages
+        self.logger.debug(f"Content changed: {content_changed}", extra={'guild_id': before.guild.id})
+        self.logger.debug(f"Attachments changed: {attachments_changed}", extra={'guild_id': before.guild.id})
         self.logger.debug(
-            f"Before content (fetched/cached): '{fetched_original_content[:100]}'")
-        self.logger.debug(f"After content: '{after_content[:100]}'")
+            f"Before content (fetched/cached): '{fetched_original_content[:100]}'", extra={'guild_id': before.guild.id})
+        self.logger.debug(f"After content: '{after_content[:100]}'", extra={'guild_id': before.guild.id})
 
         if not content_changed and not attachments_changed:
+            # FIX: Add guild_id to log message
             self.logger.debug(
-                f"No significant content or attachment changes detected for message {before.id}. Returning.")
+                f"No significant content or attachment changes detected for message {before.id}. Returning.", extra={'guild_id': before.guild.id})
             return
 
         log_channel = self.bot.get_channel(log_channel_id)
         if not log_channel:
+            # FIX: Add guild_id to log message
             self.logger.error(
-                f"로그 채널 ID {log_channel_id}을(를) 찾을 수 없습니다. 메시지 수정 로그를 보낼 수 없습니다. (서버: {before.guild.name})")
+                f"로그 채널 ID {log_channel_id}을(를) 찾을 수 없습니다. 메시지 수정 로그를 보낼 수 없습니다. (서버: {before.guild.name})", extra={'guild_id': before.guild.id})
             return
 
         try:
@@ -381,13 +416,16 @@ class MessageLogCog(commands.Cog):
             embed.url = after.jump_url  # Link to the edited message
 
             await log_channel.send(embed=embed)
+            # FIX: Add guild_id to log message
             self.logger.info(
-                f"{before.channel.name if before.channel else '알 수 없는 채널'}에서 {author_mention}의 수정된 메시지를 기록했습니다. (서버: {before.guild.name})")
+                f"{before.channel.name if before.channel else '알 수 없는 채널'}에서 {author_mention}의 수정된 메시지를 기록했습니다. (서버: {before.guild.name})", extra={'guild_id': before.guild.id})
 
         except discord.Forbidden:
-            self.logger.error(f"봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다. (서버: {before.guild.name})")
+            # FIX: Add guild_id to log message
+            self.logger.error(f"봇이 로그 채널 {log_channel.name}에 메시지를 보낼 권한이 없습니다. (서버: {before.guild.name})", extra={'guild_id': before.guild.id})
         except Exception as e:
-            self.logger.error(f"수정된 메시지 로깅 중 오류 발생 (서버: {before.guild.name}): {e}\n{traceback.format_exc()}")
+            # FIX: Add guild_id to log message
+            self.logger.error(f"수정된 메시지 로깅 중 오류 발생 (서버: {before.guild.name}): {e}\n{traceback.format_exc()}", extra={'guild_id': before.guild.id})
 
 
 async def setup(bot):

@@ -17,7 +17,8 @@ class SlotMachineCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("슬롯머신", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("슬롯머신")
 
         # Slot symbols with different rarities and payouts
         self.symbols = {
@@ -241,8 +242,11 @@ class SlotMachineCog(commands.Cog):
         await interaction.edit_original_response(embed=embed)
 
         result = "승리" if payout > 0 else "패배"
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
         self.logger.info(
-            f"{interaction.user}가 슬롯머신에서 {bet} 코인 {result} (결과: {reel1}{reel2}{reel3}, 수익: {payout}) (Guild: {interaction.guild.id})")
+            f"{interaction.user}가 슬롯머신에서 {bet} 코인 {result} (결과: {reel1}{reel2}{reel3}, 수익: {payout})",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

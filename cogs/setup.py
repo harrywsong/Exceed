@@ -1,4 +1,6 @@
 # cogs/setup.py
+import traceback
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -17,6 +19,8 @@ from utils.config import (
     get_role_id,
     is_feature_enabled
 )
+# Assuming get_logger is available and configured as per previous examples
+from utils.logger import get_logger
 
 
 class MultiServerBotSetup:
@@ -24,6 +28,7 @@ class MultiServerBotSetup:
         self.bot = bot
         self.guild = guild
         self.user = user
+        self.logger = get_logger("BotSetup")  # Initialize logger for this cog
         self.config = {
             'guild_id': str(self.guild.id),
             'guild_name': self.guild.name,
@@ -55,8 +60,8 @@ class MultiServerBotSetup:
     async def send_welcome_message(self):
         """Send initial setup message"""
         embed = discord.Embed(
-            title="🎮 [Exceed] Discord Bot Setup",
-            description="Welcome to the Exceed bot setup! I'll configure this server for our multi-feature bot.\n\n"
+            title="🎮 [아날로그] Discord Bot Setup",
+            description="Welcome to the 아날로그 bot setup! I'll configure this server for our multi-feature bot.\n\n"
                         "🎯 **Available Features:**\n"
                         "• 🎰 Casino Games (Blackjack, Roulette, Slots, etc.)\n"
                         "• 🏆 Achievement System\n"
@@ -74,7 +79,7 @@ class MultiServerBotSetup:
                         "Let's begin! 🚀",
             color=0x7289DA
         )
-        embed.set_footer(text="Exceed Bot Setup • This channel will auto-delete after setup")
+        embed.set_footer(text="아날로그 Bot Setup • This channel will auto-delete after setup")
         await self.setup_channel.send(embed=embed)
 
     async def get_user_input(self, prompt: str, timeout: int = 300) -> Optional[str]:
@@ -109,7 +114,9 @@ class MultiServerBotSetup:
                     return json.load(f)
             return {}
         except Exception as e:
-            print(f"Error loading existing configs: {e}")
+            # Log error with guild_id context
+            self.logger.error(f"Error loading existing configs for guild {self.guild.id}: {e}",
+                              extra={'guild_id': self.guild.id})
             return {}
 
     async def check_existing_setup(self):
@@ -152,6 +159,9 @@ class MultiServerBotSetup:
             await self.setup_channel.send(embed=embed)
             response = await self.get_user_input("Continue with setup? This will update configurations. (yes/no)")
             if response is None or response.lower() not in ['yes', 'y']:
+                # Log cancellation with guild_id context
+                self.logger.info(f"Setup cancelled by user for guild {self.guild.id}",
+                                 extra={'guild_id': self.guild.id})
                 return False
 
         return True
@@ -196,6 +206,9 @@ class MultiServerBotSetup:
                 await self.setup_channel.send("❌ Invalid channel. Skipping.")
                 self.config['channels'][config_key] = None
 
+        # Log completion with guild_id context
+        self.logger.info(f"Channel configuration step completed for guild {self.guild.id}",
+                         extra={'guild_id': self.guild.id})
         return True
 
     async def setup_server_roles(self):
@@ -235,6 +248,9 @@ class MultiServerBotSetup:
                 await self.setup_channel.send("❌ Invalid role. Skipping.")
                 self.config['roles'][config_key] = None
 
+        # Log completion with guild_id context
+        self.logger.info(f"Role configuration step completed for guild {self.guild.id}",
+                         extra={'guild_id': self.guild.id})
         return True
 
     async def setup_casino_features(self):
@@ -292,6 +308,9 @@ class MultiServerBotSetup:
             else:
                 self.config['settings']['starting_coins'] = 1000
 
+        # Log completion with guild_id context
+        self.logger.info(f"Casino features setup completed for guild {self.guild.id}",
+                         extra={'guild_id': self.guild.id})
         return True
 
     async def setup_achievement_system(self):
@@ -347,6 +366,9 @@ class MultiServerBotSetup:
                         'name': channel.name if channel else 'Unknown'
                     }
 
+        # Log completion with guild_id context
+        self.logger.info(f"Achievement system setup completed for guild {self.guild.id}",
+                         extra={'guild_id': self.guild.id})
         return True
 
     async def setup_ticket_system(self):
@@ -406,6 +428,9 @@ class MultiServerBotSetup:
                         'id': channel_id,
                         'name': channel.name if channel else 'Unknown'
                     }
+
+        # Log completion with guild_id context
+        self.logger.info(f"Ticket system setup completed for guild {self.guild.id}", extra={'guild_id': self.guild.id})
         return True
 
     async def setup_voice_features(self):
@@ -459,6 +484,8 @@ class MultiServerBotSetup:
                 except ValueError:
                     await self.setup_channel.send("❌ Invalid channel ID.")
 
+        # Log completion with guild_id context
+        self.logger.info(f"Voice features setup completed for guild {self.guild.id}", extra={'guild_id': self.guild.id})
         return True
 
     async def setup_additional_features(self):
@@ -483,6 +510,10 @@ class MultiServerBotSetup:
             self.config['features'][feature_key] = response.lower() in ['yes', 'y', 'true']
             status = "✅ Enabled" if self.config['features'][feature_key] else "❌ Disabled"
             await self.setup_channel.send(f"{status} {feature_key.replace('_', ' ').title()}")
+
+        # Log completion with guild_id context
+        self.logger.info(f"Additional features setup completed for guild {self.guild.id}",
+                         extra={'guild_id': self.guild.id})
         return True
 
     async def setup_reaction_roles(self):
@@ -538,6 +569,9 @@ class MultiServerBotSetup:
                         await self.setup_channel.send("❌ Role not found. Please use a valid role ID.")
                 except ValueError:
                     await self.setup_channel.send("❌ Invalid role ID.")
+
+        # Log completion with guild_id context
+        self.logger.info(f"Reaction roles setup completed for guild {self.guild.id}", extra={'guild_id': self.guild.id})
         return True
 
     async def finalize_setup(self):
@@ -552,6 +586,11 @@ class MultiServerBotSetup:
             # Save server configs
             with open(self.config_file_path, 'w', encoding='utf-8') as f:
                 json.dump(all_server_configs, f, indent=2, ensure_ascii=False)
+
+            # Log successful save with guild_id context
+            self.logger.info(f"Server configuration saved successfully for guild {self.guild.id}",
+                             extra={'guild_id': self.guild.id})
+
             # Create summary
             enabled_features = [k.replace('_', ' ').title() for k, v in self.config['features'].items() if v]
             configured_channels = len([c for c in self.config['channels'].values() if c])
@@ -594,6 +633,9 @@ class MultiServerBotSetup:
             await self.setup_channel.delete(reason="Setup completed")
             return True
         except Exception as e:
+            # Log error with guild_id context
+            self.logger.error(f"Error saving configuration for guild {self.guild.id}: {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': self.guild.id})
             await self.setup_channel.send(f"❌ Error saving configuration: {e}")
             return False
 
@@ -627,8 +669,10 @@ class MultiServerBotSetup:
 
     async def migrate_from_env_backup(self):
         """Pre-fill configuration from a .env.backup file if it exists."""
-        if os.path.exists('.env.backup_20250916_181843'):
-            env_vars = dotenv_values('.env.backup_20250916_181843')
+        # NOTE: This part assumes a specific backup file name. You might want to generalize this.
+        backup_file = '.env.backup_20250916_181843'  # Replace with actual dynamic finding if needed
+        if os.path.exists(backup_file):
+            env_vars = dotenv_values(backup_file)
 
             # Channel IDs
             channel_mappings = {
@@ -645,8 +689,13 @@ class MultiServerBotSetup:
                 "MESSAGE_HISTORY_CHANNEL_ID": "message_history_channel"
             }
             for env_key, config_key in channel_mappings.items():
-                if env_key in env_vars:
-                    self.config['channels'][config_key] = {'id': int(env_vars[env_key]), 'name': 'Migrated'}
+                if env_key in env_vars and env_vars[env_key]:
+                    try:
+                        channel_id = int(env_vars[env_key])
+                        self.config['channels'][config_key] = {'id': channel_id, 'name': 'Migrated'}
+                    except ValueError:
+                        self.logger.warning(f"Invalid channel ID in backup for {env_key}: {env_vars[env_key]}",
+                                            extra={'guild_id': self.guild.id})
 
             # Role IDs
             role_mappings = {
@@ -656,16 +705,25 @@ class MultiServerBotSetup:
                 "UNVERIFIED_ROLE_ID": "unverified_role"
             }
             for env_key, config_key in role_mappings.items():
-                if env_key in env_vars:
-                    self.config['roles'][config_key] = {'id': int(env_vars[env_key]), 'name': 'Migrated'}
+                if env_key in env_vars and env_vars[env_key]:
+                    try:
+                        role_id = int(env_vars[env_key])
+                        self.config['roles'][config_key] = {'id': role_id, 'name': 'Migrated'}
+                    except ValueError:
+                        self.logger.warning(f"Invalid role ID in backup for {env_key}: {env_vars[env_key]}",
+                                            extra={'guild_id': self.guild.id})
 
             # Reaction Roles
-            if "REACTION_ROLES" in env_vars:
+            if "REACTION_ROLES" in env_vars and env_vars["REACTION_ROLES"]:
                 try:
                     rr_data = json.loads(env_vars["REACTION_ROLES"].replace("'", '"'))
                     self.config['reaction_roles'] = rr_data
                 except json.JSONDecodeError:
-                    pass
+                    self.logger.error("Failed to decode REACTION_ROLES JSON from backup.",
+                                      extra={'guild_id': self.guild.id})
+
+            self.logger.info(f"Successfully migrated configuration from {backup_file} for guild {self.guild.id}",
+                             extra={'guild_id': self.guild.id})
 
     async def run_setup(self):
         """Run the complete setup process"""
@@ -679,6 +737,9 @@ class MultiServerBotSetup:
                 await self.migrate_from_env_backup()
                 await self.setup_channel.send(
                     "✅ Configuration pre-filled from `.env.backup`! You can now review and update.")
+            else:
+                self.logger.debug(f"Skipped migration from .env.backup for guild {self.guild.id}",
+                                  extra={'guild_id': self.guild.id})
 
             # Check existing setup
             if not await self.check_existing_setup():
@@ -699,16 +760,31 @@ class MultiServerBotSetup:
             ]
 
             for step in setup_steps:
+                # Log each step's start
+                step_name = step.__name__.replace('setup_', '').replace('_', ' ').title()
+                self.logger.info(f"Starting configuration step: '{step_name}' for guild {self.guild.id}",
+                                 extra={'guild_id': self.guild.id})
+
                 success = await step()
                 if not success:
                     await self.setup_channel.send("❌ Setup cancelled or failed.")
+                    self.logger.warning(
+                        f"Setup process failed or was cancelled at step '{step_name}' for guild {self.guild.id}",
+                        extra={'guild_id': self.guild.id})
                     await asyncio.sleep(10)
                     await self.setup_channel.delete(reason="Setup failed")
                     return
+                self.logger.info(f"Step '{step_name}' completed successfully for guild {self.guild.id}",
+                                 extra={'guild_id': self.guild.id})
+
 
         except Exception as e:
+            # Log error with guild_id context
+            self.logger.error(
+                f"An unexpected error occurred during setup for guild {self.guild.id}: {e}\n{traceback.format_exc()}",
+                extra={'guild_id': self.guild.id})
             if self.setup_channel:
-                await self.setup_channel.send(f"❌ An error occurred: {e}")
+                await self.setup_channel.send(f"❌ An unexpected error occurred: {e}")
                 await asyncio.sleep(10)
                 try:
                     await self.setup_channel.delete(reason="Setup error")
@@ -719,82 +795,107 @@ class MultiServerBotSetup:
 class SetupCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.logger = get_logger("SetupCog")  # Initialize logger for this cog
 
     @app_commands.command(name="bot-setup", description="Setup the bot's features for this server.")
-    @app_commands.default_permissions(manage_guild=True)
-    async def setup_bot(self, interaction: discord.Interaction):
-        """Sets up the bot for the current server via a guided process."""
-        try:
-            if interaction.user.guild_permissions.manage_guild:
-                await interaction.response.send_message("🚀 Starting bot setup... Please check your DMs or a new channel created for this purpose.", ephemeral=True)
-                setup_instance = MultiServerBotSetup(self.bot, interaction.guild, interaction.user)
-                await setup_instance.run_setup()
-            else:
-                await interaction.response.send_message("❌ You must have `Manage Server` permissions to run this command.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ An error occurred while trying to start setup: {e}", ephemeral=True)
+    @app_commands.checks.has_permissions(administrator=True)  # Only administrators can run this command
+    async def slash_bot_setup(self, interaction: discord.Interaction):
+        """Initiates the bot setup process for the current server."""
+        guild = interaction.guild
+        user = interaction.user
 
-    @app_commands.command(name="bot-status", description="Shows the bot's current setup status for this server.")
-    async def status_bot(self, interaction: discord.Interaction):
-        """Checks and reports the bot's setup status for the current server."""
-        try:
-            guild_id = str(interaction.guild.id)
-            server_config = load_server_config(guild_id)
+        # Log command usage with guild_id context
+        self.logger.info(f"User {user.display_name} ({user.id}) initiated bot setup in guild {guild.name} ({guild.id})",
+                         extra={'guild_id': guild.id})
 
+        # Check if the bot is already configured for this server
+        if is_server_configured(guild.id):
             embed = discord.Embed(
-                title=f"📊 Exceed Bot Status for {interaction.guild.name}",
-                color=0x2ecc71
+                title="🔄 Re-Configuration",
+                description="This server is already configured. Running setup again will **update** existing settings.\n\n"
+                            "Do you want to proceed with re-configuration?",
+                color=0xff9900
             )
-            embed.set_thumbnail(url=interaction.guild.icon.url if interaction.guild.icon else None)
-
-            if not server_config:
-                embed.description = "❌ This server is not yet configured. Please run `/bot-setup`."
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-
-            embed.description = "✅ This server is configured. Below are the current settings."
-
-            # Server-specific config
-            configured_channels = len([c for c in server_config.get('channels', {}).values() if c])
-            configured_roles = len([r for r in server_config.get('roles', {}).values() if r])
-            enabled_features = [k.replace('_', ' ').title() for k, v in server_config.get('features', {}).items() if v]
-
-            embed.add_field(
-                name="📋 Server Configuration",
-                value=f"• **Channels**: {configured_channels} configured\n"
-                      f"• **Roles**: {configured_roles} configured\n"
-                      f"• **Features**: {len(enabled_features)} enabled",
-                inline=True
-            )
-
-            if enabled_features:
-                embed.add_field(
-                    name="🚀 Enabled Features",
-                    value='\n'.join([f"• {feature}" for feature in enabled_features[:8]]) +
-                          ('\n• *...and more*' if len(enabled_features) > 8 else ''),
-                    inline=True
-                )
-
-            # Global bot stats
-            try:
-                with open('data/server_configs.json', 'r', encoding='utf-8') as f:
-                    all_configs = json.load(f)
-                total_servers = len(all_configs)
-            except:
-                total_servers = 0
-
-            embed.add_field(
-                name="🌐 Global Stats",
-                value=f"• **Total Configured Servers**: {total_servers}\n"
-                      f"• **Bot Active In**: {len(self.bot.guilds)} servers\n"
-                      f"• **Total Users**: {sum(guild.member_count for guild in self.bot.guilds)}\n",
-                inline=False
-            )
-
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Error checking status: {e}", ephemeral=True)
+            view = discord.ui.View()
+            # Confirm button
+            confirm_button = discord.ui.Button(label="Yes, Re-configure", style=discord.ButtonStyle.danger,
+                                               custom_id="confirm_reconfig")
+            # Cancel button
+            cancel_button = discord.ui.Button(label="No, Cancel", style=discord.ButtonStyle.secondary,
+                                              custom_id="cancel_reconfig")
+
+            view.add_item(confirm_button)
+            view.add_item(cancel_button)
+
+            # Wait for interaction response
+            await interaction.followup.send(view=view, ephemeral=True)
+
+            def check(interaction_response: discord.Interaction):
+                return (interaction_response.user.id == user.id and
+                        interaction_response.channel_id == interaction.channel_id and
+                        interaction_response.data['custom_id'] in ['confirm_reconfig', 'cancel_reconfig'])
+
+            try:
+                interaction_response, _ = await self.bot.wait_for("interaction", check=check, timeout=60)
+            except asyncio.TimeoutError:
+                await interaction.followup.send("Configuration re-run timed out.", ephemeral=True)
+                return
+
+            if interaction_response.data['custom_id'] == 'cancel_reconfig':
+                await interaction_response.response.edit_message(content="Re-configuration cancelled.", embed=None,
+                                                                 view=None)
+                self.logger.info(
+                    f"Re-configuration cancelled by user {user.display_name} ({user.id}) in guild {guild.name} ({guild.id})",
+                    extra={'guild_id': guild.id})
+                return
+            else:
+                await interaction_response.response.edit_message(content="Starting re-configuration process...",
+                                                                 embed=None, view=None)
+
+        # Proceed with setup
+        setup_instance = MultiServerBotSetup(self.bot, guild, user)
+        await setup_instance.run_setup()
+
+    @slash_bot_setup.error
+    async def bot_setup_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
+        """Handles errors for the bot-setup command."""
+        guild_id = interaction.guild.id if interaction.guild else "Unknown"
+        user_id = interaction.user.id if interaction.user else "Unknown"
+
+        if isinstance(error, app_commands.MissingPermissions):
+            # Log missing permissions with guild_id context
+            self.logger.warning(
+                f"User {user_id} tried to use /bot-setup without administrator permissions in guild {guild_id}.",
+                extra={'guild_id': guild_id})
+            await interaction.response.send_message("❌ You need administrator permissions to set up the bot.",
+                                                    ephemeral=True)
+        else:
+            # Log other errors with guild_id context
+            self.logger.error(
+                f"Error in /bot-setup command for user {user_id} in guild {guild_id}: {error}\n{traceback.format_exc()}",
+                extra={'guild_id': guild_id})
+            await interaction.response.send_message(
+                "An error occurred while trying to run the setup command. Please try again later or contact support.",
+                ephemeral=True)
+
+    # Add listeners for guild join/remove if not already present in other cogs
+    # This is generally handled at the bot level or in a dedicated cog for guild events.
+    # If this cog is solely for setup, these might be redundant.
+    # However, for comprehensive logging, it's good to log these events here too.
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild):
+        """Logs when the bot joins a new guild."""
+        # Log event with guild_id context
+        self.logger.info(f"Bot joined new guild: {guild.name} (ID: {guild.id})", extra={'guild_id': guild.id})
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild):
+        """Logs when the bot is removed from a guild."""
+        # Log event with guild_id context
+        self.logger.info(f"Bot left guild: {guild.name} (ID: {guild.id})", extra={'guild_id': guild.id})
 
 
 async def setup(bot):

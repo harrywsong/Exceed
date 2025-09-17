@@ -41,11 +41,8 @@ TOKEN_FILE = 'token.pickle'
 class Recording(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "음성 녹음",
-            bot=self.bot,
-            discord_log_channel_id=0  # Will be set per guild
-        )
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("음성 녹음")
 
         self.recordings = {}  # guild_id: recording_data
         self.recordings_path = "./recordings"
@@ -58,7 +55,8 @@ class Recording(commands.Cog):
         self.cleanup_old_recordings.start()
         self._cleanup_node_processes()
 
-        self.logger.info("음성 녹음 시스템이 초기화되었습니다.")
+        # FIX: Pass guild_id in extra for on_guild_join event
+        # self.logger.info("음성 녹음 시스템이 초기화되었습니다.")
 
     def cog_unload(self):
         self.cleanup_old_recordings.cancel()
@@ -79,7 +77,7 @@ class Recording(commands.Cog):
                             asyncio.create_task(bot_member.edit(nick=original_nickname))
                         else:
                             asyncio.create_task(bot_member.edit(nick=None))
-                        self.logger.info(f"길드 {guild_id}에서 봇 닉네임 복원")
+                        self.logger.info(f"길드 {guild_id}에서 봇 닉네임 복원", extra={'guild_id': guild_id})
             except:
                 pass
 
@@ -226,7 +224,7 @@ class Recording(commands.Cog):
             folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
             folder_id = folder.get('id')
 
-            self.logger.info(f"대상 폴더 {target_folder_id} 내에 폴더 {folder_id} 생성됨")
+            self.logger.info(f"대상 폴더 {target_folder_id} 내에 폴더 {folder_id} 생성됨", extra={'guild_id': guild_id})
 
             # 모든 오디오 파일 업로드
             uploaded_files = []
@@ -251,21 +249,21 @@ class Recording(commands.Cog):
                             ).execute()
 
                             uploaded_files.append(file.get('id'))
-                            self.logger.info(f"{file_name} 업로드됨 (ID: {file.get('id')})")
+                            self.logger.info(f"{file_name} 업로드됨 (ID: {file.get('id')})", extra={'guild_id': guild_id})
                             break
 
                         except Exception as e:
                             if attempt < 4:
-                                self.logger.warning(f"업로드 시도 {attempt + 1} 실패: {e}. 재시도 중...")
+                                self.logger.warning(f"업로드 시도 {attempt + 1} 실패: {e}. 재시도 중...", extra={'guild_id': guild_id})
                                 await asyncio.sleep(5)
                             else:
-                                self.logger.error(f"{file_name} 5번 시도 후 업로드 실패")
+                                self.logger.error(f"{file_name} 5번 시도 후 업로드 실패", extra={'guild_id': guild_id})
                                 raise
 
             return folder_id, uploaded_files
 
         except Exception as e:
-            self.logger.error(f"Google Drive 업로드 오류: {e}")
+            self.logger.error(f"Google Drive 업로드 오류: {e}", extra={'guild_id': guild_id})
             raise
 
     @discord.app_commands.command(name="녹음", description="음성 채널 녹음을 시작하거나 중지합니다")
@@ -358,15 +356,16 @@ class Recording(commands.Cog):
         await interaction.response.defer()
 
         try:
-            self.logger.info(f"녹음 시작 - 길드: {interaction.guild.name} ({interaction.guild.id})")
-            self.logger.info(f"채널: {channel.name} ({channel.id})")
-            self.logger.info(f"사용자: {interaction.user.display_name} ({interaction.user.id})")
+            # Pass guild_id in extra for all relevant logs
+            self.logger.info(f"녹음 시작 - 길드: {interaction.guild.name} ({interaction.guild.id})", extra={'guild_id': interaction.guild.id})
+            self.logger.info(f"채널: {channel.name} ({channel.id})", extra={'guild_id': interaction.guild.id})
+            self.logger.info(f"사용자: {interaction.user.display_name} ({interaction.user.id})", extra={'guild_id': interaction.guild.id})
 
             # 봇 권한 확인
             bot_member = interaction.guild.get_member(self.bot.user.id)
             if bot_member:
                 permissions = channel.permissions_for(bot_member)
-                self.logger.info(f"봇 권한 - 연결: {permissions.connect}, 말하기: {permissions.speak}")
+                self.logger.info(f"봇 권한 - 연결: {permissions.connect}, 말하기: {permissions.speak}", extra={'guild_id': interaction.guild.id})
                 if not permissions.connect or not permissions.speak:
                     await interaction.followup.send("⛔ 봇이 음성 채널에 필요한 권한이 부족합니다!",
                                                     ephemeral=True)
@@ -402,10 +401,10 @@ class Recording(commands.Cog):
             # 프로세스가 여전히 실행 중인지 확인
             if process.poll() is not None:
                 stdout, stderr = process.communicate()
-                self.logger.error(f"녹음기 프로세스 즉시 실패:")
-                self.logger.error(f"종료 코드: {process.returncode}")
-                self.logger.error(f"Stdout: {stdout}")
-                self.logger.error(f"Stderr: {stderr}")
+                self.logger.error(f"녹음기 프로세스 즉시 실패:", extra={'guild_id': interaction.guild.id})
+                self.logger.error(f"종료 코드: {process.returncode}", extra={'guild_id': interaction.guild.id})
+                self.logger.error(f"Stdout: {stdout}", extra={'guild_id': interaction.guild.id})
+                self.logger.error(f"Stderr: {stderr}", extra={'guild_id': interaction.guild.id})
                 await interaction.followup.send(f"⛔ 녹음 프로세스 시작에 실패했습니다. 봇 로그를 확인해주세요.",
                                                 ephemeral=True)
                 return
@@ -417,14 +416,14 @@ class Recording(commands.Cog):
                     original_nickname = bot_member.display_name
                     recording_nickname = get_server_setting(interaction.guild.id, 'recording_nickname', "(음성 녹화중) 아날로그")
                     await bot_member.edit(nick=recording_nickname)
-                    self.logger.info(f"봇 닉네임을 '{recording_nickname}'로 변경")
+                    self.logger.info(f"봇 닉네임을 '{recording_nickname}'로 변경", extra={'guild_id': interaction.guild.id})
                 else:
                     original_nickname = None
             except discord.Forbidden:
-                self.logger.warning("봇 닉네임 변경 권한이 없습니다")
+                self.logger.warning("봇 닉네임 변경 권한이 없습니다", extra={'guild_id': interaction.guild.id})
                 original_nickname = None
             except Exception as e:
-                self.logger.error(f"봇 닉네임 변경 오류: {e}")
+                self.logger.error(f"봇 닉네임 변경 오류: {e}", extra={'guild_id': interaction.guild.id})
                 original_nickname = None
 
             # 녹음 정보 저장 (원래 닉네임 포함)
@@ -456,14 +455,14 @@ class Recording(commands.Cog):
             await interaction.followup.send(embed=embed)
 
         except Exception as e:
-            self.logger.error(f"녹음 시작 오류: {e}", exc_info=True)
+            self.logger.error(f"녹음 시작 오류: {e}", exc_info=True, extra={'guild_id': interaction.guild.id})
 
             # 오류 발생 시 봇 닉네임 복원
             try:
                 bot_member = interaction.guild.get_member(self.bot.user.id)
                 if bot_member:
                     await bot_member.edit(nick=None)
-                    self.logger.info("시작 오류 시 봇 닉네임 복원")
+                    self.logger.info("시작 오류 시 봇 닉네임 복원", extra={'guild_id': interaction.guild.id})
             except:
                 pass
 
@@ -480,11 +479,11 @@ class Recording(commands.Cog):
         await interaction.response.defer()
 
         try:
-            self.logger.info(f"길드 {interaction.guild.id}의 녹음 중지 중")
+            self.logger.info(f"길드 {interaction.guild.id}의 녹음 중지 중", extra={'guild_id': interaction.guild.id})
 
             # 녹음기 프로세스에 중지 명령 전송
             if recording['process'].poll() is None:
-                self.logger.info("녹음기에 중지 명령 전송 중")
+                self.logger.info("녹음기에 중지 명령 전송 중", extra={'guild_id': interaction.guild.id})
 
                 # 중지 명령 전송
                 global_config = get_global_config()
@@ -499,29 +498,29 @@ class Recording(commands.Cog):
                         asyncio.create_task(asyncio.to_thread(stop_process.communicate)),
                         timeout=25.0  # 동기화 처리를 위해 25초로 증가
                     )
-                    self.logger.info(f"중지 명령 출력: {stdout}")
+                    self.logger.info(f"중지 명령 출력: {stdout}", extra={'guild_id': interaction.guild.id})
                     if stderr:
-                        self.logger.warning(f"중지 명령 stderr: {stderr}")
+                        self.logger.warning(f"중지 명령 stderr: {stderr}", extra={'guild_id': interaction.guild.id})
                 except asyncio.TimeoutError:
                     stop_process.terminate()
-                    self.logger.warning("중지 명령 타임아웃")
+                    self.logger.warning("중지 명령 타임아웃", extra={'guild_id': interaction.guild.id})
 
             # 디렉터리 구조 디버깅
-            self.logger.info(f"녹음 디렉터리 확인: {recording['dir']}")
+            self.logger.info(f"녹음 디렉터리 확인: {recording['dir']}", extra={'guild_id': interaction.guild.id})
             if os.path.exists(recording['dir']):
-                self.logger.info(f"디렉터리 존재함. 내용: {os.listdir(recording['dir'])}")
+                self.logger.info(f"디렉터리 존재함. 내용: {os.listdir(recording['dir'])}", extra={'guild_id': interaction.guild.id})
 
                 # 하위 디렉터리가 있는지 확인 (타임스탬프 폴더 때문에)
                 for item in os.listdir(recording['dir']):
                     item_path = os.path.join(recording['dir'], item)
                     if os.path.isdir(item_path):
-                        self.logger.info(f"하위 디렉터리 발견: {item}")
-                        self.logger.info(f"하위 디렉터리 내용: {os.listdir(item_path)}")
+                        self.logger.info(f"하위 디렉터리 발견: {item}", extra={'guild_id': interaction.guild.id})
+                        self.logger.info(f"하위 디렉터리 내용: {os.listdir(item_path)}", extra={'guild_id': interaction.guild.id})
                         # 실제 검색 경로를 하위 디렉터리로 업데이트
                         recording['dir'] = item_path
                         break
             else:
-                self.logger.warning(f"녹음 디렉터리가 존재하지 않음: {recording['dir']}")
+                self.logger.warning(f"녹음 디렉터리가 존재하지 않음: {recording['dir']}", extra={'guild_id': interaction.guild.id})
 
             # 동기화된 트랙이 처리될 때까지 더 오래 대기
             max_wait_time = 60  # 1분으로 단축 (새 시스템은 더 빠름)
@@ -540,13 +539,13 @@ class Recording(commands.Cog):
                                   not f.startswith('stop')]
 
                     self.logger.info(
-                        f"확인 {i // check_interval + 1}: {len(user_files)}개의 동기화된 사용자 트랙 파일 발견")
+                        f"확인 {i // check_interval + 1}: {len(user_files)}개의 동기화된 사용자 트랙 파일 발견", extra={'guild_id': interaction.guild.id})
 
                     for f in user_files:
                         file_path = os.path.join(recording['dir'], f)
                         if os.path.exists(file_path):
                             size = os.path.getsize(file_path)
-                            self.logger.info(f"  - {f}: {size} 바이트")
+                            self.logger.info(f"  - {f}: {size} 바이트", extra={'guild_id': interaction.guild.id})
 
                     # 파일이 안정적인지 확인 (더 이상 증가하지 않음)
                     if user_files and i < max_wait_time - check_interval:
@@ -570,14 +569,14 @@ class Recording(commands.Cog):
             # 최종 종합 확인
             if not files_created and os.path.exists(recording['dir']):
                 all_files = os.listdir(recording['dir'])
-                self.logger.info(f"최종 확인 - 디렉터리의 모든 파일: {all_files}")
+                self.logger.info(f"최종 확인 - 디렉터리의 모든 파일: {all_files}", extra={'guild_id': interaction.guild.id})
 
                 # 새로운 파일명 시스템에 맞춰 모든 오디오 파일 찾기
                 for f in all_files:
                     if f.endswith(('.wav', '.mp3', '.m4a')) and not f.startswith('stop'):
                         file_path = os.path.join(recording['dir'], f)
                         size = os.path.getsize(file_path)
-                        self.logger.info(f"오디오 파일 발견: {f} ({size} 바이트)")
+                        self.logger.info(f"오디오 파일 발견: {f} ({size} 바이트)", extra={'guild_id': interaction.guild.id})
                         if size > 1000:  # 1KB보다 큰 파일 허용
                             files_created.append(f)
 
@@ -604,9 +603,9 @@ class Recording(commands.Cog):
                     drive_folder_id, uploaded_files = await self._upload_to_drive(recording['dir'], recording['id'],
                                                                                   interaction.guild.id)
                     self.logger.info(
-                        f"Google Drive 폴더 {drive_folder_id}에 {len(uploaded_files)}개 파일 업로드 성공")
+                        f"Google Drive 폴더 {drive_folder_id}에 {len(uploaded_files)}개 파일 업로드 성공", extra={'guild_id': interaction.guild.id})
                 except Exception as e:
-                    self.logger.error(f"Google Drive 업로드 실패: {e}")
+                    self.logger.error(f"Google Drive 업로드 실패: {e}", extra={'guild_id': interaction.guild.id})
                     drive_folder_id = None
 
             # 최종 상태 임베드 생성
@@ -667,18 +666,18 @@ class Recording(commands.Cog):
                     recording_nickname = get_server_setting(interaction.guild.id, 'recording_nickname', "(음성 녹화중) 아날로그")
                     if original_nickname and original_nickname != recording_nickname:
                         await bot_member.edit(nick=original_nickname)
-                        self.logger.info(f"봇 닉네임을 '{original_nickname}'로 복원")
+                        self.logger.info(f"봇 닉네임을 '{original_nickname}'로 복원", extra={'guild_id': interaction.guild.id})
                     else:
                         # 원래 닉네임이 없었거나 이미 녹화중이었다면 닉네임 제거
                         await bot_member.edit(nick=None)
-                        self.logger.info("봇 닉네임 제거됨")
+                        self.logger.info("봇 닉네임 제거됨", extra={'guild_id': interaction.guild.id})
             except discord.Forbidden:
-                self.logger.warning("봇 닉네임 복원 권한이 없습니다")
+                self.logger.warning("봇 닉네임 복원 권한이 없습니다", extra={'guild_id': interaction.guild.id})
             except Exception as e:
-                self.logger.error(f"봇 닉네임 복원 오류: {e}")
+                self.logger.error(f"봇 닉네임 복원 오류: {e}", extra={'guild_id': interaction.guild.id})
 
         except Exception as e:
-            self.logger.error(f"녹음 중지 오류: {e}", exc_info=True)
+            self.logger.error(f"녹음 중지 오류: {e}", exc_info=True, extra={'guild_id': interaction.guild.id})
             if interaction.guild.id in self.recordings:
                 try:
                     self.recordings[interaction.guild.id]['process'].terminate()
@@ -697,9 +696,9 @@ class Recording(commands.Cog):
                             await bot_member.edit(nick=original_nickname)
                         else:
                             await bot_member.edit(nick=None)
-                        self.logger.info("오류 시 봇 닉네임 복원 완료")
+                        self.logger.info("오류 시 봇 닉네임 복원 완료", extra={'guild_id': interaction.guild.id})
                 except:
-                    self.logger.warning("오류 시 봇 닉네임 복원 실패")
+                    self.logger.warning("오류 시 봇 닉네임 복원 실패", extra={'guild_id': interaction.guild.id})
 
                 del self.recordings[interaction.guild.id]
 
@@ -716,12 +715,12 @@ class Recording(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
         """Handle bot joining a new guild"""
-        self.logger.info(f"Bot joined new guild for recording: {guild.name} ({guild.id})")
+        self.logger.info(f"Bot joined new guild for recording: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         """Handle bot leaving a guild"""
-        self.logger.info(f"Bot left guild, cleaning up recordings: {guild.name} ({guild.id})")
+        self.logger.info(f"Bot left guild, cleaning up recordings: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
         # Clean up any active recordings
         if guild.id in self.recordings:
             try:

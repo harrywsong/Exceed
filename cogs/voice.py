@@ -16,20 +16,20 @@ from utils.logger import get_logger
 class TempVoice(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger(
-            "임시 음성",
-            bot=self.bot,
-            discord_log_channel_id=0  # Will be set per guild
-        )
+        # NOTE: Arguments here will be ignored by get_logger due to global configuration,
+        # but the line is kept for clarity.
+        self.logger = get_logger("임시 음성")
 
         # Per-guild temp channels tracking
         self.temp_channels = {}  # guild_id: {channel_id: owner_id}
 
         self.cleanup_empty_channels.start()
+        # 일반적인 기능 초기화 로그이므로 extra 매개변수가 필요하지 않습니다.
         self.logger.info("임시 음성 채널 기능이 초기화되었습니다.")
 
     def cog_unload(self):
         self.cleanup_empty_channels.cancel()
+        # 일반적인 기능 언로드 로그이므로 extra 매개변수가 필요하지 않습니다.
         self.logger.info("TempVoice Cog 언로드됨, 정리 작업 취소.")
 
     @tasks.loop(minutes=10)
@@ -37,16 +37,19 @@ class TempVoice(commands.Cog):
         await self.bot.wait_until_ready()
 
         for guild in self.bot.guilds:
+            # 길드별 로그이므로 guild.id를 추가합니다.
             if not is_server_configured(guild.id) or not is_feature_enabled(guild.id, 'voice_channels'):
+                self.logger.debug(f"길드 {guild.id}가 임시 음성 채널을 사용하지 않아 정리 작업을 건너뜁니다.", extra={'guild_id': guild.id})
                 continue
 
             category_id = get_channel_id(guild.id, 'temp_voice_category')
             if not category_id:
+                self.logger.debug(f"길드 {guild.id}에 임시 음성 채널 카테고리가 설정되지 않아 정리 작업을 건너뜁니다.", extra={'guild_id': guild.id})
                 continue
 
             category = guild.get_channel(category_id)
             if not category or not isinstance(category, discord.CategoryChannel):
-                self.logger.warning(f"❌ 길드 {guild.id}의 카테고리 채널 ID {category_id}을(를) 찾을 수 없거나 정리 작업에 적합하지 않습니다.")
+                self.logger.warning(f"❌ 길드 {guild.id}의 카테고리 채널 ID {category_id}을(를) 찾을 수 없거나 정리 작업에 적합하지 않습니다.", extra={'guild_id': guild.id})
                 continue
 
             lobby_channel_id = get_channel_id(guild.id, 'lobby_voice')
@@ -61,17 +64,22 @@ class TempVoice(commands.Cog):
                         await channel.delete()
                         if guild.id in self.temp_channels and channel.id in self.temp_channels[guild.id]:
                             del self.temp_channels[guild.id][channel.id]
-                        self.logger.info(f"🗑️ 길드 {guild.name}에서 비어 있는 음성 채널 삭제됨: '{channel.name}' (ID: {channel.id})")
+                        # 길드별 로그이므로 guild.id를 추가합니다.
+                        self.logger.info(f"🗑️ 길드 {guild.name}에서 비어 있는 음성 채널 삭제됨: '{channel.name}' (ID: {channel.id})", extra={'guild_id': guild.id})
                     except discord.Forbidden:
-                        self.logger.error(f"❌ 길드 {guild.name}에서 채널 {channel.name} ({channel.id}) 삭제 권한이 없습니다.")
+                        # 길드별 로그이므로 guild.id를 추가합니다.
+                        self.logger.error(f"❌ 길드 {guild.name}에서 채널 {channel.name} ({channel.id}) 삭제 권한이 없습니다.", extra={'guild_id': guild.id})
                     except Exception as e:
+                        # 길드별 로그이므로 guild.id를 추가합니다.
                         self.logger.error(
-                            f"❌ 길드 {guild.name}에서 채널 '{channel.name}' ({channel.id}) 삭제 실패: {e}\n{traceback.format_exc()}")
+                            f"❌ 길드 {guild.name}에서 채널 '{channel.name}' ({channel.id}) 삭제 실패: {e}\n{traceback.format_exc()}", extra={'guild_id': guild.id})
                 else:
-                    self.logger.debug(f"길드 {guild.name}의 음성 채널 '{channel.name}' (ID: {channel.id})에 멤버가 있어 삭제하지 않습니다.")
+                    # 길드별 로그이므로 guild.id를 추가합니다.
+                    self.logger.debug(f"길드 {guild.name}의 음성 채널 '{channel.name}' (ID: {channel.id})에 멤버가 있어 삭제하지 않습니다.", extra={'guild_id': guild.id})
 
     @cleanup_empty_channels.before_loop
     async def before_cleanup(self):
+        # 일반적인 초기화 로그이므로 extra 매개변수가 필요하지 않습니다.
         self.logger.info("정리 작업 시작 전 봇 준비 대기 중...")
         await self.bot.wait_until_ready()
         self.logger.info("정리 작업 시작 전 봇 준비 완료.")
@@ -98,7 +106,8 @@ class TempVoice(commands.Cog):
         if after.channel and after.channel.id == lobby_channel_id:
             category = member.guild.get_channel(category_id)
             if not category or not isinstance(category, discord.CategoryChannel):
-                self.logger.warning(f"❌ 길드 {guild_id}의 카테고리 채널 ID {category_id}을(를) 찾을 수 없거나 유효하지 않습니다!")
+                # 길드별 로그이므로 guild_id를 추가합니다.
+                self.logger.warning(f"❌ 길드 {guild_id}의 카테고리 채널 ID {category_id}을(를) 찾을 수 없거나 유효하지 않습니다!", extra={'guild_id': guild_id})
                 try:
                     await member.send("죄송합니다, 임시 채널을 생성할 수 없습니다. 관리자에게 문의해주세요.")
                 except discord.Forbidden:
@@ -154,18 +163,21 @@ class TempVoice(commands.Cog):
 
                 await member.move_to(new_channel)
 
+                # 길드별 로그이므로 guild_id를 추가합니다.
                 self.logger.info(
-                    f"➕ 길드 {guild.name}에서 사용자 {member.display_name} ({member.id})님을 위해 임시 음성 채널 '{new_channel.name}' (ID: {new_channel.id})을(를) 생성하고 이동시켰습니다.")
+                    f"➕ 길드 {guild.name}에서 사용자 {member.display_name} ({member.id})님을 위해 임시 음성 채널 '{new_channel.name}' (ID: {new_channel.id})을(를) 생성하고 이동시켰습니다.", extra={'guild_id': guild_id})
             except discord.Forbidden:
+                # 길드별 로그이므로 guild_id를 추가합니다.
                 self.logger.error(
-                    f"❌ 길드 {guild.name}에서 {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 권한이 없습니다.")
+                    f"❌ 길드 {guild.name}에서 {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 권한이 없습니다.", extra={'guild_id': guild_id})
                 try:
                     await member.send("죄송합니다, 임시 채널을 생성하거나 이동할 권한이 없습니다. 봇 권한을 확인해주세요.")
                 except discord.Forbidden:
                     pass
             except Exception as e:
+                # 길드별 로그이므로 guild_id를 추가합니다.
                 self.logger.error(
-                    f"❌ 길드 {guild.name}에서 {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 실패: {e}\n{traceback.format_exc()}")
+                    f"❌ 길드 {guild.name}에서 {member.display_name}님을 위한 임시 음성 채널 생성 또는 이동 실패: {e}\n{traceback.format_exc()}", extra={'guild_id': guild_id})
                 try:
                     await member.send("죄송합니다, 임시 채널 생성 중 알 수 없는 오류가 발생했습니다. 관리자에게 문의해주세요.")
                 except discord.Forbidden:
@@ -177,27 +189,33 @@ class TempVoice(commands.Cog):
                 try:
                     await before.channel.delete()
                     del self.temp_channels[guild_id][before.channel.id]
+                    # 길드별 로그이므로 guild_id를 추가합니다.
                     self.logger.info(
-                        f"🗑️ 길드 {member.guild.name}에서 빈 임시 음성 채널 삭제됨: '{before.channel.name}' (ID: {before.channel.id})")
+                        f"🗑️ 길드 {member.guild.name}에서 빈 임시 음성 채널 삭제됨: '{before.channel.name}' (ID: {before.channel.id})", extra={'guild_id': guild_id})
                 except discord.Forbidden:
+                    # 길드별 로그이므로 guild_id를 추가합니다.
                     self.logger.error(
-                        f"❌ 길드 {member.guild.name}에서 빈 임시 채널 {before.channel.name} ({before.channel.id}) 삭제 권한이 없습니다.")
+                        f"❌ 길드 {member.guild.name}에서 빈 임시 채널 {before.channel.name} ({before.channel.id}) 삭제 권한이 없습니다.", extra={'guild_id': guild_id})
                 except Exception as e:
+                    # 길드별 로그이므로 guild_id를 추가합니다.
                     self.logger.error(
-                        f"❌ 길드 {member.guild.name}에서 빈 임시 채널 '{before.channel.name}' ({before.channel.id}) 삭제 실패: {e}\n{traceback.format_exc()}")
+                        f"❌ 길드 {member.guild.name}에서 빈 임시 채널 '{before.channel.name}' ({before.channel.id}) 삭제 실패: {e}\n{traceback.format_exc()}", extra={'guild_id': guild_id})
             else:
+                # 길드별 로그이므로 guild_id를 추가합니다.
                 self.logger.debug(
-                    f"길드 {member.guild.name}의 음성 채널 '{before.channel.name}' (ID: {before.channel.id})에 아직 멤버가 있어 삭제하지 않습니다.")
+                    f"길드 {member.guild.name}의 음성 채널 '{before.channel.name}' (ID: {before.channel.id})에 아직 멤버가 있어 삭제하지 않습니다.", extra={'guild_id': guild_id})
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
         """Handle bot joining a new guild"""
-        self.logger.info(f"Bot joined new guild for voice: {guild.name} ({guild.id})")
+        # 길드별 로그이므로 guild.id를 추가합니다.
+        self.logger.info(f"Bot joined new guild for voice: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
         """Handle bot leaving a guild"""
-        self.logger.info(f"Bot left guild for voice: {guild.name} ({guild.id})")
+        # 길드별 로그이므로 guild.id를 추가합니다.
+        self.logger.info(f"Bot left guild for voice: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
         # Clean up temp channels tracking
         if guild.id in self.temp_channels:
             del self.temp_channels[guild.id]

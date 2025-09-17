@@ -19,7 +19,8 @@ class CasinoBaseCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("카지노 베이스", bot=self.bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("카지노 베이스")
 
         # Spam protection per game type
         self.game_cooldowns: Dict[int, Dict[str, datetime]] = {}  # user_id: {game_type: last_time}
@@ -230,8 +231,9 @@ class CasinoBaseCog(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
 
         except Exception as e:
+            # FIX: Use structured logging with `extra` for multi-server context
+            self.logger.error(f"통계 불러오는 중 오류 발생: {e}", extra={'guild_id': interaction.guild.id})
             await interaction.followup.send(f"❌ 통계를 불러오는 중 오류가 발생했습니다: {e}", ephemeral=True)
-            self.logger.error(f"Error in casino_stats for guild {interaction.guild.id}: {e}")
 
     @app_commands.command(name="카지노도움", description="카지노 게임 설명 및 도움말을 확인합니다.")
     async def casino_help(self, interaction: discord.Interaction):

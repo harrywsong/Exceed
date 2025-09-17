@@ -19,8 +19,11 @@ from utils.config import (
 class ReactionRoles(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("리액션 역할", bot=self.bot)
-        self.logger.info("리액션 역할 기능이 초기화되었습니다.")
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("리액션 역할")
+
+        # FIX: Removed initial log. It's better to log within a function
+        # with guild context, such as populate_reactions_for_guild.
 
         # Schedule population after bot is fully ready
         self.bot.loop.create_task(self.wait_until_ready_then_populate())
@@ -28,6 +31,7 @@ class ReactionRoles(commands.Cog):
     async def wait_until_ready_then_populate(self):
         await self.bot.wait_until_ready()
         try:
+            self.logger.info("리액션 역할 기능이 초기화되었습니다.")
             await self.populate_reactions()
         except Exception as e:
             self.logger.error(f"⛔ ReactionRoles 초기화 중 오류 발생: {e}\n{traceback.format_exc()}")
@@ -46,7 +50,9 @@ class ReactionRoles(commands.Cog):
             # Get reaction role mapping for this server
             reaction_role_map = get_reaction_roles(guild.id)
             if not reaction_role_map:
-                self.logger.info(f"No reaction roles configured for guild {guild.name} ({guild.id})")
+                # FIX: Add guild_id to log message for context
+                self.logger.info(f"No reaction roles configured for guild {guild.name} ({guild.id})",
+                                 extra={'guild_id': guild.id})
                 return
 
             # Check for verification system
@@ -73,37 +79,44 @@ class ReactionRoles(commands.Cog):
             for message_id, emoji_role_map in reaction_role_map.items():
                 message = await self.find_message_in_guild(guild, message_id)
                 if not message:
-                    self.logger.error(f"⛔ 메시지 ID {message_id}을(를) 길드 {guild.name}에서 찾을 수 없습니다.")
+                    self.logger.error(f"⛔ 메시지 ID {message_id}을(를) 길드 {guild.name}에서 찾을 수 없습니다.",
+                                      extra={'guild_id': guild.id})
                     await asyncio.sleep(0.5)
                     continue
                 else:
-                    self.logger.info(f"✅ 메시지 ID {message_id}을(를) 성공적으로 가져왔습니다. (서버: {guild.name})")
+                    self.logger.info(f"✅ 메시지 ID {message_id}을(를) 성공적으로 가져왔습니다. (서버: {guild.name})",
+                                     extra={'guild_id': guild.id})
 
                 existing_emoji_keys = {format_emoji_for_map_key(reaction.emoji) for reaction in message.reactions}
 
                 for emoji_key_in_map in emoji_role_map.keys():
                     if emoji_key_in_map in existing_emoji_keys:
-                        self.logger.debug(f"이모지 {emoji_key_in_map}은(는) 메시지 {message_id}에 이미 존재합니다. (서버: {guild.name})")
+                        self.logger.debug(f"이모지 {emoji_key_in_map}은(는) 메시지 {message_id}에 이미 존재합니다. (서버: {guild.name})",
+                                          extra={'guild_id': guild.id})
                         continue
                     try:
                         await message.add_reaction(emoji_key_in_map)
-                        self.logger.debug(f"➕ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가했습니다. (서버: {guild.name})")
+                        self.logger.debug(f"➕ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가했습니다. (서버: {guild.name})",
+                                          extra={'guild_id': guild.id})
                         await asyncio.sleep(0.5)
                     except discord.HTTPException as e:
                         self.logger.error(
-                            f"⛔ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                            f"⛔ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                            extra={'guild_id': guild.id})
                         await asyncio.sleep(0.5)
                     except Exception as e:
                         self.logger.error(
-                            f"⛔ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가 중 알 수 없는 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                            f"⛔ 이모지 {emoji_key_in_map}을(를) 메시지 {message_id}에 추가 중 알 수 없는 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                            extra={'guild_id': guild.id})
                         await asyncio.sleep(0.5)
 
                 await asyncio.sleep(1)
 
-            self.logger.info(f"✅ 리액션 역할 초기화 완료: {guild.name} ({guild.id})")
+            self.logger.info(f"✅ 리액션 역할 초기화 완료: {guild.name} ({guild.id})", extra={'guild_id': guild.id})
 
         except Exception as e:
-            self.logger.error(f"⛔ 길드 {guild.name} ({guild.id}) 리액션 역할 초기화 중 오류: {e}\n{traceback.format_exc()}")
+            self.logger.error(f"⛔ 길드 {guild.name} ({guild.id}) 리액션 역할 초기화 중 오류: {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild.id})
 
     async def setup_verification_reaction(self, guild: discord.Guild, verification_message_id: int,
                                           verification_emoji: str):
@@ -114,9 +127,11 @@ class ReactionRoles(commands.Cog):
                 if not any(str(r.emoji) == verification_emoji for r in message.reactions):
                     await message.add_reaction(verification_emoji)
                     self.logger.info(
-                        f"✅ '{verification_emoji}' 이모지를 인증 메시지 ({verification_message_id})에 추가했습니다. (서버: {guild.name})")
+                        f"✅ '{verification_emoji}' 이모지를 인증 메시지 ({verification_message_id})에 추가했습니다. (서버: {guild.name})",
+                        extra={'guild_id': guild.id})
         except Exception as e:
-            self.logger.error(f"⛔ 인증 이모지 추가 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+            self.logger.error(f"⛔ 인증 이모지 추가 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild.id})
 
     async def find_message_in_guild(self, guild: discord.Guild, message_id: int) -> discord.Message:
         """Find a message by ID in any accessible channel of the guild"""
@@ -129,26 +144,32 @@ class ReactionRoles(commands.Cog):
                 continue
             except discord.Forbidden:
                 self.logger.debug(
-                    f"권한 부족으로 채널 #{channel.name} ({channel.id})에서 메시지 {message_id}를 가져올 수 없습니다. (서버: {guild.name})")
+                    f"권한 부족으로 채널 #{channel.name} ({channel.id})에서 메시지 {message_id}를 가져올 수 없습니다. (서버: {guild.name})",
+                    extra={'guild_id': guild.id})
                 continue
             except Exception as e:
                 self.logger.error(
-                    f"⛔ 메시지 {message_id}를 채널 #{channel.name} ({channel.id})에서 가져오는 중 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                    f"⛔ 메시지 {message_id}를 채널 #{channel.name} ({channel.id})에서 가져오는 중 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                    extra={'guild_id': guild.id})
                 continue
         return None
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
         # Debug: Log every reaction event
-        self.logger.debug(
-            f"Raw reaction add: User {payload.user_id}, Message {payload.message_id}, Emoji {payload.emoji}, Guild {payload.guild_id}")
-
-        if payload.user_id == self.bot.user.id or (payload.member and payload.member.bot):
-            self.logger.debug("Ignoring bot reaction")
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
             return
 
-        guild = self.bot.get_guild(payload.guild_id)
-        if not guild or not is_server_configured(guild.id) or not is_feature_enabled(guild.id, 'reaction_roles'):
+        self.logger.debug(
+            f"Raw reaction add: User {payload.user_id}, Message {payload.message_id}, Emoji {payload.emoji}, Guild {payload.guild_id}",
+            extra={'guild_id': guild.id})
+
+        if payload.user_id == self.bot.user.id or (payload.member and payload.member.bot):
+            self.logger.debug("Ignoring bot reaction", extra={'guild_id': guild.id})
+            return
+
+        if not is_server_configured(guild.id) or not is_feature_enabled(guild.id, 'reaction_roles'):
             return
 
         # Check for verification reaction first
@@ -165,13 +186,15 @@ class ReactionRoles(commands.Cog):
 
     async def handle_verification_reaction(self, payload: discord.RawReactionActionEvent, guild: discord.Guild):
         """Handle verification reaction for a specific guild"""
-        self.logger.info(f"Processing verification reaction from user {payload.user_id} in guild {guild.name}")
+        self.logger.info(f"Processing verification reaction from user {payload.user_id} in guild {guild.name}",
+                         extra={'guild_id': guild.id})
 
         unverified_role_id = get_role_id(guild.id, 'unverified_role')
         accepted_role_id = get_role_id(guild.id, 'member_role')
 
         if not unverified_role_id or not accepted_role_id:
-            self.logger.error(f"Verification roles not properly configured for guild {guild.name}")
+            self.logger.error(f"Verification roles not properly configured for guild {guild.name}",
+                              extra={'guild_id': guild.id})
             return
 
         member = payload.member
@@ -179,7 +202,8 @@ class ReactionRoles(commands.Cog):
             try:
                 member = await guild.fetch_member(payload.user_id)
             except (discord.NotFound, discord.Forbidden) as e:
-                self.logger.error(f"사용자 {payload.user_id}을(를) 가져오는 중 오류 발생 (서버: {guild.name}): {e}")
+                self.logger.error(f"사용자 {payload.user_id}을(를) 가져오는 중 오류 발생 (서버: {guild.name}): {e}",
+                                  extra={'guild_id': guild.id})
                 return
 
         unverified_role = guild.get_role(unverified_role_id)
@@ -189,27 +213,29 @@ class ReactionRoles(commands.Cog):
             try:
                 await member.remove_roles(unverified_role, reason="사용자가 인증 완료")
                 self.logger.info(
-                    f"✅ {member.display_name} ({member.id})님에게서 'UNVERIFIED' 역할을 제거했습니다. (서버: {guild.name})")
+                    f"✅ {member.display_name} ({member.id})님에게서 'UNVERIFIED' 역할을 제거했습니다. (서버: {guild.name})",
+                    extra={'guild_id': guild.id})
             except discord.Forbidden:
-                self.logger.error(f"⛔ 'UNVERIFIED' 역할 제거 권한이 없습니다. (서버: {guild.name})")
+                self.logger.error(f"⛔ 'UNVERIFIED' 역할 제거 권한이 없습니다. (서버: {guild.name})", extra={'guild_id': guild.id})
             except Exception as e:
-                self.logger.error(f"⛔ 'UNVERIFIED' 역할 제거 중 오류 발생 (서버: {guild.name}): {e}")
+                self.logger.error(f"⛔ 'UNVERIFIED' 역할 제거 중 오류 발생 (서버: {guild.name}): {e}", extra={'guild_id': guild.id})
 
         if accepted_role and accepted_role not in member.roles:
             try:
                 await member.add_roles(accepted_role, reason="사용자가 인증 완료")
-                self.logger.info(f"✅ {member.display_name} ({member.id})님에게 'ACCEPTED' 역할을 부여했습니다. (서버: {guild.name})")
+                self.logger.info(f"✅ {member.display_name} ({member.id})님에게 'ACCEPTED' 역할을 부여했습니다. (서버: {guild.name})",
+                                 extra={'guild_id': guild.id})
             except discord.Forbidden:
-                self.logger.error(f"⛔ 'ACCEPTED' 역할 부여 권한이 없습니다. (서버: {guild.name})")
+                self.logger.error(f"⛔ 'ACCEPTED' 역할 부여 권한이 없습니다. (서버: {guild.name})", extra={'guild_id': guild.id})
             except Exception as e:
-                self.logger.error(f"⛔ 'ACCEPTED' 역할 부여 중 오류 발생 (서버: {guild.name}): {e}")
+                self.logger.error(f"⛔ 'ACCEPTED' 역할 부여 중 오류 발생 (서버: {guild.name}): {e}", extra={'guild_id': guild.id})
 
         # Optionally, remove the user's reaction to clean up
         try:
             message = await guild.get_channel(payload.channel_id).fetch_message(payload.message_id)
             await message.remove_reaction(payload.emoji, member)
         except Exception as e:
-            self.logger.warning(f"사용자 리액션 제거 실패 (서버: {guild.name}): {e}")
+            self.logger.warning(f"사용자 리액션 제거 실패 (서버: {guild.name}): {e}", extra={'guild_id': guild.id})
 
     async def handle_reaction_role_add(self, payload: discord.RawReactionActionEvent, guild: discord.Guild):
         """Handle regular reaction role addition for a specific guild"""
@@ -217,7 +243,8 @@ class ReactionRoles(commands.Cog):
         reaction_role_map = get_reaction_roles(guild.id)
 
         if payload.message_id not in reaction_role_map:
-            self.logger.debug(f"Message {payload.message_id} not in reaction role map for guild {guild.name}")
+            self.logger.debug(f"Message {payload.message_id} not in reaction role map for guild {guild.name}",
+                              extra={'guild_id': guild.id})
             return
 
         # Format the emoji key to match the map
@@ -226,8 +253,10 @@ class ReactionRoles(commands.Cog):
         else:
             emoji_key = str(payload.emoji)
 
-        self.logger.debug(f"Looking for emoji key: '{emoji_key}' in message {payload.message_id} (서버: {guild.name})")
-        self.logger.debug(f"Available keys: {list(reaction_role_map[payload.message_id].keys())}")
+        self.logger.debug(f"Looking for emoji key: '{emoji_key}' in message {payload.message_id} (서버: {guild.name})",
+                          extra={'guild_id': guild.id})
+        self.logger.debug(f"Available keys: {list(reaction_role_map[payload.message_id].keys())}",
+                          extra={'guild_id': guild.id})
 
         role_id = reaction_role_map[payload.message_id].get(emoji_key)
 
@@ -238,16 +267,20 @@ class ReactionRoles(commands.Cog):
                 role_id = reaction_role_map[payload.message_id].get(fallback_key)
                 if role_id:
                     emoji_key = fallback_key
-                    self.logger.debug(f"Found role using fallback key: {fallback_key} (서버: {guild.name})")
+                    self.logger.debug(f"Found role using fallback key: {fallback_key} (서버: {guild.name})",
+                                      extra={'guild_id': guild.id})
 
         if not role_id:
-            self.logger.warning(f"메시지 {payload.message_id}에서 알 수 없는 이모지 '{emoji_key}'에 반응 추가됨. (서버: {guild.name})")
-            self.logger.debug(f"Available emoji keys in map: {list(reaction_role_map[payload.message_id].keys())}")
+            self.logger.warning(f"메시지 {payload.message_id}에서 알 수 없는 이모지 '{emoji_key}'에 반응 추가됨. (서버: {guild.name})",
+                                extra={'guild_id': guild.id})
+            self.logger.debug(f"Available emoji keys in map: {list(reaction_role_map[payload.message_id].keys())}",
+                              extra={'guild_id': guild.id})
             return
 
         role = guild.get_role(role_id)
         if not role:
-            self.logger.error(f"역할 ID {role_id}을(를) 길드 {guild.name} ({guild.id})에서 찾을 수 없습니다. 설정 확인 필요.")
+            self.logger.error(f"역할 ID {role_id}을(를) 길드 {guild.name} ({guild.id})에서 찾을 수 없습니다. 설정 확인 필요.",
+                              extra={'guild_id': guild.id})
             return
 
         member = payload.member
@@ -255,45 +288,56 @@ class ReactionRoles(commands.Cog):
             try:
                 member = await guild.fetch_member(payload.user_id)
             except discord.NotFound:
-                self.logger.warning(f"사용자 ID {payload.user_id}을(를) 찾을 수 없어 역할 추가 실패 (서버: {guild.name}).")
+                self.logger.warning(f"사용자 ID {payload.user_id}을(를) 찾을 수 없어 역할 추가 실패 (서버: {guild.name}).",
+                                    extra={'guild_id': guild.id})
                 return
             except discord.Forbidden:
-                self.logger.error(f"길드 {guild.name}에서 사용자 {payload.user_id}을(를) 가져올 권한이 없습니다.")
+                self.logger.error(f"길드 {guild.name}에서 사용자 {payload.user_id}을(를) 가져올 권한이 없습니다.",
+                                  extra={'guild_id': guild.id})
                 return
             except Exception as e:
                 self.logger.error(
-                    f"사용자 {payload.user_id}을(를) 가져오는 중 알 수 없는 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                    f"사용자 {payload.user_id}을(를) 가져오는 중 알 수 없는 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                    extra={'guild_id': guild.id})
                 return
 
         if member.bot:
-            self.logger.debug("Ignoring bot member")
+            self.logger.debug("Ignoring bot member", extra={'guild_id': guild.id})
             return
 
         if role in member.roles:
-            self.logger.debug(f"사용자 {member.display_name}이(가) 이미 역할 '{role.name}'을(를) 가지고 있습니다. (서버: {guild.name})")
+            self.logger.debug(f"사용자 {member.display_name}이(가) 이미 역할 '{role.name}'을(를) 가지고 있습니다. (서버: {guild.name})",
+                              extra={'guild_id': guild.id})
             return
 
         try:
             await member.add_roles(role, reason="Reaction role assigned")
             emoji_log_name = payload.emoji.name if payload.emoji.id else str(payload.emoji)
             self.logger.info(
-                f"✅ [리액션 역할] '{role.name}' 역할이 {member.display_name} ({member.id})에게 이모지 '{emoji_log_name}'을(를) 통해 추가되었습니다. (서버: {guild.name})")
+                f"✅ [리액션 역할] '{role.name}' 역할이 {member.display_name} ({member.id})에게 이모지 '{emoji_log_name}'을(를) 통해 추가되었습니다. (서버: {guild.name})",
+                extra={'guild_id': guild.id})
         except discord.Forbidden:
             self.logger.error(
-                f"⛔ [리액션 역할] {member.display_name}에게 역할 '{role.name}'을(를) 추가할 권한이 없습니다. (서버: {guild.name})")
+                f"⛔ [리액션 역할] {member.display_name}에게 역할 '{role.name}'을(를) 추가할 권한이 없습니다. (서버: {guild.name})",
+                extra={'guild_id': guild.id})
         except discord.HTTPException as e:
             self.logger.error(
-                f"⛔ [리액션 역할] 역할 '{role.name}' 추가 중 Discord HTTP 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                f"⛔ [리액션 역할] 역할 '{role.name}' 추가 중 Discord HTTP 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                extra={'guild_id': guild.id})
         except Exception as e:
-            self.logger.error(f"⛔ [리액션 역할] 역할 추가 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+            self.logger.error(f"⛔ [리액션 역할] 역할 추가 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild.id})
 
     @commands.Cog.listener()
     async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent):
+        guild = self.bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
         if payload.user_id == self.bot.user.id:
             return
 
-        guild = self.bot.get_guild(payload.guild_id)
-        if not guild or not is_server_configured(guild.id) or not is_feature_enabled(guild.id, 'reaction_roles'):
+        if not is_server_configured(guild.id) or not is_feature_enabled(guild.id, 'reaction_roles'):
             return
 
         # Do not process reaction removals on the verification message
@@ -324,21 +368,25 @@ class ReactionRoles(commands.Cog):
             role_id = reaction_role_map[payload.message_id].get(fallback_key)
 
         if not role_id:
-            self.logger.debug(f"메시지 {payload.message_id}에서 알 수 없는 이모지 '{emoji_key}' 반응 제거됨. (서버: {guild.name})")
+            self.logger.debug(f"메시지 {payload.message_id}에서 알 수 없는 이모지 '{emoji_key}' 반응 제거됨. (서버: {guild.name})",
+                              extra={'guild_id': guild.id})
             return
 
         member = None
         try:
             member = await guild.fetch_member(payload.user_id)
         except discord.NotFound:
-            self.logger.warning(f"사용자 ID {payload.user_id}을(를) 찾을 수 없어 역할 제거 실패 (서버: {guild.name}).")
+            self.logger.warning(f"사용자 ID {payload.user_id}을(를) 찾을 수 없어 역할 제거 실패 (서버: {guild.name}).",
+                                extra={'guild_id': guild.id})
             return
         except discord.Forbidden:
-            self.logger.error(f"길드 {guild.name}에서 사용자 {payload.user_id}을(를) 가져올 권한이 없습니다.")
+            self.logger.error(f"길드 {guild.name}에서 사용자 {payload.user_id}을(를) 가져올 권한이 없습니다.",
+                              extra={'guild_id': guild.id})
             return
         except Exception as e:
             self.logger.error(
-                f"사용자 {payload.user_id}을(를) 가져오는 중 알 수 없는 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                f"사용자 {payload.user_id}을(를) 가져오는 중 알 수 없는 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                extra={'guild_id': guild.id})
             return
 
         if member.bot:
@@ -346,26 +394,32 @@ class ReactionRoles(commands.Cog):
 
         role = guild.get_role(role_id)
         if not role:
-            self.logger.error(f"역할 ID {role_id}을(를) 길드 {guild.name} ({guild.id})에서 찾을 수 없습니다. 설정 확인 필요.")
+            self.logger.error(f"역할 ID {role_id}을(를) 길드 {guild.name} ({guild.id})에서 찾을 수 없습니다. 설정 확인 필요.",
+                              extra={'guild_id': guild.id})
             return
 
         if role not in member.roles:
-            self.logger.debug(f"사용자 {member.display_name}이(가) 역할 '{role.name}'을(를) 가지고 있지 않습니다. (서버: {guild.name})")
+            self.logger.debug(f"사용자 {member.display_name}이(가) 역할 '{role.name}'을(를) 가지고 있지 않습니다. (서버: {guild.name})",
+                              extra={'guild_id': guild.id})
             return
 
         try:
             await member.remove_roles(role, reason="Reaction role removed")
             emoji_log_name = payload.emoji.name if payload.emoji.id else str(payload.emoji)
             self.logger.info(
-                f"➖ [리액션 역할] '{role.name}' 역할이 {member.display_name} ({member.id})에게서 이모지 '{emoji_log_name}'을(를) 통해 제거되었습니다. (서버: {guild.name})")
+                f"➖ [리액션 역할] '{role.name}' 역할이 {member.display_name} ({member.id})에게서 이모지 '{emoji_log_name}'을(를) 통해 제거되었습니다. (서버: {guild.name})",
+                extra={'guild_id': guild.id})
         except discord.Forbidden:
             self.logger.error(
-                f"⛔ [리액션 역할] {member.display_name}에게서 역할 '{role.name}'을(를) 제거할 권한이 없습니다. (서버: {guild.name})")
+                f"⛔ [리액션 역할] {member.display_name}에게서 역할 '{role.name}'을(를) 제거할 권한이 없습니다. (서버: {guild.name})",
+                extra={'guild_id': guild.id})
         except discord.HTTPException as e:
             self.logger.error(
-                f"⛔ [리액션 역할] 역할 '{role.name}' 제거 중 Discord HTTP 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+                f"⛔ [리액션 역할] 역할 '{role.name}' 제거 중 Discord HTTP 오류 발생 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                extra={'guild_id': guild.id})
         except Exception as e:
-            self.logger.error(f"⛔ [리액션 역할] 역할 제거 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}")
+            self.logger.error(f"⛔ [리액션 역할] 역할 제거 실패 (서버: {guild.name}): {e}\n{traceback.format_exc()}",
+                              extra={'guild_id': guild.id})
 
 
 async def setup(bot):

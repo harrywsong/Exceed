@@ -5,6 +5,8 @@ from discord import app_commands
 import random
 from typing import List, Tuple
 
+from ipywidgets.widgets import interaction
+
 from utils.logger import get_logger
 from utils.config import (
     is_feature_enabled,
@@ -311,7 +313,8 @@ class MinesweeperCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("지뢰찾기", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("지뢰찾기")
         self.logger.info("지뢰찾기 게임 시스템이 초기화되었습니다.")
 
     async def validate_game(self, interaction: discord.Interaction, bet: int):
@@ -365,7 +368,11 @@ class MinesweeperCog(commands.Cog):
         embed = await view.create_game_embed()
 
         await interaction.response.send_message(embed=embed, view=view)
-        self.logger.info(f"{interaction.user}가 {bet}코인, {mines}개 지뢰로 지뢰찾기 시작 (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.logger.info(
+            f"{interaction.user}가 {bet}코인, {mines}개 지뢰로 지뢰찾기 시작",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

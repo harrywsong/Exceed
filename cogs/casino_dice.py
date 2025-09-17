@@ -17,7 +17,8 @@ class DiceGameCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("주사위", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("주사위")
         self.logger.info("주사위 게임 시스템이 초기화되었습니다.")
 
     def get_dice_visual(self, value):
@@ -154,7 +155,11 @@ class DiceGameCog(commands.Cog):
         embed.set_footer(text=f"Server: {interaction.guild.name}")
 
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 주사위에서 {bet} 코인 {'승리' if won else '패배'} (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.logger.info(
+            f"{interaction.user}가 주사위에서 {bet} 코인 {'승리' if won else '패배'}",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

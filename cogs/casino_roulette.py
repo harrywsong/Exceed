@@ -17,7 +17,8 @@ class RouletteSimpleCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("룰렛", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("룰렛")
 
         # Roulette setup
         self.red_numbers = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
@@ -138,7 +139,11 @@ class RouletteSimpleCog(commands.Cog):
         embed.set_footer(text=f"Server: {interaction.guild.name}")
 
         await interaction.edit_original_response(embed=embed)
-        self.logger.info(f"{interaction.user}가 룰렛에서 {bet} 코인 {'승리' if won else '패배'} (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context
+        self.logger.info(
+            f"{interaction.user}가 룰렛에서 {bet} 코인 {'승리' if won else '패배'}",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):

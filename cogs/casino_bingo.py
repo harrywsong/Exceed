@@ -380,7 +380,8 @@ class MultiBingoView(discord.ui.View):
 
         # Deduct the bet
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, required_bet, "bingo_bet", "멀티플레이어 빙고 베팅"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, required_bet, "bingo_bet",
+                                            "멀티플레이어 빙고 베팅"):
             await interaction.response.send_message("❌ 베팅 처리에 실패했습니다!", ephemeral=True)
             return
 
@@ -404,7 +405,8 @@ class MultiBingoView(discord.ui.View):
         player = self.players[interaction.user.id]
         coins_cog = self.bot.get_cog('CoinsCog')
         if coins_cog:
-            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, player.bet, "bingo_refund", "빙고 게임 나가기")
+            await coins_cog.add_coins(interaction.user.id, interaction.guild.id, player.bet, "bingo_refund",
+                                      "빙고 게임 나가기")
 
         # Remove player
         self.remove_player(interaction.user.id)
@@ -436,7 +438,8 @@ class BingoCog(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.logger = get_logger("빙고", bot=bot)
+        # FIX: The logger is now a global singleton, so we just get it by name.
+        self.logger = get_logger("빙고")
         self.active_games: Dict[int, MultiBingoView] = {}  # channel_id -> game
         self.logger.info("빙고 게임 시스템이 초기화되었습니다.")
 
@@ -484,7 +487,8 @@ class BingoCog(commands.Cog):
 
         # Deduct the bet from the starter
         coins_cog = self.bot.get_cog('CoinsCog')
-        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "bingo_bet", "멀티플레이어 빙고 베팅"):
+        if not await coins_cog.remove_coins(interaction.user.id, interaction.guild.id, bet, "bingo_bet",
+                                            "멀티플레이어 빙고 베팅"):
             await interaction.response.send_message("❌ 베팅 처리에 실패했습니다!", ephemeral=True)
             return
 
@@ -513,7 +517,11 @@ class BingoCog(commands.Cog):
         if channel_id in self.active_games and self.active_games[channel_id].game_over:
             del self.active_games[channel_id]
 
-        self.logger.info(f"{interaction.user}가 {bet}코인으로 멀티플레이어 빙고 게임을 시작했습니다 (Guild: {interaction.guild.id})")
+        # FIX: Add extra={'guild_id': ...} for multi-server logging context and remove the redundant info from the message.
+        self.logger.info(
+            f"{interaction.user}가 {bet}코인으로 멀티플레이어 빙고 게임을 시작했습니다",
+            extra={'guild_id': interaction.guild.id}
+        )
 
 
 async def setup(bot):
